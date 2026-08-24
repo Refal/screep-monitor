@@ -14,6 +14,25 @@ const fmtInt = new Intl.NumberFormat("en");
 const compact = n => (n == null ? "—" : fmtCompact.format(n));
 const pct = (p, pt) => (pt ? (100 * p / pt) : 0);
 
+// Game facts (compound ladders per boost purpose), same order as the bot CLI.
+// Stock amounts come from the payload (`bst`), maxes from `bmax` — only the
+// symbols are safe to hardcode here.
+const BOOST_LADDERS = [
+    ["attack", ["UH", "UH2O", "XUH2O"]],
+    ["ranged", ["KO", "KHO2", "XKHO2"]],
+    ["heal", ["LO", "LHO2", "XLHO2"]],
+    ["tough", ["GO", "GHO2", "XGHO2"]],
+    ["harvest", ["UO", "UHO2", "XUHO2"]],
+    ["build/repair", ["LH", "LH2O", "XLH2O"]],
+    ["dismantle", ["ZH", "ZH2O", "XZH2O"]],
+    ["upgrade", ["GH", "GH2O", "XGH2O"]],
+    ["move", ["ZO", "ZHO2", "XZHO2"]],
+    ["carry", ["KH", "KH2O", "XKH2O"]],
+];
+// Reaction inputs shown as raw stock, not boostable parts.
+const RAW_INPUTS = [["hydroxide", "OH"], ["catalyst", "X"], ["ghodium", "G"]];
+const PARTS_PER_BOOST = 30; // LAB_BOOST_MINERAL
+
 let db;
 let rangeHours = 24;
 let selectedRoom = null;
@@ -53,6 +72,15 @@ function synthDemo() {
                     { r: "remote_miner", rm: "E16S57", c: 1, d: 2 },
                 ],
                 thr: k === 1 ? { h: 2, melee: 3, ranged: 1, boosted: 0 } : { h: 0 },
+                lab: k === 0
+                    ? { s: "reaction", o: "XGH2O",
+                        i1: ["GH2O", Math.round(3000 * (1 - f))], i2: ["X", Math.round(2800 * (1 - f))],
+                        ot: Math.round(2500 * f), cd: i % 10, lc: [2, 4, 0] }
+                    : k === 1 ? { s: "boost", lc: [2, 4, 2] } : { s: "idle", lc: [0, 0, 0] },
+                bst: {
+                    XGH2O: Math.round(2000 + 8000 * f), XKHO2: Math.round(500 + 12000 * (1 - f)),
+                    LO: 900 + k * 300, GO: 200, OH: 2500, X: Math.round(6000 * f),
+                },
             };
         });
         rows.push({
@@ -61,6 +89,7 @@ function synthDemo() {
             cpu: { u: 20 + 8 * Math.sin(i / 7), l: 110, b: Math.min(10000, 6000 + i * 40) },
             cr: 323000000 + i * 9000,
             rooms,
+            bmax: { XGH2O: 16500, XKHO2: 16500, LO: 6000, GO: 6000, OH: 11000, X: 21000 },
         });
     }
     return rows;
@@ -198,6 +227,13 @@ function renderEmpireCharts() {
     renderLine("bucket", "c-bucket",
         [lineDataset("Bucket", history.map(r => r.cpu.b), "--series-1")],
         { yMax: 10000 });
+    const uptime = history.map(r => {
+        const labRooms = Object.values(r.rooms).filter(x => x.lab);
+        return labRooms.length ? 100 * labRooms.filter(x => x.lab.s === "reaction").length / labRooms.length : null;
+    });
+    renderLine("uptime", "c-uptime",
+        [lineDataset("Reacting", uptime, "--series-1")],
+        { yMax: 100, unit: "%" });
 }
 
 function renderRoomCharts() {
@@ -214,7 +250,12 @@ function renderRoomCharts() {
     renderLine("spawn", "c-spawn",
         [lineDataset("Spawn energy", of(r => pct(r.e, r.ec)), "--series-1")],
         { yMax: 100, unit: "%" });
+    const topCompounds = Object.entries(latest.rooms[room]?.bst ?? {})
+        .sort(([, a], [, b]) => b - a).slice(0, 3).map(([sym]) => sym);
+    renderLine("bst", "c-bst", topCompounds.map((sym, i) =>
+        lineDataset(sym, of(r => r.bst?.[sym] ?? null), `--series-${i + 1}`)));
     renderRolesChart(room);
+    renderBoostGrid(room);
 }
 
 function renderRolesChart(room) {
@@ -257,21 +298,111 @@ function renderRolesChart(room) {
     card.style.height = `${Math.max(200, roles.length * 34 + 60)}px`;
 }
 
+function makeBadge(color, text) {
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    const swatch = document.createElement("span");
+    swatch.className = "swatch";
+    swatch.style.background = color;
+    const label = document.createElement("span");
+    label.textContent = text;
+    badge.append(swatch, label);
+    return badge;
+}
+
 function threatBadge(thr) {
     let level, text;
     if (!thr || thr.h === 0) { level = "good"; text = "clear"; }
     else if (thr.boosted > 0) { level = "critical"; text = `${thr.h} hostiles ⚠ boosted`; }
     else if ((thr.melee ?? 0) + (thr.ranged ?? 0) > 0) { level = "serious"; text = `${thr.h} hostiles armed`; }
     else { level = "warning"; text = `${thr.h} hostiles`; }
-    const badge = document.createElement("span");
-    badge.className = "badge";
-    const swatch = document.createElement("span");
-    swatch.className = "swatch";
-    swatch.style.background = cssVar(`--status-${level}`);
-    const label = document.createElement("span");
-    label.textContent = text;
-    badge.append(swatch, label);
-    return badge;
+    return makeBadge(cssVar(`--status-${level}`), text);
+}
+
+function labStatusBadge(s) {
+    const colors = {
+        reaction: cssVar("--status-good"),
+        prepare: cssVar("--status-warning"),
+        resource_check: cssVar("--status-warning"),
+        finished: cssVar("--status-warning"),
+        boost: cssVar("--series-1"),
+        idle: cssVar("--text-muted"),
+    };
+    const labels = { resource_check: "resources", boost: "boosting" };
+    return makeBadge(colors[s] ?? cssVar("--text-muted"), labels[s] ?? s);
+}
+
+function renderLabsTable() {
+    const tbody = $("labs-table").querySelector("tbody");
+    const rows = Object.entries(latest.rooms).sort(([a], [b]) => a.localeCompare(b));
+    tbody.replaceChildren(...rows.map(([name, r]) => {
+        const tr = document.createElement("tr");
+        const lab = r.lab;
+        const nameTd = document.createElement("td");
+        nameTd.textContent = name;
+        const statusTd = document.createElement("td");
+        statusTd.append(lab ? labStatusBadge(lab.s) : document.createTextNode("—"));
+        tr.append(nameTd, statusTd);
+        const cells = lab ? [
+            lab.o ? `${lab.i1?.[0] ?? "?"} + ${lab.i2?.[0] ?? "?"} → ${lab.o}` : "—",
+            lab.i1 ? `${lab.i1[0]} ${fmtInt.format(lab.i1[1])}` : "—",
+            lab.i2 ? `${lab.i2[0]} ${fmtInt.format(lab.i2[1])}` : "—",
+            lab.ot != null ? fmtInt.format(lab.ot) : "—",
+            lab.cd != null ? String(lab.cd) : "—",
+            lab.lc.join("/"),
+        ] : ["—", "—", "—", "—", "—", "—"];
+        for (const text of cells) {
+            const td = document.createElement("td");
+            td.textContent = text;
+            tr.append(td);
+        }
+        return tr;
+    }));
+}
+
+function boostCell(amount, max, raw) {
+    const td = document.createElement("td");
+    if (!amount) {
+        td.textContent = "—";
+        return td;
+    }
+    const value = raw ? amount : Math.floor(amount / PARTS_PER_BOOST);
+    if (!max) {
+        td.textContent = compact(value);
+        return td;
+    }
+    const fill = Math.min(1, amount / max);
+    const level = fill >= 0.5 ? "good" : fill >= 0.15 ? "warning" : "serious";
+    td.append(makeBadge(cssVar(`--status-${level}`), `${compact(value)} · ${Math.round(fill * 100)}%`));
+    return td;
+}
+
+function renderBoostGrid(room) {
+    $("boosts-title").textContent = `Boosts · ${room} (latest) · parts boostable, fill vs configured max`;
+    const bst = latest.rooms[room]?.bst ?? {};
+    const bmax = latest.bmax ?? {};
+    const tbody = $("boost-grid").querySelector("tbody");
+    const ladderRows = BOOST_LADDERS.map(([purpose, tiers]) => {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.textContent = purpose;
+        tr.append(td);
+        for (const sym of tiers) tr.append(boostCell(bst[sym] ?? 0, bmax[sym], false));
+        return tr;
+    });
+    const rawRows = RAW_INPUTS.map(([name, sym]) => {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.textContent = `${name} (${sym}) · raw`;
+        tr.append(td, boostCell(bst[sym] ?? 0, bmax[sym], true));
+        for (let i = 0; i < 2; i++) {
+            const empty = document.createElement("td");
+            empty.textContent = "";
+            tr.append(empty);
+        }
+        return tr;
+    });
+    tbody.replaceChildren(...ladderRows, ...rawRows);
 }
 
 function renderRoomsTable() {
@@ -317,6 +448,7 @@ function renderAll() {
     renderRoomSelect();
     renderEmpireCharts();
     renderRoomCharts();
+    renderLabsTable();
     renderRoomsTable();
     const age = Math.round((Date.now() - latest.ts.toDate().getTime()) / 60000);
     setStatus(`tick ${fmtInt.format(latest.tick)} · updated ${age} min ago`);

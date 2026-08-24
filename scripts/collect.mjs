@@ -9,7 +9,7 @@
  *   SCREEPS_SEGMENT                — default 90
  *
  * Firestore layout:
- *   snapshots/<autoId>  { ts, tick, gcl, cpu, cr, rooms }
+ *   snapshots/<autoId>  { ts, tick, gcl, cpu, cr, rooms, bmax? }
  *   meta/latest         same shape; also used to dedup by tick and to
  *                       trigger the once-a-day retention sweep
  */
@@ -63,6 +63,7 @@ async function main() {
         cpu: stats.cpu,
         cr: stats.cr,
         rooms: stats.rooms,
+        ...(stats.bmax ? { bmax: stats.bmax } : {}),
     };
     await db.collection("snapshots").add(doc);
     await latestRef.set(doc);
