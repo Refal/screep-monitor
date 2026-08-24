@@ -78,11 +78,14 @@ header .sub { color: var(--text-muted); font-size: 13px; }
 }
 .filters button:hover { background: var(--ghost); }
 .filters button[aria-pressed="true"] { background: var(--series-1); color: #fff; }
-.filters select {
+.filters select, .section-head select {
     font: inherit; font-size: 13px; color: var(--text-primary);
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px;
 }
 .filters label { color: var(--text-muted); font-size: 13px; }
+
+.section-head { display: flex; align-items: center; gap: 10px; margin: 24px 0 10px; }
+.section-head h2 { margin: 0; }
 
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
 .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
@@ -132,8 +135,6 @@ tbody tr:hover { background: var(--ghost); }
                 <button data-range="168">7d</button>
                 <button data-range="720">30d</button>
             </div>
-            <label for="room-select">Room</label>
-            <select id="room-select"></select>
         </div>
 
         <div class="tiles" id="tiles"></div>
@@ -144,15 +145,6 @@ tbody tr:hover { background: var(--ghost); }
             <div class="card"><h3>CPU used · limit <span id="cpu-limit"></span></h3><div class="plot"><canvas id="c-cpu"></canvas></div></div>
             <div class="card"><h3>CPU bucket</h3><div class="plot"><canvas id="c-bucket"></canvas></div></div>
             <div class="card"><h3>Reaction uptime · % of lab rooms reacting</h3><div class="plot"><canvas id="c-uptime"></canvas></div></div>
-        </div>
-
-        <h2 id="room-title">Room</h2>
-        <div class="charts">
-            <div class="card"><h3>RCL progress · % to next level</h3><div class="plot"><canvas id="c-rcl"></canvas></div></div>
-            <div class="card"><h3>Stored energy</h3><div class="plot"><canvas id="c-energy"></canvas></div></div>
-            <div class="card"><h3>Spawn energy · % of capacity</h3><div class="plot"><canvas id="c-spawn"></canvas></div></div>
-            <div class="card"><h3>Creeps · current vs desired (latest)</h3><div class="plot" style="height:300px"><canvas id="c-roles"></canvas></div></div>
-            <div class="card"><h3>Boost stock · top compounds</h3><div class="plot"><canvas id="c-bst"></canvas></div></div>
         </div>
 
         <h2 id="boosts-title">Boosts (latest)</h2>
@@ -185,6 +177,18 @@ tbody tr:hover { background: var(--ghost); }
                 </tr></thead>
                 <tbody></tbody>
             </table>
+        </div>
+
+        <div class="section-head">
+            <h2 id="room-title">Room</h2>
+            <select id="room-select" aria-label="Room"></select>
+        </div>
+        <div class="charts">
+            <div class="card"><h3>RCL progress · % to next level</h3><div class="plot"><canvas id="c-rcl"></canvas></div></div>
+            <div class="card"><h3>Stored energy</h3><div class="plot"><canvas id="c-energy"></canvas></div></div>
+            <div class="card"><h3>Spawn energy · % of capacity</h3><div class="plot"><canvas id="c-spawn"></canvas></div></div>
+            <div class="card"><h3>Creeps · current vs desired (latest)</h3><div class="plot" style="height:300px"><canvas id="c-roles"></canvas></div></div>
+            <div class="card"><h3>Boost stock · top compounds</h3><div class="plot"><canvas id="c-bst"></canvas></div></div>
         </div>
     </div>
 
