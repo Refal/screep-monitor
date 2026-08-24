@@ -31,6 +31,9 @@ const BOOST_LADDERS = [
 ];
 // Reaction inputs shown as raw stock, not boostable parts.
 const RAW_INPUTS = [["hydroxide", "OH"], ["catalyst", "X"], ["ghodium", "G"]];
+// All-rooms matrix drops harvest/carry to keep the column count tight — still
+// shown in the per-room detail table below, which uses BOOST_LADDERS directly.
+const MATRIX_LADDERS = BOOST_LADDERS.filter(([purpose]) => purpose !== "harvest" && purpose !== "carry");
 const PARTS_PER_BOOST = 30; // LAB_BOOST_MINERAL
 
 let db;
@@ -52,7 +55,10 @@ const themeOverride = params.get("theme");
 if (themeOverride) document.documentElement.dataset.theme = themeOverride;
 
 function synthDemo() {
-    const roomNames = ["E15S57", "E18S59", "E21S55"];
+    const roomNames = ["E15S57", "E18S59", "E21S41", "E21S55", "E23S44", "E27S41"];
+    // Per-room fill band for the boosts matrix — spans empty/low/mid/high/full,
+    // last room deliberately empty (mirrors a freshly-claimed room with no stock at all).
+    const fillFrac = [0.08, 0.92, 0.45, 0.68, 0.28, 0];
     const now = Date.now();
     const n = Math.min(MAX_POINTS, rangeHours * 6);
     const rows = [];
@@ -61,6 +67,7 @@ function synthDemo() {
         const date = new Date(now - (n - i) * (rangeHours / n) * 3600e3);
         const rooms = {};
         roomNames.forEach((name, k) => {
+            const frac = fillFrac[k];
             rooms[name] = {
                 rcl: { l: 5 + k, p: 200000 + f * 400000 + k * 50000, pt: 1215000 },
                 e: 1200 + Math.round(600 * Math.sin(i / 5 + k)), ec: 1800,
@@ -77,9 +84,20 @@ function synthDemo() {
                         i1: ["GH2O", Math.round(3000 * (1 - f))], i2: ["X", Math.round(2800 * (1 - f))],
                         ot: Math.round(2500 * f), cd: i % 10, lc: [2, 4, 0] }
                     : k === 1 ? { s: "boost", lc: [2, 4, 2] } : { s: "idle", lc: [0, 0, 0] },
-                bst: {
-                    XGH2O: Math.round(2000 + 8000 * f), XKHO2: Math.round(500 + 12000 * (1 - f)),
-                    LO: 900 + k * 300, GO: 200, OH: 2500, X: Math.round(6000 * f),
+                // spread across several purposes/tiers so the boosts matrix shows the
+                // full ramp; empty for the last room to exercise the all-zero row.
+                bst: frac === 0 ? {} : {
+                    UH: Math.round(3000 * frac), UH2O: Math.round(1000 * frac * 0.6),
+                    KO: Math.round(3000 * Math.min(1, frac * 1.1)), KHO2: Math.round(1000 * frac * 0.5),
+                    LO: Math.round(3000 * frac * 0.9), LHO2: Math.round(1000 * frac * 0.4),
+                    GO: Math.round(3000 * frac * 0.7),
+                    ZO: Math.round(3000 * frac), ZHO2: Math.round(1000 * frac * 0.3),
+                    KH: Math.round(3000 * frac * 0.5),
+                    LH: Math.round(3000 * frac * 0.6),
+                    GH2O: Math.round(1000 * frac * frac),
+                    OH: Math.round(11000 * frac),
+                    X: Math.round(21000 * frac * 0.8),
+                    G: Math.round(500 * frac), // present in bst but absent from bmax below — exercises "no max" chip
                 },
             };
         });
@@ -89,7 +107,18 @@ function synthDemo() {
             cpu: { u: 20 + 8 * Math.sin(i / 7), l: 110, b: Math.min(10000, 6000 + i * 40) },
             cr: 323000000 + i * 9000,
             rooms,
-            bmax: { XGH2O: 16500, XKHO2: 16500, LO: 6000, GO: 6000, OH: 11000, X: 21000 },
+            bmax: {
+                UH: 3000, UH2O: 1000, XUH2O: 500,
+                KO: 3000, KHO2: 1000,
+                LO: 3000, LHO2: 1000,
+                GO: 3000,
+                ZO: 3000, ZHO2: 1000,
+                KH: 3000, KH2O: 1000,
+                LH: 3000,
+                GH2O: 1000,
+                OH: 11000, X: 21000,
+                // G intentionally omitted — no configured max, shows the outline chip
+            },
         });
     }
     return rows;
@@ -360,6 +389,35 @@ function renderLabsTable() {
     }));
 }
 
+// Sequential fill ramp (magnitude, not state) — 5 buckets plus zero/no-max.
+// Bucket edges chosen so a mid-fill stock (the common case) doesn't read as "full".
+function boostFillLevel(amount, max) {
+    if (!max) return null;               // no configured max — rendered as an outline chip
+    if (!amount) return 0;               // in-range but empty
+    const fill = amount / max;
+    if (fill < 0.15) return 1;
+    if (fill < 0.35) return 2;
+    if (fill < 0.60) return 3;
+    if (fill < 0.85) return 4;
+    return 5;
+}
+
+function boostChip(label, amount, max, raw) {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    const level = boostFillLevel(amount, max);
+    const value = raw ? (amount ?? 0) : Math.floor((amount ?? 0) / PARTS_PER_BOOST);
+    if (level === null) {
+        chip.classList.add("nomax");
+        chip.title = `${label} · ${compact(value)} parts · no max configured`;
+    } else {
+        chip.style.background = level === 0 ? cssVar("--grid") : cssVar(`--fill-${level}`);
+        const fillPct = max ? Math.round(Math.min(1, amount / max) * 100) : 0;
+        chip.title = `${label} · ${fmtInt.format(value)} parts · ${fillPct}% of max`;
+    }
+    return chip;
+}
+
 function boostCell(amount, max, raw) {
     const td = document.createElement("td");
     if (!amount) {
@@ -378,7 +436,7 @@ function boostCell(amount, max, raw) {
 }
 
 function renderBoostGrid(room) {
-    $("boosts-title").textContent = `Boosts · ${room} (latest) · parts boostable, fill vs configured max`;
+    $("room-boosts-title").textContent = `Boosts · ${room} · parts boostable, fill vs configured max`;
     const bst = latest.rooms[room]?.bst ?? {};
     const bmax = latest.bmax ?? {};
     const tbody = $("boost-grid").querySelector("tbody");
@@ -405,6 +463,57 @@ function renderBoostGrid(room) {
     tbody.replaceChildren(...ladderRows, ...rawRows);
 }
 
+function renderBoostMatrix() {
+    const tbody = $("boost-matrix").querySelector("tbody");
+    const bmax = latest.bmax ?? {};
+    const rows = Object.entries(latest.rooms).sort(([a], [b]) => a.localeCompare(b));
+    tbody.replaceChildren(...rows.map(([name, r]) => {
+        const bst = r.bst ?? {};
+        const tr = document.createElement("tr");
+        const nameTd = document.createElement("td");
+        nameTd.textContent = name;
+        tr.append(nameTd);
+        for (const [purpose, tiers] of MATRIX_LADDERS) {
+            const td = document.createElement("td");
+            const wrap = document.createElement("div");
+            wrap.className = "chips";
+            tiers.forEach((sym, i) => {
+                wrap.append(boostChip(`${name} · ${purpose} T${i + 1} · ${sym}`, bst[sym] ?? 0, bmax[sym], false));
+            });
+            td.append(wrap);
+            tr.append(td);
+        }
+        RAW_INPUTS.forEach(([label, sym], i) => {
+            const td = document.createElement("td");
+            if (i === 0) td.classList.add("raw-group");
+            const wrap = document.createElement("div");
+            wrap.className = "chips";
+            wrap.append(boostChip(`${name} · ${label}`, bst[sym] ?? 0, bmax[sym], true));
+            td.append(wrap);
+            tr.append(td);
+        });
+        return tr;
+    }));
+}
+
+function creepsCell(roles) {
+    const td = document.createElement("td");
+    if (!roles) {                      // payload degraded — roles/thr are dropped first, see StatsManager
+        td.textContent = "—";
+        td.className = "na";
+        return td;
+    }
+    const cur = roles.reduce((a, x) => a + x.c, 0);
+    const des = roles.reduce((a, x) => a + x.d, 0);
+    td.textContent = `${cur} / ${des}`;
+    if (cur < des) {
+        td.className = cur < des * 0.5 ? "critical" : "short";
+        td.title = "short: " + roles.filter(x => x.c < x.d)
+            .map(x => `${x.rm ? `${x.r} → ${x.rm}` : x.r} ${x.c}/${x.d}`).join(", ");
+    }
+    return td;
+}
+
 function renderRoomsTable() {
     const tbody = $("rooms-table").querySelector("tbody");
     const rows = Object.entries(latest.rooms).sort(([a], [b]) => a.localeCompare(b));
@@ -417,16 +526,19 @@ function renderRoomsTable() {
             `${r.e} / ${r.ec}`,
             compact(r.se),
             compact(r.te),
-            String(r.q),
         ];
         for (const text of cells) {
             const td = document.createElement("td");
             td.textContent = text;
             tr.append(td);
         }
-        const td = document.createElement("td");
-        td.append(threatBadge(r.thr));
-        tr.append(td);
+        tr.append(creepsCell(r.roles));
+        const queueTd = document.createElement("td");
+        queueTd.textContent = String(r.q);
+        tr.append(queueTd);
+        const threatTd = document.createElement("td");
+        threatTd.append(threatBadge(r.thr));
+        tr.append(threatTd);
         return tr;
     }));
 }
@@ -448,6 +560,7 @@ function renderAll() {
     renderRoomSelect();
     renderEmpireCharts();
     renderRoomCharts();
+    renderBoostMatrix();
     renderLabsTable();
     renderRoomsTable();
     const age = Math.round((Date.now() - latest.ts.toDate().getTime()) / 60000);

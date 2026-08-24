@@ -23,6 +23,12 @@
     --status-serious:   #ec835a;
     --status-critical:  #d03b3b;
     --ghost:          rgba(11,11,11,0.05);
+    /* sequential fill ramp (boost stock vs max) — near-zero recedes toward the surface */
+    --fill-1:         #86b6ef;
+    --fill-2:         #5598e7;
+    --fill-3:         #2a78d6;
+    --fill-4:         #1c5cab;
+    --fill-5:         #104281;
 }
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
@@ -39,6 +45,11 @@
         --series-2:       #d95926;
         --series-3:       #199e70;
         --ghost:          rgba(255,255,255,0.06);
+        --fill-1:         #184f95;
+        --fill-2:         #256abf;
+        --fill-3:         #3987e5;
+        --fill-4:         #6da7ec;
+        --fill-5:         #b7d3f6;
     }
 }
 :root[data-theme="dark"] {
@@ -55,6 +66,11 @@
     --series-2:       #d95926;
     --series-3:       #199e70;
     --ghost:          rgba(255,255,255,0.06);
+    --fill-1:         #184f95;
+    --fill-2:         #256abf;
+    --fill-3:         #3987e5;
+    --fill-4:         #6da7ec;
+    --fill-5:         #b7d3f6;
 }
 
 * { box-sizing: border-box; }
@@ -111,6 +127,21 @@ tbody tr:hover { background: var(--ghost); }
 .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-secondary); }
 .badge .swatch { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
 
+.chips { display: flex; gap: 2px; justify-content: flex-end; }
+.chip { width: 13px; height: 13px; border-radius: 3px; flex: 0 0 auto; box-shadow: inset 0 0 0 1px var(--border); }
+.chip.nomax { background: transparent; box-shadow: inset 0 0 0 1px var(--text-muted); opacity: .45; }
+#boost-matrix th { font-size: 11px; }
+#boost-matrix th .th-sym { color: var(--text-muted); font-weight: 400; }
+#boost-matrix td { padding: 6px 8px; }
+#boost-matrix .raw-group { border-left: 1px solid var(--grid); }
+.viz-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 8px 0 0; padding: 0 2px; font-size: 12px; color: var(--text-muted); }
+.viz-legend .swatch { width: 9px; height: 9px; border-radius: 3px; flex: 0 0 auto; box-shadow: inset 0 0 0 1px var(--border); }
+.viz-legend .ramp { display: inline-flex; align-items: center; gap: 3px; }
+
+td.short    { color: var(--status-warning); }
+td.critical { color: var(--status-critical); }
+td.na       { color: var(--text-muted); }
+
 .notice {
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
     padding: 24px; color: var(--text-secondary); margin-top: 24px;
@@ -147,14 +178,39 @@ tbody tr:hover { background: var(--ghost); }
             <div class="card"><h3>Reaction uptime · % of lab rooms reacting</h3><div class="plot"><canvas id="c-uptime"></canvas></div></div>
         </div>
 
-        <h2 id="boosts-title">Boosts (latest)</h2>
+        <h2 id="boosts-title">Boosts · all rooms (latest)</h2>
         <div class="table-wrap">
-            <table id="boost-grid">
+            <table id="boost-matrix">
                 <thead><tr>
-                    <th>Purpose</th><th>T1</th><th>T2</th><th>T3</th>
+                    <th>Room</th>
+                    <th title="attack">attack <span class="th-sym">UH</span></th>
+                    <th title="ranged attack">ranged <span class="th-sym">KO</span></th>
+                    <th title="heal">heal <span class="th-sym">LO</span></th>
+                    <th title="tough">tough <span class="th-sym">GO</span></th>
+                    <th title="build / repair">build <span class="th-sym">LH</span></th>
+                    <th title="dismantle">dismantle <span class="th-sym">ZH</span></th>
+                    <th title="upgrade">upgrade <span class="th-sym">GH</span></th>
+                    <th title="move">move <span class="th-sym">ZO</span></th>
+                    <th class="raw-group" title="hydroxide (raw stock)">OH</th>
+                    <th title="catalyst (raw stock)">X</th>
+                    <th title="ghodium (raw stock)">G</th>
                 </tr></thead>
                 <tbody></tbody>
             </table>
+        </div>
+        <div class="viz-legend">
+            <span>each cell: T1 · T2 · T3</span>
+            <span class="ramp">
+                <span class="swatch" style="background: var(--fill-1)"></span>
+                <span class="swatch" style="background: var(--fill-2)"></span>
+                <span class="swatch" style="background: var(--fill-3)"></span>
+                <span class="swatch" style="background: var(--fill-4)"></span>
+                <span class="swatch" style="background: var(--fill-5)"></span>
+                fill % of configured max
+            </span>
+            <span><span class="swatch" style="background: var(--grid)"></span> no stock</span>
+            <span><span class="chip nomax" style="width:9px;height:9px"></span> no max configured</span>
+            <span>storage + terminal vs default max; per-room overrides ignored — hover a chip for exact parts</span>
         </div>
 
         <h2>Labs (latest snapshot)</h2>
@@ -173,7 +229,7 @@ tbody tr:hover { background: var(--ghost); }
             <table id="rooms-table">
                 <thead><tr>
                     <th>Room</th><th>RCL</th><th>Progress</th><th>Spawn energy</th>
-                    <th>Storage</th><th>Terminal</th><th>Queue</th><th>Threat</th>
+                    <th>Storage</th><th>Terminal</th><th>Creeps</th><th>Queue</th><th>Threat</th>
                 </tr></thead>
                 <tbody></tbody>
             </table>
@@ -189,6 +245,16 @@ tbody tr:hover { background: var(--ghost); }
             <div class="card"><h3>Spawn energy · % of capacity</h3><div class="plot"><canvas id="c-spawn"></canvas></div></div>
             <div class="card"><h3>Creeps · current vs desired (latest)</h3><div class="plot" style="height:300px"><canvas id="c-roles"></canvas></div></div>
             <div class="card"><h3>Boost stock · top compounds</h3><div class="plot"><canvas id="c-bst"></canvas></div></div>
+        </div>
+
+        <h2 id="room-boosts-title">Boosts</h2>
+        <div class="table-wrap">
+            <table id="boost-grid">
+                <thead><tr>
+                    <th>Purpose</th><th>T1</th><th>T2</th><th>T3</th>
+                </tr></thead>
+                <tbody></tbody>
+            </table>
         </div>
     </div>
 
