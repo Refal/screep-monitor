@@ -1,0 +1,17 @@
+{
+  "name": "screep-monitor",
+  "version": "1.0.0",
+  "description": "Screeps room-stats collector (GitHub Actions) + Firebase-hosted dashboard",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "collect": "node scripts/collect.mjs"
+  },
+  "dependencies": {
+    "firebase": "^12.18.0",
+    "firebase-admin": "^13.0.0"
+  }
+}

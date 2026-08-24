@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Screeps Monitor</title>
+<style>
+:root {
+    color-scheme: light;
+    --page:           #f9f9f7;
+    --surface-1:      #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --axis:           #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1:       #2a78d6;
+    --series-2:       #eb6834;
+    --series-3:       #1baf7a;
+    --status-good:      #0ca30c;
+    --status-warning:   #fab219;
+    --status-serious:   #ec835a;
+    --status-critical:  #d03b3b;
+    --ghost:          rgba(11,11,11,0.05);
+}
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        color-scheme: dark;
+        --page:           #0d0d0d;
+        --surface-1:      #1a1a19;
+        --text-primary:   #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted:     #898781;
+        --grid:           #2c2c2a;
+        --axis:           #383835;
+        --border:         rgba(255,255,255,0.10);
+        --series-1:       #3987e5;
+        --series-2:       #d95926;
+        --series-3:       #199e70;
+        --ghost:          rgba(255,255,255,0.06);
+    }
+}
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:           #0d0d0d;
+    --surface-1:      #1a1a19;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --grid:           #2c2c2a;
+    --axis:           #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-1:       #3987e5;
+    --series-2:       #d95926;
+    --series-3:       #199e70;
+    --ghost:          rgba(255,255,255,0.06);
+}
+
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.wrap { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; }
+
+header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+header h1 { font-size: 20px; margin: 0; }
+header .sub { color: var(--text-muted); font-size: 13px; }
+
+.filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.filters .group { display: flex; gap: 4px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 3px; }
+.filters button {
+    border: 0; background: transparent; color: var(--text-secondary);
+    font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+}
+.filters button:hover { background: var(--ghost); }
+.filters button[aria-pressed="true"] { background: var(--series-1); color: #fff; }
+.filters select {
+    font: inherit; font-size: 13px; color: var(--text-primary);
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px;
+}
+.filters label { color: var(--text-muted); font-size: 13px; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.tile .label { color: var(--text-muted); font-size: 12px; }
+.tile .value { font-size: 26px; font-weight: 600; margin-top: 2px; }
+.tile .delta { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+
+h2 { font-size: 15px; margin: 24px 0 10px; color: var(--text-secondary); font-weight: 600; }
+
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.card h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.card .plot { position: relative; height: 220px; }
+
+.table-wrap { overflow-x: auto; background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: right; padding: 8px 12px; border-top: 1px solid var(--grid); white-space: nowrap; }
+th { color: var(--text-muted); font-weight: 500; border-top: 0; }
+th:first-child, td:first-child { text-align: left; }
+tbody td { font-variant-numeric: tabular-nums; }
+tbody tr:hover { background: var(--ghost); }
+
+.badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-secondary); }
+.badge .swatch { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+
+.notice {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 24px; color: var(--text-secondary); margin-top: 24px;
+}
+.notice code { background: var(--ghost); padding: 1px 5px; border-radius: 4px; }
+#status { color: var(--text-muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+    <header>
+        <h1>Screeps Monitor</h1>
+        <span class="sub">shard2</span>
+        <span id="status">loading…</span>
+    </header>
+
+    <div id="app" hidden>
+        <div class="filters">
+            <div class="group" id="range-group" role="group" aria-label="Time range">
+                <button data-range="6">6h</button>
+                <button data-range="24" aria-pressed="true">24h</button>
+                <button data-range="168">7d</button>
+                <button data-range="720">30d</button>
+            </div>
+            <label for="room-select">Room</label>
+            <select id="room-select"></select>
+        </div>
+
+        <div class="tiles" id="tiles"></div>
+
+        <h2>Empire</h2>
+        <div class="charts">
+            <div class="card"><h3>GCL progress · % to level <span id="gcl-next"></span></h3><div class="plot"><canvas id="c-gcl"></canvas></div></div>
+            <div class="card"><h3>CPU used · limit <span id="cpu-limit"></span></h3><div class="plot"><canvas id="c-cpu"></canvas></div></div>
+            <div class="card"><h3>CPU bucket</h3><div class="plot"><canvas id="c-bucket"></canvas></div></div>
+        </div>
+
+        <h2 id="room-title">Room</h2>
+        <div class="charts">
+            <div class="card"><h3>RCL progress · % to next level</h3><div class="plot"><canvas id="c-rcl"></canvas></div></div>
+            <div class="card"><h3>Stored energy</h3><div class="plot"><canvas id="c-energy"></canvas></div></div>
+            <div class="card"><h3>Spawn energy · % of capacity</h3><div class="plot"><canvas id="c-spawn"></canvas></div></div>
+            <div class="card"><h3>Creeps · current vs desired (latest)</h3><div class="plot" style="height:300px"><canvas id="c-roles"></canvas></div></div>
+        </div>
+
+        <h2>Rooms (latest snapshot)</h2>
+        <div class="table-wrap">
+            <table id="rooms-table">
+                <thead><tr>
+                    <th>Room</th><th>RCL</th><th>Progress</th><th>Spawn energy</th>
+                    <th>Storage</th><th>Terminal</th><th>Queue</th><th>Threat</th>
+                </tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="setup-notice" class="notice" hidden>
+        <strong>Not configured yet.</strong>
+        <p>Fill in <code>public/firebase-config.js</code> with your Firebase web-app config
+        (Firebase console → Project settings → Your apps), then redeploy with
+        <code>npx firebase-tools deploy --only hosting</code>.</p>
+    </div>
+</div>
+<script src="vendor/chart.umd.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

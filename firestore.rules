@@ -1,0 +1,18 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Public read-only game stats; all writes go through the Admin SDK
+    // (GitHub Actions collector), which bypasses these rules.
+    match /snapshots/{id} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /meta/{id} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
