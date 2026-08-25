@@ -104,6 +104,7 @@ const RAW_INPUTS = [["hydroxide", "OH"], ["catalyst", "X"], ["ghodium", "G"]];
 // shown in the per-room detail table below, which uses BOOST_LADDERS directly.
 const MATRIX_LADDERS = BOOST_LADDERS.filter(([purpose]) => purpose !== "harvest" && purpose !== "carry");
 const PARTS_PER_BOOST = 30; // LAB_BOOST_MINERAL
+const MIN_RAW_STOCK = 100;  // LabManager.MIN_STORAGE_AMOUNT — below this a reagent is unusable
 
 let db;
 let rangeHours = 24;
@@ -190,8 +191,10 @@ function synthDemo() {
                         ot: Math.round(2500 * f), cd: i % 10, lc: [2, 4, 0] }
                     : k === 1 ? { s: "boost", lc: [2, 4, 2] } : { s: "idle", lc: [0, 0, 0] },
                 // spread across several purposes/tiers so the boosts matrix shows the
-                // full ramp; empty for the last room to exercise the all-zero row.
-                bst: frac === 0 ? {} : {
+                // full ramp; compounds all-zero for the last room to exercise the
+                // all-zero row, but with trace raw stock (below MIN_RAW_STOCK) to
+                // exercise the "raw under 100" grey state.
+                bst: frac === 0 ? { OH: 60, X: 12 } : {
                     UH: Math.round(3000 * frac), UH2O: Math.round(1000 * frac * 0.6),
                     KO: Math.round(3000 * Math.min(1, frac * 1.1)), KHO2: Math.round(1000 * frac * 0.5),
                     LO: Math.round(3000 * frac * 0.9), LHO2: Math.round(1000 * frac * 0.4),
@@ -322,6 +325,21 @@ function lineDataset(label, data, colorVar) {
     };
 }
 
+// Instantaneous per-tick rate plus a flat dashed line at the window average,
+// so the current rate reads against the range's trend. Shared by the empire
+// GCL chart and the per-room RCL chart. The avg is omitted (and with it the
+// legend, per baseOptions) when there's no positive gain in range.
+function rateDatasets(label, sel) {
+    const datasets = [lineDataset(label, rateSeries(sel), "--series-1")];
+    const wr = windowRate(sel);
+    if (wr) {
+        const avg = lineDataset(`avg ${compact(wr.rate)}/tick`, history.map(() => wr.rate), "--series-2");
+        Object.assign(avg, { borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 0, tension: 0 });
+        datasets.push(avg);
+    }
+    return datasets;
+}
+
 function renderLine(key, canvasId, datasets, { yMax = undefined, unit = "" } = {}) {
     charts[key]?.destroy();
     const opts = baseOptions(datasets.length);
@@ -375,8 +393,7 @@ function renderEmpireCharts() {
     renderLine("gcl", "c-gcl",
         [lineDataset("GCL progress", history.map(r => pct(r.gcl.p, r.gcl.pt)), "--series-1")],
         { yMax: 100, unit: "%" });
-    renderLine("gclRate", "c-gcl-rate",
-        [lineDataset("GCL/tick", rateSeries(r => r.gcl), "--series-1")]);
+    renderLine("gclRate", "c-gcl-rate", rateDatasets("GCL/tick", r => r.gcl));
     renderLine("cpu", "c-cpu",
         [lineDataset("CPU used", history.map(r => r.cpu.u), "--series-1")],
         { yMax: latest.cpu.l });
@@ -425,15 +442,7 @@ function renderRoomCharts() {
     renderLine("rcl", "c-rcl",
         [lineDataset("RCL progress", of(r => pct(r.rcl.p, r.rcl.pt)), "--series-1")],
         { yMax: 100, unit: "%" });
-    const rclOf = r => r.rooms[room]?.rcl ?? null;
-    const rclRateDatasets = [lineDataset("RCL/tick", rateSeries(rclOf), "--series-1")];
-    const rclWr = windowRate(rclOf);
-    if (rclWr) {
-        const avg = lineDataset(`avg ${compact(rclWr.rate)}/tick`, history.map(() => rclWr.rate), "--series-2");
-        Object.assign(avg, { borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 0, tension: 0 });
-        rclRateDatasets.push(avg);
-    }
-    renderLine("rclRate", "c-rcl-rate", rclRateDatasets);
+    renderLine("rclRate", "c-rcl-rate", rateDatasets("RCL/tick", r => r.rooms[room]?.rcl ?? null));
     renderLine("energy", "c-energy", [
         lineDataset("Storage", of(r => r.se), "--series-1"),
         lineDataset("Terminal", of(r => r.te), "--series-2"),
@@ -554,17 +563,33 @@ function renderLabsTable() {
 // Fill ramp (red = short, green = stocked) — 5 buckets plus zero/no-max.
 // A boost costs PARTS_PER_BOOST per part, so a compound stock under that can't
 // boost anything: treat it as absent rather than flagging it red. Raw reagents
-// (OH/X/G) aren't measured in boosts, so the floor doesn't apply to them.
+// (OH/X/G) have their own, much higher floor — LabManager won't run a reaction
+// below MIN_RAW_STOCK in storage, so dust below that is unusable too.
+// For raw, the floor is checked before the no-max case: a trace amount reads
+// as absent even when the reagent has no configured max (e.g. G today), so it
+// doesn't get mistaken for a healthy-but-uncapped stock. Compounds keep the
+// opposite order — no-max still wins over the dust floor there — since this
+// change is scoped to raw reagents only.
 function boostFillLevel(amount, max, raw) {
-    if (!max) return null;                            // no configured max — rendered as an outline chip
-    if (!amount) return 0;                             // in-range but empty
+    if (raw && !(amount >= MIN_RAW_STOCK)) return 0;   // unusable by LabManager — absent, not "short"
+    if (!raw && !max) return null;                     // no configured max — rendered as an outline chip
     if (!raw && amount < PARTS_PER_BOOST) return 0;    // dust — can't boost a single part
+    if (!max) return null;                              // raw, past the floor, but no configured max
+    if (!amount) return 0;                              // in-range but empty
     const fill = amount / max;
     if (fill < 0.20) return 1;
     if (fill < 0.40) return 2;
     if (fill < 0.60) return 3;
     if (fill < 0.85) return 4;
     return 5;
+}
+
+// Floor + reason shared by the chip/cell tooltips below, so the "why is this
+// grey" text matches boostFillLevel's own precedence.
+function boostFloor(raw) {
+    return raw
+        ? { amount: MIN_RAW_STOCK, reason: `below lab minimum (${MIN_RAW_STOCK})` }
+        : { amount: PARTS_PER_BOOST, reason: `under one boost (${PARTS_PER_BOOST})` };
 }
 
 function boostChip(label, amount, max, raw) {
@@ -578,7 +603,7 @@ function boostChip(label, amount, max, raw) {
     } else {
         chip.style.background = level === 0 ? cssVar("--grid") : cssVar(`--fill-${level}`);
         if (level === 0 && amount) {
-            chip.title = `${label} · ${fmtInt.format(amount)} · under one boost (${PARTS_PER_BOOST})`;
+            chip.title = `${label} · ${fmtInt.format(amount)} · ${boostFloor(raw).reason}`;
         } else if (level === 0) {
             chip.title = `${label} · none`;
         } else {
@@ -591,10 +616,11 @@ function boostChip(label, amount, max, raw) {
 
 function boostCell(amount, max, raw) {
     const td = document.createElement("td");
-    if (!amount || (!raw && amount < PARTS_PER_BOOST)) {
+    const floor = boostFloor(raw);
+    if (!amount || amount < floor.amount) {
         td.textContent = "—";
         td.className = "na";
-        if (amount) td.title = `${fmtInt.format(amount)} · under one boost (${PARTS_PER_BOOST})`;
+        if (amount) td.title = `${fmtInt.format(amount)} · ${floor.reason}`;
         return td;
     }
     const value = raw ? amount : Math.floor(amount / PARTS_PER_BOOST);
