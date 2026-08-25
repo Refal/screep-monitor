@@ -216,8 +216,8 @@ function downsample(rows, max) {
 function timeLabels() {
     const short = rangeHours <= 24;
     return history.map(r => short
-        ? r.date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-        : r.date.toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }));
+        ? r.date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+        : r.date.toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }));
 }
 
 function baseOptions(series) {
