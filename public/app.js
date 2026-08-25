@@ -37,6 +37,18 @@ function rateSeries(sel) {
     });
 }
 
+// Observed wall-clock ms per tick over the whole visible window, from the
+// first/last history rows. Standalone (unlike inline in windowRate) so it can
+// back ETAs that aren't {l,p,pt}-shaped, e.g. nuker cooldown ticks. Guards its
+// own length since it no longer sits behind windowRate's early return —
+// history can legitimately be empty (latest loads independently of history).
+function observedMsPerTick() {
+    if (history.length < 2) return null;
+    const first = history[0], last = history[history.length - 1];
+    const dTick = last.tick - first.tick;
+    return dTick > 0 ? (last.date - first.date) / dTick : null;
+}
+
 // Average gain rate over the whole visible window — aggregated rather than
 // extrapolated from the last point so a single noisy interval can't skew the
 // estimate — plus the observed wall-clock ms per tick over that window.
@@ -54,10 +66,25 @@ function windowRate(sel) {
     }
     if (ticks <= 0 || points <= 0) return null;
     const rate = points / ticks;
-    const first = history[0], last = history[history.length - 1];
-    const dTickWindow = last.tick - first.tick;
-    const msPerTick = dTickWindow > 0 ? (last.date - first.date) / dTickWindow : null;
-    return { rate, msPerTick };
+    return { rate, msPerTick: observedMsPerTick() };
+}
+
+// Average non-decreasing rate of a plain numeric series over the window —
+// the nuker-fill analogue of windowRate, but for raw numbers rather than
+// {l,p,pt}. Skips any interval where the value dropped (a nuke launch empties
+// the store; that single step must not poison the refill trend it
+// interrupted) and any interval touching a null reading (room/nuker absent
+// from that snapshot, or predating this field entirely).
+function stockRate(sel) {
+    let gained = 0, ticks = 0;
+    for (let i = 1; i < history.length; i++) {
+        const prev = sel(history[i - 1]), cur = sel(history[i]);
+        const dTick = history[i].tick - history[i - 1].tick;
+        if (prev == null || cur == null || dTick <= 0 || cur < prev) continue;
+        gained += cur - prev;
+        ticks += dTick;
+    }
+    return ticks > 0 && gained > 0 ? gained / ticks : null;
 }
 
 // ETA to the next level for a current {l,p,pt} reading. `pt` is falsy at max
@@ -105,6 +132,10 @@ const RAW_INPUTS = [["hydroxide", "OH"], ["catalyst", "X"], ["ghodium", "G"]];
 const MATRIX_LADDERS = BOOST_LADDERS.filter(([purpose]) => purpose !== "harvest" && purpose !== "carry");
 const PARTS_PER_BOOST = 30; // LAB_BOOST_MINERAL
 const MIN_RAW_STOCK = 100;  // LabManager.MIN_STORAGE_AMOUNT — below this a reagent is unusable
+// Nuker capacities/cooldown — game constants, not in the payload.
+const NUKER_GHODIUM_CAPACITY = 5000;
+const NUKER_ENERGY_CAPACITY = 300000;
+const NUKER_COOLDOWN = 100000; // ticks after a launch
 
 let db;
 let rangeHours = 24;
@@ -141,6 +172,48 @@ function advanceRcl(level, progress, gain) {
     return { l, p, pt: RCL_LEVEL_PT[l] };
 }
 
+// Nuker state per room (k) at row i — covers the states real history will
+// show: armed and ready; ghodium full with energy still trickling in;
+// filling then launched partway through the window (the one case that
+// exercises stockRate's cur < prev skip, since the fill drops to zero at the
+// launch row); full and refilled but still on cooldown; no nuker at all; and
+// a nuker that only starts publishing partway through the window (the real
+// shape of history right after this field ships — exercises the null-gap
+// skip in stockRate). Returns null/undefined for "room has no nuk this row",
+// which the caller drops from the payload rather than storing.
+function demoNuk(k, i, n, f) {
+    switch (k) {
+        case 0: // ready from the start
+            return [NUKER_GHODIUM_CAPACITY, NUKER_ENERGY_CAPACITY, 0];
+        case 1: { // ghodium full, energy trickling in (the slow, gated leg) — kept
+                   // short of full even at the last row, so the rooms table
+                   // shows a genuine "still filling" state, not a second "ready"
+            const fill = 0.55 * f;
+            return [NUKER_GHODIUM_CAPACITY, Math.round(NUKER_ENERGY_CAPACITY * fill), 0];
+        }
+        case 2: { // filling, then a launch empties it partway through the window
+            const launchAt = Math.floor(n * 0.6);
+            if (i < launchAt) {
+                const fill = Math.min(1, (i / launchAt) * 1.1);
+                return [Math.round(NUKER_GHODIUM_CAPACITY * fill), Math.round(NUKER_ENERGY_CAPACITY * fill), 0];
+            }
+            return [0, 0, Math.max(0, NUKER_COOLDOWN - (i - launchAt) * 120)]; // tick step matches rows.push below
+        }
+        case 3: // full and refilled, just counting down cooldown
+            return [NUKER_GHODIUM_CAPACITY, NUKER_ENERGY_CAPACITY, Math.round(NUKER_COOLDOWN * (1 - f) * 0.4)];
+        case 4: // no nuker in this room
+            return null;
+        case 5: { // nuker starts publishing partway through the window
+            const appearAt = Math.floor(n * 0.3);
+            if (i < appearAt) return null;
+            const fill = Math.min(1, (i - appearAt) / (n - appearAt));
+            return [Math.round(NUKER_GHODIUM_CAPACITY * fill), Math.round(NUKER_ENERGY_CAPACITY * fill * 0.5), 0];
+        }
+        default:
+            return null;
+    }
+}
+
 function synthDemo() {
     const roomNames = ["E15S57", "E18S59", "E21S41", "E21S55", "E23S44", "E27S41"];
     // Per-room fill band for the boosts matrix — spans empty/low/mid/high/full,
@@ -173,6 +246,7 @@ function synthDemo() {
         roomNames.forEach((name, k) => {
             const frac = fillFrac[k];
             const spec = rclSpecs[k];
+            const nuk = demoNuk(k, i, n, f);
             const gained = spec.totalGain * f + spec.oscAmp * Math.sin(i / spec.oscPeriod + k);
             rooms[name] = {
                 rcl: advanceRcl(spec.level, spec.progress, Math.max(0, gained)),
@@ -207,6 +281,7 @@ function synthDemo() {
                     X: Math.round(21000 * frac * 0.8),
                     G: Math.round(500 * frac), // present in bst but absent from bmax below — exercises "no max" chip
                 },
+                ...(nuk ? { nuk } : {}),
             };
         });
         rows.push({
@@ -434,6 +509,75 @@ function renderRoomTiles(room) {
     renderTileRow("room-tiles", tiles);
 }
 
+// Nuker status for the selected room — tiles + a two-series fill chart,
+// hidden entirely when the room has no nuker. `nuk` is [ghodium, energy,
+// cooldown]; absence is never a truncated payload (see nukerCell) so it's an
+// unambiguous "no nuker" signal to hide the whole section on.
+function renderNuker(room, of) {
+    const nuk = latest.rooms[room]?.nuk;
+    $("nuker-section").hidden = !nuk;
+    if (!nuk) {
+        // Otherwise a chart left bound to a now-hidden 0×0 canvas keeps its
+        // ResizeObserver alive across the next room switch.
+        charts.nuker?.destroy();
+        delete charts.nuker;
+        return;
+    }
+    const [g, e, cd] = nuk;
+    const gFull = g >= NUKER_GHODIUM_CAPACITY, eFull = e >= NUKER_ENERGY_CAPACITY;
+    const ready = cd === 0 && gFull && eFull;
+
+    // Ticks until armed: whichever of cooldown and the two independent fill
+    // legs (ghodium via reactions, energy via a gated hauler trickle, see
+    // config.nuker.ts) finishes last. Stays null if a short leg has no
+    // observed positive rate — an honest "no ETA" beats a fabricated one.
+    let readyTicks = ready ? 0 : cd;
+    let etaKnown = true;
+    for (const [full, cap, amount, rate] of [
+        [gFull, NUKER_GHODIUM_CAPACITY, g, stockRate(r => r.rooms[room]?.nuk?.[0] ?? null)],
+        [eFull, NUKER_ENERGY_CAPACITY, e, stockRate(r => r.rooms[room]?.nuk?.[1] ?? null)],
+    ]) {
+        if (full) continue;
+        if (!rate) { etaKnown = false; continue; }
+        readyTicks = Math.max(readyTicks, (cap - amount) / rate);
+    }
+    // Collector gaps (dedup on unchanged tick, or the bot skipping publication
+    // under minBucket) inflate the observed ms/tick and so over-estimate this
+    // ETA — pre-existing for the RCL ETA too, but the ~100k-tick cooldown
+    // multiplies it far more.
+    const ms = observedMsPerTick();
+    const etaLabel = ready ? "ready"
+        : !etaKnown ? "—"
+        : ms != null ? `~${fmtDuration(readyTicks * ms)}` : `~${compact(readyTicks)} ticks`;
+
+    const cooldownLabel = cd > 0
+        ? (ms != null ? `~${fmtDuration(cd * ms)}` : `~${compact(cd)} ticks`)
+        : "off cooldown";
+    renderTileRow("nuker-tiles", [
+        { label: "Status", value: ready ? "ready" : cd > 0 ? "cooling" : "filling",
+          delta: ready ? "armed" : "" },
+        { label: "Ghodium", value: `${Math.round(Math.min(1, g / NUKER_GHODIUM_CAPACITY) * 100)}%`,
+          delta: `${fmtInt.format(g)} / ${fmtInt.format(NUKER_GHODIUM_CAPACITY)}` },
+        { label: "Energy", value: `${Math.round(Math.min(1, e / NUKER_ENERGY_CAPACITY) * 100)}%`,
+          delta: `${fmtInt.format(e)} / ${fmtInt.format(NUKER_ENERGY_CAPACITY)}` },
+        { label: "Cooldown", value: cooldownLabel,
+          delta: cd > 0 ? `${fmtInt.format(cd)} / ${fmtInt.format(NUKER_COOLDOWN)}` : "" },
+        { label: "ETA ready", value: etaLabel, delta: ready || etaKnown ? "" : "no gain in range" },
+    ]);
+
+    const gSeries = of(r => r.nuk ? pct(r.nuk[0], NUKER_GHODIUM_CAPACITY) : null);
+    const eSeries = of(r => r.nuk ? pct(r.nuk[1], NUKER_ENERGY_CAPACITY) : null);
+    const gDataset = lineDataset("Ghodium", gSeries, "--series-1");
+    const eDataset = lineDataset("Energy", eSeries, "--series-2");
+    // A nuker built (or first published) mid-window can have fewer than 5
+    // non-null points even though history.length >= 5 — lineDataset's radius-0
+    // default would then render nothing, since a lone point draws no segment.
+    for (const [ds, series] of [[gDataset, gSeries], [eDataset, eSeries]]) {
+        if (series.filter(v => v != null).length < 5) ds.pointRadius = 3;
+    }
+    renderLine("nuker", "c-nuker", [gDataset, eDataset], { yMax: 100, unit: "%" });
+}
+
 function renderRoomCharts() {
     const room = selectedRoom;
     $("room-title").textContent = `Room ${room}`;
@@ -456,6 +600,7 @@ function renderRoomCharts() {
         lineDataset(sym, of(r => r.bst?.[sym] ?? null), `--series-${i + 1}`)));
     renderRolesChart(room);
     renderBoostGrid(room);
+    renderNuker(room, of);
 }
 
 function renderRolesChart(room) {
@@ -519,6 +664,41 @@ function threatBadge(thr) {
     return makeBadge(cssVar(`--status-${level}`), text);
 }
 
+// Small fill square for the rooms-table nuker cell — same visual language as
+// the boosts matrix chips, but against the nuker's own capacities rather
+// than PARTS_PER_BOOST/bmax, so it doesn't reuse boostChip.
+function nukerChip(label, amount, cap) {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    const fill = amount / cap;
+    chip.style.background = amount === 0 ? cssVar("--grid") : cssVar(`--fill-${rampLevel(Math.min(1, fill))}`);
+    chip.title = `${label} ${fmtInt.format(amount)} / ${fmtInt.format(cap)} (${Math.round(fill * 100)}%)`;
+    return chip;
+}
+
+// `nuk` absent means the room has no nuker at all — unlike roles/thr, `nuk`
+// is never dropped by StatsManager's payload-size degradation, so absence is
+// never a truncated payload (contrast creepsCell, where a missing `roles` is
+// ambiguous with degradation).
+function nukerCell(nuk) {
+    const td = document.createElement("td");
+    td.className = "nuker-cell";
+    if (!nuk) { td.textContent = "—"; td.classList.add("na"); return td; }
+    const [g, e, cd] = nuk;
+    const wrap = document.createElement("span");
+    wrap.className = "nuker-fill";
+    wrap.append(
+        nukerChip("ghodium", g, NUKER_GHODIUM_CAPACITY),
+        nukerChip("energy", e, NUKER_ENERGY_CAPACITY),
+    );
+    td.append(wrap);
+    const ready = cd === 0 && g >= NUKER_GHODIUM_CAPACITY && e >= NUKER_ENERGY_CAPACITY;
+    td.title = `${ready ? "ready · " : cd > 0 ? `cooldown ${fmtInt.format(cd)} · ` : ""}`
+        + `ghodium ${fmtInt.format(g)} / ${fmtInt.format(NUKER_GHODIUM_CAPACITY)} · `
+        + `energy ${fmtInt.format(e)} / ${fmtInt.format(NUKER_ENERGY_CAPACITY)}`;
+    return td;
+}
+
 function labStatusBadge(s) {
     const colors = {
         reaction: cssVar("--status-good"),
@@ -570,18 +750,25 @@ function renderLabsTable() {
 // doesn't get mistaken for a healthy-but-uncapped stock. Compounds keep the
 // opposite order — no-max still wins over the dust floor there — since this
 // change is scoped to raw reagents only.
+// 1..5 fill-ramp bucket for an in-range, non-zero fraction — red = short,
+// green = stocked. Zero/floor/no-max handling is caller-specific (e.g. boost
+// stock treats an empty compound as "absent, not short"; the nuker cell
+// wants 0 ghodium to read red, a real shortfall) so it stays out of here.
+function rampLevel(fill) {
+    if (fill < 0.20) return 1;
+    if (fill < 0.40) return 2;
+    if (fill < 0.60) return 3;
+    if (fill < 0.85) return 4;
+    return 5;
+}
+
 function boostFillLevel(amount, max, raw) {
     if (raw && !(amount >= MIN_RAW_STOCK)) return 0;   // unusable by LabManager — absent, not "short"
     if (!raw && !max) return null;                     // no configured max — rendered as an outline chip
     if (!raw && amount < PARTS_PER_BOOST) return 0;    // dust — can't boost a single part
     if (!max) return null;                              // raw, past the floor, but no configured max
     if (!amount) return 0;                              // in-range but empty
-    const fill = amount / max;
-    if (fill < 0.20) return 1;
-    if (fill < 0.40) return 2;
-    if (fill < 0.60) return 3;
-    if (fill < 0.85) return 4;
-    return 5;
+    return rampLevel(amount / max);
 }
 
 // Floor + reason shared by the chip/cell tooltips below, so the "why is this
@@ -749,6 +936,7 @@ function renderRoomsTable() {
         const threatTd = document.createElement("td");
         threatTd.append(threatBadge(r.thr));
         tr.append(threatTd);
+        tr.append(nukerCell(r.nuk));
         return tr;
     }));
 }

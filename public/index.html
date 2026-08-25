@@ -131,6 +131,7 @@ tbody tr:hover { background: var(--ghost); }
 .chips { display: flex; gap: 2px; justify-content: flex-end; }
 .chip { width: 13px; height: 13px; border-radius: 3px; flex: 0 0 auto; box-shadow: inset 0 0 0 1px var(--border); }
 .chip.nomax { background: transparent; box-shadow: inset 0 0 0 1px var(--text-muted); opacity: .45; }
+.nuker-fill { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
 #boost-matrix th { font-size: 11px; }
 #boost-matrix th .th-sym { color: var(--text-muted); font-weight: 400; }
 #boost-matrix td { padding: 6px 8px; }
@@ -232,6 +233,7 @@ td.na       { color: var(--text-muted); }
                 <thead><tr>
                     <th>Room</th><th>RCL</th><th>Progress</th><th>ETA → next</th><th>Spawn energy</th>
                     <th>Storage</th><th>Terminal</th><th>Creeps</th><th>Queue</th><th>Threat</th>
+                    <th title="ghodium · energy fill vs capacity; ready = both full and off cooldown">Nuker</th>
                 </tr></thead>
                 <tbody></tbody>
             </table>
@@ -259,6 +261,14 @@ td.na       { color: var(--text-muted); }
                 </tr></thead>
                 <tbody></tbody>
             </table>
+        </div>
+
+        <div id="nuker-section" hidden>
+            <h2 id="nuker-title">Nuker</h2>
+            <div class="tiles" id="nuker-tiles"></div>
+            <div class="charts">
+                <div class="card"><h3>Nuker fill · % of capacity</h3><div class="plot"><canvas id="c-nuker"></canvas></div></div>
+            </div>
         </div>
     </div>
 
