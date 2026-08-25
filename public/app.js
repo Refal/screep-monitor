@@ -14,6 +14,62 @@ const fmtInt = new Intl.NumberFormat("en");
 const compact = n => (n == null ? "—" : fmtCompact.format(n));
 const pct = (p, pt) => (pt ? (100 * p / pt) : 0);
 
+// GCL points gained between two consecutive snapshots, level-up aware —
+// gcl.p resets to ~0 when gcl.l increments, so a naive p-delta would go
+// sharply negative right at a level-up.
+function gclDelta(prev, cur) {
+    if (cur.gcl.l === prev.gcl.l) return cur.gcl.p - prev.gcl.p;
+    if (cur.gcl.l === prev.gcl.l + 1) return (prev.gcl.pt - prev.gcl.p) + cur.gcl.p;
+    return null; // multi-level jump — intermediate progressTotal unknown, can't attribute
+}
+
+// GCL points gained per tick between consecutive history rows, aligned with
+// history/timeLabels (index 0 has no predecessor, so it's null).
+function gclRateSeries() {
+    return history.map((r, i) => {
+        if (i === 0) return null;
+        const prev = history[i - 1];
+        const dTick = r.tick - prev.tick;
+        const d = dTick > 0 ? gclDelta(prev, r) : null;
+        return d == null ? null : d / dTick;
+    });
+}
+
+// Average GCL gain rate over the whole visible window, and the resulting
+// ETA to the next level — aggregated rather than extrapolated from the last
+// point so a single noisy interval can't skew the estimate.
+function gclEta() {
+    if (history.length < 2 || !latest) return null;
+    let points = 0, ticks = 0;
+    for (let i = 1; i < history.length; i++) {
+        const prev = history[i - 1], cur = history[i];
+        const dTick = cur.tick - prev.tick;
+        if (dTick <= 0) continue;
+        const d = gclDelta(prev, cur);
+        if (d == null) continue;
+        points += d;
+        ticks += dTick;
+    }
+    if (ticks <= 0 || points <= 0) return null;
+    const rate = points / ticks;
+    const etaTicks = (latest.gcl.pt - latest.gcl.p) / rate;
+    const first = history[0], last = history[history.length - 1];
+    const dTickWindow = last.tick - first.tick;
+    const msPerTick = dTickWindow > 0 ? (last.date - first.date) / dTickWindow : null;
+    return { rate, etaTicks, etaMs: msPerTick ? etaTicks * msPerTick : null };
+}
+
+function fmtDuration(ms) {
+    if (ms == null || !Number.isFinite(ms) || ms < 0) return null;
+    const mins = ms / 60000;
+    if (mins < 60) return `${Math.round(mins)}m`;
+    const hours = mins / 60;
+    if (hours < 24) return `${Math.floor(hours)}h ${Math.round(mins % 60)}m`;
+    const days = hours / 24;
+    if (days < 30) return `${Math.floor(days)}d ${Math.round(hours % 24)}h`;
+    return `${Math.round(days)}d`;
+}
+
 // Game facts (compound ladders per boost purpose), same order as the bot CLI.
 // Stock amounts come from the payload (`bst`), maxes from `bmax` — only the
 // symbols are safe to hardcode here.
@@ -103,7 +159,13 @@ function synthDemo() {
         });
         rows.push({
             ts: { toDate: () => date }, date, tick: 76680000 + i * 120,
-            gcl: { l: 9, p: 6000000 + f * 900000, pt: 48032810 },
+            // mild oscillation on top of the upward trend so the GCL/tick chart
+            // has real shape in demo mode, and a steeper trend than the live
+            // shard's so the ETA lands in a legible few-day range rather than
+            // months. Phased on row index (not wall-clock time) so the cycle
+            // count scales with n like every other synthetic series here,
+            // instead of aliasing once 500 samples must cover 30 days.
+            gcl: { l: 9, p: 6000000 + f * 6000000 + 60000 * Math.sin(i / 6), pt: 48032810 },
             cpu: { u: 20 + 8 * Math.sin(i / 7), l: 110, b: Math.min(10000, 6000 + i * 40) },
             cr: 323000000 + i * 9000,
             rooms,
@@ -224,8 +286,12 @@ function renderTiles() {
     const creepCount = s => Object.values(s.rooms).reduce(
         (sum, r) => sum + (r.roles ?? []).reduce((a, x) => a + x.c, 0), 0);
     const gclPct = pct(latest.gcl.p, latest.gcl.pt);
+    const eta = gclEta();
+    const etaText = eta
+        ? `ETA ~${eta.etaMs != null ? fmtDuration(eta.etaMs) : `${compact(eta.etaTicks)} ticks`} · ${compact(eta.rate)}/tick`
+        : "ETA — no gain in range";
     const tiles = [
-        { label: "GCL", value: latest.gcl.l, delta: `${gclPct.toFixed(1)}% to ${latest.gcl.l + 1}` },
+        { label: "GCL", value: latest.gcl.l, delta: `${gclPct.toFixed(1)}% to ${latest.gcl.l + 1}`, sub: etaText },
         { label: "CPU bucket", value: fmtInt.format(latest.cpu.b), delta: `used ${latest.cpu.u.toFixed(1)} / ${latest.cpu.l}` },
         { label: "Credits", value: compact(latest.cr), delta: first ? `${latest.cr - first.cr >= 0 ? "+" : ""}${compact(latest.cr - first.cr)} over range` : "" },
         { label: "Rooms", value: Object.keys(latest.rooms).length, delta: "owned" },
@@ -234,7 +300,9 @@ function renderTiles() {
     $("tiles").replaceChildren(...tiles.map(t => {
         const el = document.createElement("div");
         el.className = "tile";
-        for (const [cls, text] of [["label", t.label], ["value", t.value], ["delta", t.delta]]) {
+        const rows = [["label", t.label], ["value", t.value], ["delta", t.delta]];
+        if (t.sub) rows.push(["sub", t.sub]);
+        for (const [cls, text] of rows) {
             const d = document.createElement("div");
             d.className = cls;
             d.textContent = text;
@@ -250,6 +318,8 @@ function renderEmpireCharts() {
     renderLine("gcl", "c-gcl",
         [lineDataset("GCL progress", history.map(r => pct(r.gcl.p, r.gcl.pt)), "--series-1")],
         { yMax: 100, unit: "%" });
+    renderLine("gclRate", "c-gcl-rate",
+        [lineDataset("GCL/tick", gclRateSeries(), "--series-1")]);
     renderLine("cpu", "c-cpu",
         [lineDataset("CPU used", history.map(r => r.cpu.u), "--series-1")],
         { yMax: latest.cpu.l });
