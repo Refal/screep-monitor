@@ -23,12 +23,12 @@
     --status-serious:   #ec835a;
     --status-critical:  #d03b3b;
     --ghost:          rgba(11,11,11,0.05);
-    /* sequential fill ramp (boost stock vs max) — near-zero recedes toward the surface */
-    --fill-1:         #86b6ef;
-    --fill-2:         #5598e7;
-    --fill-3:         #2a78d6;
-    --fill-4:         #1c5cab;
-    --fill-5:         #104281;
+    /* fill ramp (boost stock vs max) — red = short, green = stocked */
+    --fill-1:         #d03b3b;
+    --fill-2:         #e8722e;
+    --fill-3:         #fab219;
+    --fill-4:         #a8c11b;
+    --fill-5:         #0ca30c;
 }
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
@@ -45,11 +45,11 @@
         --series-2:       #d95926;
         --series-3:       #199e70;
         --ghost:          rgba(255,255,255,0.06);
-        --fill-1:         #184f95;
-        --fill-2:         #256abf;
-        --fill-3:         #3987e5;
-        --fill-4:         #6da7ec;
-        --fill-5:         #b7d3f6;
+        --fill-1:         #e05a5a;
+        --fill-2:         #f08a45;
+        --fill-3:         #fac53f;
+        --fill-4:         #bcd63f;
+        --fill-5:         #2fbe5f;
     }
 }
 :root[data-theme="dark"] {
@@ -66,11 +66,11 @@
     --series-2:       #d95926;
     --series-3:       #199e70;
     --ghost:          rgba(255,255,255,0.06);
-    --fill-1:         #184f95;
-    --fill-2:         #256abf;
-    --fill-3:         #3987e5;
-    --fill-4:         #6da7ec;
-    --fill-5:         #b7d3f6;
+    --fill-1:         #e05a5a;
+    --fill-2:         #f08a45;
+    --fill-3:         #fac53f;
+    --fill-4:         #bcd63f;
+    --fill-5:         #2fbe5f;
 }
 
 * { box-sizing: border-box; }
@@ -206,9 +206,9 @@ td.na       { color: var(--text-muted); }
                 <span class="swatch" style="background: var(--fill-3)"></span>
                 <span class="swatch" style="background: var(--fill-4)"></span>
                 <span class="swatch" style="background: var(--fill-5)"></span>
-                fill % of configured max
+                short → stocked · % of configured max
             </span>
-            <span><span class="swatch" style="background: var(--grid)"></span> no stock</span>
+            <span><span class="swatch" style="background: var(--grid)"></span> no stock / under one boost</span>
             <span><span class="chip nomax" style="width:9px;height:9px"></span> no max configured</span>
             <span>storage + terminal vs default max; per-room overrides ignored — hover a chip for exact parts</span>
         </div>

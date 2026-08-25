@@ -389,14 +389,17 @@ function renderLabsTable() {
     }));
 }
 
-// Sequential fill ramp (magnitude, not state) — 5 buckets plus zero/no-max.
-// Bucket edges chosen so a mid-fill stock (the common case) doesn't read as "full".
-function boostFillLevel(amount, max) {
-    if (!max) return null;               // no configured max — rendered as an outline chip
-    if (!amount) return 0;               // in-range but empty
+// Fill ramp (red = short, green = stocked) — 5 buckets plus zero/no-max.
+// A boost costs PARTS_PER_BOOST per part, so a compound stock under that can't
+// boost anything: treat it as absent rather than flagging it red. Raw reagents
+// (OH/X/G) aren't measured in boosts, so the floor doesn't apply to them.
+function boostFillLevel(amount, max, raw) {
+    if (!max) return null;                            // no configured max — rendered as an outline chip
+    if (!amount) return 0;                             // in-range but empty
+    if (!raw && amount < PARTS_PER_BOOST) return 0;    // dust — can't boost a single part
     const fill = amount / max;
-    if (fill < 0.15) return 1;
-    if (fill < 0.35) return 2;
+    if (fill < 0.20) return 1;
+    if (fill < 0.40) return 2;
     if (fill < 0.60) return 3;
     if (fill < 0.85) return 4;
     return 5;
@@ -405,23 +408,31 @@ function boostFillLevel(amount, max) {
 function boostChip(label, amount, max, raw) {
     const chip = document.createElement("span");
     chip.className = "chip";
-    const level = boostFillLevel(amount, max);
+    const level = boostFillLevel(amount, max, raw);
     const value = raw ? (amount ?? 0) : Math.floor((amount ?? 0) / PARTS_PER_BOOST);
     if (level === null) {
         chip.classList.add("nomax");
         chip.title = `${label} · ${compact(value)} parts · no max configured`;
     } else {
         chip.style.background = level === 0 ? cssVar("--grid") : cssVar(`--fill-${level}`);
-        const fillPct = max ? Math.round(Math.min(1, amount / max) * 100) : 0;
-        chip.title = `${label} · ${fmtInt.format(value)} parts · ${fillPct}% of max`;
+        if (level === 0 && amount) {
+            chip.title = `${label} · ${fmtInt.format(amount)} · under one boost (${PARTS_PER_BOOST})`;
+        } else if (level === 0) {
+            chip.title = `${label} · none`;
+        } else {
+            const fillPct = max ? Math.round(Math.min(1, amount / max) * 100) : 0;
+            chip.title = `${label} · ${fmtInt.format(value)} parts · ${fillPct}% of max`;
+        }
     }
     return chip;
 }
 
 function boostCell(amount, max, raw) {
     const td = document.createElement("td");
-    if (!amount) {
+    if (!amount || (!raw && amount < PARTS_PER_BOOST)) {
         td.textContent = "—";
+        td.className = "na";
+        if (amount) td.title = `${fmtInt.format(amount)} · under one boost (${PARTS_PER_BOOST})`;
         return td;
     }
     const value = raw ? amount : Math.floor(amount / PARTS_PER_BOOST);
@@ -429,9 +440,9 @@ function boostCell(amount, max, raw) {
         td.textContent = compact(value);
         return td;
     }
+    const level = boostFillLevel(amount, max, raw);
     const fill = Math.min(1, amount / max);
-    const level = fill >= 0.5 ? "good" : fill >= 0.15 ? "warning" : "serious";
-    td.append(makeBadge(cssVar(`--status-${level}`), `${compact(value)} · ${Math.round(fill * 100)}%`));
+    td.append(makeBadge(cssVar(`--fill-${level}`), `${compact(value)} · ${Math.round(fill * 100)}%`));
     return td;
 }
 
