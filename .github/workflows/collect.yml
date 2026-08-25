@@ -12,7 +12,7 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,8 +24,32 @@ jobs:
         run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-      - name: Collect snapshot
-        run: node scripts/collect.mjs
+      # GitHub's `schedule` trigger is best-effort and silently drops events
+      # under load — a bare */10 cron was actually firing every 17-84 min.
+      # So this step polls internally for ~50 min per run; the cron just
+      # restarts it, and `concurrency: collect` (cancel-in-progress: false)
+      # keeps one successor queued so the next hour starts the instant this
+      # one ends.
+      - name: Collect snapshots for ~50 minutes
+        shell: bash
         env:
           SCREEPS_TOKEN: ${{ secrets.SCREEPS_TOKEN }}
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+          POLL_SECONDS: "300"
+          RUN_SECONDS: "3300"
+        run: |
+          attempts=0; failures=0
+          while :; do
+            attempts=$(( attempts + 1 ))
+            if ! node scripts/collect.mjs; then
+              failures=$(( failures + 1 ))
+              echo "::warning::collect failed (attempt $attempts, failure $failures)"
+            fi
+            if (( SECONDS + POLL_SECONDS >= RUN_SECONDS )); then break; fi
+            sleep "$POLL_SECONDS"
+          done
+          echo "Completed $attempts collections, $failures failures."
+          if (( failures == attempts )); then
+            echo "::error::every collection attempt failed"
+            exit 1
+          fi
