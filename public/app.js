@@ -961,8 +961,13 @@ function renderAll() {
     renderBoostMatrix();
     renderLabsTable();
     renderRoomsTable();
-    const age = Math.round((Date.now() - latest.ts.toDate().getTime()) / 60000);
-    setStatus(`tick ${fmtInt.format(latest.tick)} · updated ${age} min ago`);
+    const when = latest.ts.toDate();
+    const age = Math.round((Date.now() - when.getTime()) / 60000);
+    const sameDay = when.toDateString() === new Date().toDateString();
+    const stamp = sameDay
+        ? when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+        : when.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+    setStatus(`tick ${fmtInt.format(latest.tick)} · updated ${stamp} (${age} min ago)`);
 }
 
 // ---------- boot ----------
