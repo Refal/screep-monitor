@@ -14,49 +14,62 @@ const fmtInt = new Intl.NumberFormat("en");
 const compact = n => (n == null ? "—" : fmtCompact.format(n));
 const pct = (p, pt) => (pt ? (100 * p / pt) : 0);
 
-// GCL points gained between two consecutive snapshots, level-up aware —
-// gcl.p resets to ~0 when gcl.l increments, so a naive p-delta would go
-// sharply negative right at a level-up.
-function gclDelta(prev, cur) {
-    if (cur.gcl.l === prev.gcl.l) return cur.gcl.p - prev.gcl.p;
-    if (cur.gcl.l === prev.gcl.l + 1) return (prev.gcl.pt - prev.gcl.p) + cur.gcl.p;
+// Progress points gained between two consecutive {l,p,pt} readings, level-up
+// aware — p resets to ~0 when l increments, so a naive p-delta would go
+// sharply negative right at a level-up. Used for both GCL and per-room RCL.
+function progressDelta(prev, cur) {
+    if (!prev || !cur) return null; // room absent from one of the snapshots
+    if (cur.l === prev.l) return cur.p - prev.p;
+    if (cur.l === prev.l + 1) return (prev.pt - prev.p) + cur.p;
     return null; // multi-level jump — intermediate progressTotal unknown, can't attribute
 }
 
-// GCL points gained per tick between consecutive history rows, aligned with
-// history/timeLabels (index 0 has no predecessor, so it's null).
-function gclRateSeries() {
+// Points gained per tick between consecutive history rows, aligned with
+// history/timeLabels (index 0 has no predecessor, so it's null). `sel` reads
+// the {l,p,pt} reading off a history row (e.g. r => r.gcl, r => r.rooms[room]?.rcl).
+function rateSeries(sel) {
     return history.map((r, i) => {
         if (i === 0) return null;
         const prev = history[i - 1];
         const dTick = r.tick - prev.tick;
-        const d = dTick > 0 ? gclDelta(prev, r) : null;
+        const d = dTick > 0 ? progressDelta(sel(prev), sel(r)) : null;
         return d == null ? null : d / dTick;
     });
 }
 
-// Average GCL gain rate over the whole visible window, and the resulting
-// ETA to the next level — aggregated rather than extrapolated from the last
-// point so a single noisy interval can't skew the estimate.
-function gclEta() {
-    if (history.length < 2 || !latest) return null;
+// Average gain rate over the whole visible window — aggregated rather than
+// extrapolated from the last point so a single noisy interval can't skew the
+// estimate — plus the observed wall-clock ms per tick over that window.
+function windowRate(sel) {
+    if (history.length < 2) return null;
     let points = 0, ticks = 0;
     for (let i = 1; i < history.length; i++) {
         const prev = history[i - 1], cur = history[i];
         const dTick = cur.tick - prev.tick;
         if (dTick <= 0) continue;
-        const d = gclDelta(prev, cur);
+        const d = progressDelta(sel(prev), sel(cur));
         if (d == null) continue;
         points += d;
         ticks += dTick;
     }
     if (ticks <= 0 || points <= 0) return null;
     const rate = points / ticks;
-    const etaTicks = (latest.gcl.pt - latest.gcl.p) / rate;
     const first = history[0], last = history[history.length - 1];
     const dTickWindow = last.tick - first.tick;
     const msPerTick = dTickWindow > 0 ? (last.date - first.date) / dTickWindow : null;
-    return { rate, etaTicks, etaMs: msPerTick ? etaTicks * msPerTick : null };
+    return { rate, msPerTick };
+}
+
+// ETA to the next level for a current {l,p,pt} reading. `pt` is falsy at max
+// level (controller.progressTotal is undefined and JSON.stringify drops it),
+// which reads as "no next level" rather than the misleading 0%/instant ETA
+// a naive division would produce.
+function levelEta(sel, cur) {
+    if (!cur?.pt) return null;
+    const wr = windowRate(sel);
+    if (!wr) return null;
+    const etaTicks = (cur.pt - cur.p) / wr.rate;
+    return { rate: wr.rate, etaTicks, etaMs: wr.msPerTick ? etaTicks * wr.msPerTick : null };
 }
 
 function fmtDuration(ms) {
@@ -110,11 +123,45 @@ const DEMO = params.has("demo");
 const themeOverride = params.get("theme");
 if (themeOverride) document.documentElement.dataset.theme = themeOverride;
 
+// Real controller.progressTotal per level (1..7 → points to reach the next
+// level); level 8 has none (max). Used only to make the demo RCL series walk
+// through realistic level-ups.
+const RCL_LEVEL_PT = { 1: 200, 2: 45000, 3: 135000, 4: 405000, 5: 1215000, 6: 2405000, 7: 4805000 };
+
+// Adds `gain` points to a {level, progress} pair, rolling over into the next
+// level(s) exactly like controller.progress does — so demo history can cross
+// a level-up mid-window and exercise progressDelta's level-up branch.
+function advanceRcl(level, progress, gain) {
+    let l = level, p = progress + gain;
+    while (RCL_LEVEL_PT[l] !== undefined && p >= RCL_LEVEL_PT[l]) {
+        p -= RCL_LEVEL_PT[l];
+        l += 1;
+    }
+    return { l, p, pt: RCL_LEVEL_PT[l] };
+}
+
 function synthDemo() {
     const roomNames = ["E15S57", "E18S59", "E21S41", "E21S55", "E23S44", "E27S41"];
     // Per-room fill band for the boosts matrix — spans empty/low/mid/high/full,
     // last room deliberately empty (mirrors a freshly-claimed room with no stock at all).
     const fillFrac = [0.08, 0.92, 0.45, 0.68, 0.28, 0];
+    // Per-room RCL trajectory over the visible window: starting {level, progress},
+    // total points gained by the last row, and an oscillation so the rate chart
+    // has real shape (same reasoning as the gcl series below). E18S59 is seeded
+    // just short of its level-6 threshold so it levels up partway through the
+    // window; E21S55 starts already at level 8 (maxed, no next-level pt).
+    // oscAmp is capped well under (totalGain / MAX_POINTS) * oscPeriod — the
+    // point where the oscillation's slope would exceed the trend's and the
+    // rate would dip negative — so RCL/tick stays positive at every range,
+    // including 30d where n hits the MAX_POINTS ceiling and the trend is weakest.
+    const rclSpecs = [
+        { level: 5, progress: 300000, totalGain: 350000, oscAmp: 3500, oscPeriod: 9 },
+        { level: 6, progress: 2100000, totalGain: 500000, oscAmp: 4000, oscPeriod: 7 },
+        { level: 7, progress: 800000, totalGain: 300000, oscAmp: 2800, oscPeriod: 8 },
+        { level: 8, progress: 5000000, totalGain: 200000, oscAmp: 1400, oscPeriod: 6 },
+        { level: 4, progress: 150000, totalGain: 200000, oscAmp: 2300, oscPeriod: 10 },
+        { level: 6, progress: 400000, totalGain: 250000, oscAmp: 3200, oscPeriod: 11 },
+    ];
     const now = Date.now();
     const n = Math.min(MAX_POINTS, rangeHours * 6);
     const rows = [];
@@ -124,8 +171,10 @@ function synthDemo() {
         const rooms = {};
         roomNames.forEach((name, k) => {
             const frac = fillFrac[k];
+            const spec = rclSpecs[k];
+            const gained = spec.totalGain * f + spec.oscAmp * Math.sin(i / spec.oscPeriod + k);
             rooms[name] = {
-                rcl: { l: 5 + k, p: 200000 + f * 400000 + k * 50000, pt: 1215000 },
+                rcl: advanceRcl(spec.level, spec.progress, Math.max(0, gained)),
                 e: 1200 + Math.round(600 * Math.sin(i / 5 + k)), ec: 1800,
                 se: 200000 + f * 80000 + 20000 * Math.sin(i / 9 + k), te: k * 40000,
                 q: (i + k) % 9,
@@ -281,23 +330,15 @@ function renderLine(key, canvasId, datasets, { yMax = undefined, unit = "" } = {
     charts[key] = new Chart($(canvasId), { type: "line", data: { labels: timeLabels(), datasets }, options: opts });
 }
 
-function renderTiles() {
-    const first = history[0];
-    const creepCount = s => Object.values(s.rooms).reduce(
-        (sum, r) => sum + (r.roles ?? []).reduce((a, x) => a + x.c, 0), 0);
-    const gclPct = pct(latest.gcl.p, latest.gcl.pt);
-    const eta = gclEta();
-    const etaText = eta
+// ETA text shared by the empire GCL tile and the per-room stat strip.
+function etaText(eta) {
+    return eta
         ? `ETA ~${eta.etaMs != null ? fmtDuration(eta.etaMs) : `${compact(eta.etaTicks)} ticks`} · ${compact(eta.rate)}/tick`
         : "ETA — no gain in range";
-    const tiles = [
-        { label: "GCL", value: latest.gcl.l, delta: `${gclPct.toFixed(1)}% to ${latest.gcl.l + 1}`, sub: etaText },
-        { label: "CPU bucket", value: fmtInt.format(latest.cpu.b), delta: `used ${latest.cpu.u.toFixed(1)} / ${latest.cpu.l}` },
-        { label: "Credits", value: compact(latest.cr), delta: first ? `${latest.cr - first.cr >= 0 ? "+" : ""}${compact(latest.cr - first.cr)} over range` : "" },
-        { label: "Rooms", value: Object.keys(latest.rooms).length, delta: "owned" },
-        { label: "Creeps", value: creepCount(latest), delta: "alive (tracked roles)" },
-    ];
-    $("tiles").replaceChildren(...tiles.map(t => {
+}
+
+function renderTileRow(containerId, tiles) {
+    $(containerId).replaceChildren(...tiles.map(t => {
         const el = document.createElement("div");
         el.className = "tile";
         const rows = [["label", t.label], ["value", t.value], ["delta", t.delta]];
@@ -312,6 +353,22 @@ function renderTiles() {
     }));
 }
 
+function renderTiles() {
+    const first = history[0];
+    const creepCount = s => Object.values(s.rooms).reduce(
+        (sum, r) => sum + (r.roles ?? []).reduce((a, x) => a + x.c, 0), 0);
+    const gclPct = pct(latest.gcl.p, latest.gcl.pt);
+    const eta = levelEta(r => r.gcl, latest.gcl);
+    const tiles = [
+        { label: "GCL", value: latest.gcl.l, delta: `${gclPct.toFixed(1)}% to ${latest.gcl.l + 1}`, sub: etaText(eta) },
+        { label: "CPU bucket", value: fmtInt.format(latest.cpu.b), delta: `used ${latest.cpu.u.toFixed(1)} / ${latest.cpu.l}` },
+        { label: "Credits", value: compact(latest.cr), delta: first ? `${latest.cr - first.cr >= 0 ? "+" : ""}${compact(latest.cr - first.cr)} over range` : "" },
+        { label: "Rooms", value: Object.keys(latest.rooms).length, delta: "owned" },
+        { label: "Creeps", value: creepCount(latest), delta: "alive (tracked roles)" },
+    ];
+    renderTileRow("tiles", tiles);
+}
+
 function renderEmpireCharts() {
     $("gcl-next").textContent = String(latest.gcl.l + 1);
     $("cpu-limit").textContent = String(latest.cpu.l);
@@ -319,7 +376,7 @@ function renderEmpireCharts() {
         [lineDataset("GCL progress", history.map(r => pct(r.gcl.p, r.gcl.pt)), "--series-1")],
         { yMax: 100, unit: "%" });
     renderLine("gclRate", "c-gcl-rate",
-        [lineDataset("GCL/tick", gclRateSeries(), "--series-1")]);
+        [lineDataset("GCL/tick", rateSeries(r => r.gcl), "--series-1")]);
     renderLine("cpu", "c-cpu",
         [lineDataset("CPU used", history.map(r => r.cpu.u), "--series-1")],
         { yMax: latest.cpu.l });
@@ -335,13 +392,48 @@ function renderEmpireCharts() {
         { yMax: 100, unit: "%" });
 }
 
+// Stat strip for the selected room's controller: level, progress, upgrade
+// throughput and ETA to the next level — the per-room analogue of the GCL
+// tile in renderTiles().
+function renderRoomTiles(room) {
+    const rclOf = r => r.rooms[room]?.rcl ?? null;
+    const cur = latest.rooms[room]?.rcl;
+    const rangeLabel = $("range-group").querySelector('[aria-pressed="true"]')?.textContent ?? "range";
+    const maxed = !cur?.pt;
+    const wr = windowRate(rclOf);
+    const eta = levelEta(rclOf, cur);
+    const tiles = [
+        {
+            label: "RCL", value: cur?.l ?? "—",
+            delta: maxed ? "max level" : `${compact(cur.p)} / ${compact(cur.pt)}`,
+        },
+        maxed
+            ? { label: "Controller", value: "max", delta: `level ${cur?.l ?? "—"}` }
+            : { label: `To level ${cur.l + 1}`, value: `${pct(cur.p, cur.pt).toFixed(1)}%`, delta: `${compact(cur.pt - cur.p)} left` },
+        { label: "Upgrade", value: wr ? `${compact(wr.rate)}/tick` : "—", delta: `over ${rangeLabel}` },
+        { label: "ETA", value: eta ? (eta.etaMs != null ? `~${fmtDuration(eta.etaMs)}` : `~${compact(eta.etaTicks)} ticks`) : "—",
+          delta: eta ? `${compact(eta.rate)}/tick` : (maxed ? "at max level" : "no gain in range") },
+    ];
+    renderTileRow("room-tiles", tiles);
+}
+
 function renderRoomCharts() {
     const room = selectedRoom;
     $("room-title").textContent = `Room ${room}`;
     const of = fn => history.map(r => (r.rooms[room] ? fn(r.rooms[room]) : null));
+    renderRoomTiles(room);
     renderLine("rcl", "c-rcl",
         [lineDataset("RCL progress", of(r => pct(r.rcl.p, r.rcl.pt)), "--series-1")],
         { yMax: 100, unit: "%" });
+    const rclOf = r => r.rooms[room]?.rcl ?? null;
+    const rclRateDatasets = [lineDataset("RCL/tick", rateSeries(rclOf), "--series-1")];
+    const rclWr = windowRate(rclOf);
+    if (rclWr) {
+        const avg = lineDataset(`avg ${compact(rclWr.rate)}/tick`, history.map(() => rclWr.rate), "--series-2");
+        Object.assign(avg, { borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 0, tension: 0 });
+        rclRateDatasets.push(avg);
+    }
+    renderLine("rclRate", "c-rcl-rate", rclRateDatasets);
     renderLine("energy", "c-energy", [
         lineDataset("Storage", of(r => r.se), "--series-1"),
         lineDataset("Terminal", of(r => r.te), "--series-2"),
@@ -595,15 +687,26 @@ function creepsCell(roles) {
     return td;
 }
 
+// ETA cell text shared by the rooms table — mirrors the room stat strip's
+// ETA tile, but compact enough for a table cell.
+function etaCellText(eta, maxed) {
+    if (maxed) return "max";
+    if (!eta) return "—";
+    return eta.etaMs != null ? `~${fmtDuration(eta.etaMs)}` : `~${compact(eta.etaTicks)} ticks`;
+}
+
 function renderRoomsTable() {
     const tbody = $("rooms-table").querySelector("tbody");
     const rows = Object.entries(latest.rooms).sort(([a], [b]) => a.localeCompare(b));
     tbody.replaceChildren(...rows.map(([name, r]) => {
         const tr = document.createElement("tr");
+        const maxed = !r.rcl.pt;
+        const eta = levelEta(row => row.rooms[name]?.rcl ?? null, r.rcl);
         const cells = [
             name,
             String(r.rcl.l),
-            `${pct(r.rcl.p, r.rcl.pt).toFixed(1)}%`,
+            maxed ? "max" : `${pct(r.rcl.p, r.rcl.pt).toFixed(1)}%`,
+            etaCellText(eta, maxed),
             `${r.e} / ${r.ec}`,
             compact(r.se),
             compact(r.te),

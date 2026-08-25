@@ -230,7 +230,7 @@ td.na       { color: var(--text-muted); }
         <div class="table-wrap">
             <table id="rooms-table">
                 <thead><tr>
-                    <th>Room</th><th>RCL</th><th>Progress</th><th>Spawn energy</th>
+                    <th>Room</th><th>RCL</th><th>Progress</th><th>ETA → next</th><th>Spawn energy</th>
                     <th>Storage</th><th>Terminal</th><th>Creeps</th><th>Queue</th><th>Threat</th>
                 </tr></thead>
                 <tbody></tbody>
@@ -241,8 +241,10 @@ td.na       { color: var(--text-muted); }
             <h2 id="room-title">Room</h2>
             <select id="room-select" aria-label="Room"></select>
         </div>
+        <div class="tiles" id="room-tiles"></div>
         <div class="charts">
             <div class="card"><h3>RCL progress · % to next level</h3><div class="plot"><canvas id="c-rcl"></canvas></div></div>
+            <div class="card"><h3>RCL gain · points per tick</h3><div class="plot"><canvas id="c-rcl-rate"></canvas></div></div>
             <div class="card"><h3>Stored energy</h3><div class="plot"><canvas id="c-energy"></canvas></div></div>
             <div class="card"><h3>Spawn energy · % of capacity</h3><div class="plot"><canvas id="c-spawn"></canvas></div></div>
             <div class="card"><h3>Creeps · current vs desired (latest)</h3><div class="plot" style="height:300px"><canvas id="c-roles"></canvas></div></div>
