@@ -1,10 +1,11 @@
 import { firebaseConfig } from "./firebase-config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 // Firestore Lite, not the full SDK: the dashboard only ever does one-shot
-// reads on a 10-minute poll (see setInterval below), and the full SDK's
-// WebChannel `Listen` stream — used even for one-shot getDoc/getDocs — has
-// proven flaky on some networks (backchannel GETs 404, retried with
-// backoff). Lite talks plain REST and skips that stream entirely.
+// reads, polled on the collector's ~5-minute write cadence (see
+// scheduleNextPoll below), and the full SDK's WebChannel `Listen` stream —
+// used even for one-shot getDoc/getDocs — has proven flaky on some networks
+// (backchannel GETs 404, retried with backoff). Lite talks plain REST and
+// skips that stream entirely.
 import {
     getFirestore, doc, getDoc, collection, query, where, orderBy, getDocs, Timestamp,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-lite.js";
@@ -146,7 +147,15 @@ let rangeHours = 24;
 let selectedRoom = null;
 let latest = null;
 let history = [];        // downsampled [{date, tick, gcl, cpu, cr, rooms}]
+let historyRaw = [];     // every fetched row for the current range, un-downsampled
+let inFlight = false;
+let lastPollAt = 0;
+let pollTimer = null;
 const charts = {};
+
+const POLL_MS = 5 * 60e3;
+const STALE_PROBE_MS = 2.5 * 60e3;
+const STALE_AFTER_MS = 15 * 60e3;
 
 function setStatus(text) { $("status").textContent = text; }
 
@@ -324,13 +333,41 @@ async function loadLatest() {
     latest = snap.data();
 }
 
-async function loadHistory() {
-    if (DEMO) { history = synthDemo(); return; }
+const toRows = snap => snap.docs.map(d => { const v = d.data(); return { ...v, date: v.ts.toDate() }; });
+
+// Fetches the full `rangeHours` window into historyRaw. Used on first load,
+// on a range switch, and as the fallback when an incremental fetch fails.
+// Returns the row count, for loadHistory's render gate.
+async function loadHistoryFull() {
     const cutoff = Timestamp.fromMillis(Date.now() - rangeHours * 3600e3);
     const q = query(collection(db, "snapshots"), where("ts", ">=", cutoff), orderBy("ts", "asc"));
-    const snap = await getDocs(q);
-    const rows = snap.docs.map(d => { const v = d.data(); return { ...v, date: v.ts.toDate() }; });
-    history = downsample(rows, MAX_POINTS);
+    historyRaw = toRows(await getDocs(q));
+    return historyRaw.length;
+}
+
+// Fetches only snapshots newer than the last row already held, appends them,
+// and drops rows that have aged out of the current window. Keeps a poll's
+// read cost near-constant (1-2 docs) instead of rescanning the whole range.
+async function loadHistoryIncremental() {
+    const cursor = historyRaw.at(-1).ts;
+    const q = query(collection(db, "snapshots"), where("ts", ">", cursor), orderBy("ts", "asc"));
+    const rows = toRows(await getDocs(q));
+    historyRaw.push(...rows);
+    const cutoff = Date.now() - rangeHours * 3600e3;
+    while (historyRaw.length && historyRaw[0].date.getTime() < cutoff) historyRaw.shift();
+    return rows.length;
+}
+
+// Returns the number of new rows fetched (used by the render gate). Range
+// switches reset historyRaw to [] (see bindControls), so an empty historyRaw
+// doubles as "need a full fetch" without a separate range-tracking flag.
+async function loadHistory() {
+    if (DEMO) { history = synthDemo(); return history.length; }
+    const added = historyRaw.length > 0
+        ? await loadHistoryIncremental().catch(loadHistoryFull)
+        : await loadHistoryFull();
+    history = downsample(historyRaw, MAX_POINTS);
+    return added;
 }
 
 function downsample(rows, max) {
@@ -965,35 +1002,83 @@ function renderAll() {
     renderBoostMatrix();
     renderLabsTable();
     renderRoomsTable();
+    renderStatus();
+}
+
+// Ms since latest's snapshot was taken, shared by renderStatus (the "(N min
+// ago)" readout) and scheduleNextPoll (aiming the next poll at latest's age).
+function dataAgeMs() {
+    return latest ? Date.now() - latest.ts.toDate().getTime() : 0;
+}
+
+// Redraws only the header status line — tick, timestamp, and age. Cheap
+// enough to run on its own 30s tick so "(N min ago)" counts up live between
+// polls instead of only updating when a full refresh happens to land.
+function renderStatus() {
+    if (!latest) return;
     const when = latest.ts.toDate();
-    const age = Math.round((Date.now() - when.getTime()) / 60000);
+    const ageMs = dataAgeMs();
+    const age = Math.round(ageMs / 60000);
     const sameDay = when.toDateString() === new Date().toDateString();
     const stamp = sameDay
         ? when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
         : when.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
-    setStatus(`tick ${fmtInt.format(latest.tick)} · updated ${stamp} (${age} min ago)`);
+    const stale = ageMs > STALE_AFTER_MS;
+    setStatus(`tick ${fmtInt.format(latest.tick)} · updated ${stamp} (${age} min ago)${stale ? " · stale" : ""}`);
+    $("status").classList.toggle("stale", stale);
 }
 
 // ---------- boot ----------
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function refresh() {
+async function refresh({ force = false } = {}) {
+    if (inFlight) return;
+    inFlight = true;
+    $("refresh")?.toggleAttribute("disabled", true);
     const retryDelaysMs = [1000, 3000];
-    for (let attempt = 0; ; attempt++) {
-        setStatus(attempt === 0 ? "loading…" : `loading… (retry ${attempt})`);
-        try {
-            await Promise.all([loadLatest(), loadHistory()]);
-            renderAll();
-            return;
-        } catch (err) {
-            if (attempt >= retryDelaysMs.length) {
-                setStatus(String(err.message ?? err));
+    try {
+        for (let attempt = 0; ; attempt++) {
+            setStatus(attempt === 0 ? "loading…" : `loading… (retry ${attempt})`);
+            try {
+                const prevTick = latest?.tick ?? null;
+                const [, added] = await Promise.all([loadLatest(), loadHistory()]);
+                lastPollAt = Date.now();
+                if (force || latest.tick !== prevTick || added > 0) {
+                    renderAll();
+                } else {
+                    renderStatus();
+                }
                 return;
+            } catch (err) {
+                if (attempt >= retryDelaysMs.length) {
+                    setStatus(String(err.message ?? err));
+                    return;
+                }
+                await sleep(retryDelaysMs[attempt]);
             }
-            await sleep(retryDelaysMs[attempt]);
         }
+    } finally {
+        inFlight = false;
+        $("refresh")?.toggleAttribute("disabled", false);
+        if (!DEMO) scheduleNextPoll();
     }
+}
+
+// Self-scheduling poll aimed at the collector's ~5-minute write cadence: if
+// the last poll found new data, aim the next one just after the next
+// expected write (with jitter so multiple open tabs don't align); if it
+// found nothing new, fall back to a fixed probe interval rather than one
+// derived from latest.ts's age, so a stalled collector can't make the page
+// poll faster and faster.
+function scheduleNextPoll() {
+    if (pollTimer) clearTimeout(pollTimer);
+    const ageMs = dataAgeMs();
+    const jitterMs = Math.random() * 20e3;
+    const delayMs = ageMs < POLL_MS
+        ? Math.max(60e3, POLL_MS - ageMs) + jitterMs
+        : STALE_PROBE_MS + jitterMs;
+    pollTimer = setTimeout(refresh, delayMs);
 }
 
 function bindControls() {
@@ -1002,13 +1087,27 @@ function bindControls() {
         if (!btn) return;
         for (const b of $("range-group").querySelectorAll("button")) b.setAttribute("aria-pressed", String(b === btn));
         rangeHours = Number(btn.dataset.range);
-        refresh();
+        historyRaw = [];
+        refresh({ force: true });
     });
+    $("refresh")?.addEventListener("click", () => refresh({ force: true }));
     $("room-select").addEventListener("change", e => {
         selectedRoom = e.target.value;
         renderRoomCharts();
     });
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => latest && renderAll());
+    if (!DEMO) {
+        // Skip the periodic tick while backgrounded — nothing to redraw for
+        // no one to see — but renderStatus() itself always runs as part of
+        // an actual refresh (see renderAll), regardless of visibility.
+        setInterval(() => { if (!document.hidden) renderStatus(); }, 30e3);
+        const wake = () => {
+            if (!document.hidden && Date.now() - lastPollAt > 60e3) refresh();
+        };
+        document.addEventListener("visibilitychange", wake);
+        window.addEventListener("focus", wake);
+        window.addEventListener("online", wake);
+    }
 }
 
 if (!DEMO && firebaseConfig.apiKey === "REPLACE_ME") {
@@ -1035,5 +1134,4 @@ if (!DEMO && firebaseConfig.apiKey === "REPLACE_ME") {
     $("app").hidden = false;
     bindControls();
     refresh();
-    if (!DEMO) setInterval(refresh, 10 * 60e3);
 }

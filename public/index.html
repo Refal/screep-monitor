@@ -151,6 +151,12 @@ td.na       { color: var(--text-muted); }
 }
 .notice code { background: var(--ghost); padding: 1px 5px; border-radius: 4px; }
 #status { color: var(--text-muted); font-size: 12px; }
+#status.stale { color: var(--status-warning); }
+#refresh {
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+    font-size: 14px; line-height: 1; width: 28px; height: 28px; border-radius: 8px; cursor: pointer;
+}
+#refresh:disabled { opacity: .5; cursor: default; }
 </style>
 </head>
 <body>
@@ -169,6 +175,7 @@ td.na       { color: var(--text-muted); }
                 <button data-range="168">7d</button>
                 <button data-range="720">30d</button>
             </div>
+            <button id="refresh" type="button" aria-label="Refresh now" title="Refresh now">↻</button>
         </div>
 
         <div class="tiles" id="tiles"></div>

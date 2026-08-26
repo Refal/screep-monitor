@@ -1,7 +1,7 @@
 # screep_monitor
 
 Room-statistics dashboard for the screeps2 bot — fully card-free:
-GitHub Actions (collector, every 10 min) → Firestore (Firebase Spark) → Firebase Hosting (dashboard).
+GitHub Actions (collector, every 5 min) → Firestore (Firebase Spark) → Firebase Hosting (dashboard).
 
 The bot publishes a compact stats JSON to **RawMemory segment 90** on shard2 every 20 ticks
 (`StatsManager` in the screeps2 repo). `scripts/collect.mjs` fetches that segment from the
@@ -9,12 +9,16 @@ Screeps Web API and stores snapshots in Firestore; `public/` is a static Chart.j
 reading Firestore directly under read-only security rules.
 
 The dashboard uses the **Firestore Lite** SDK (`firebase-firestore-lite.js`), not the full
-SDK, on purpose: it only ever does one-shot reads on a 10-minute poll, and the full SDK's
-WebChannel `Listen` stream — used internally even for one-shot `getDoc`/`getDocs` — proved
-flaky on some networks (backchannel GETs 404ing, retried with backoff, data appearing only
-after a few reloads). Lite talks plain REST and avoids that stream. If a live-updating
-dashboard is ever wanted, that's a separate feature and would mean switching back to the
-full SDK with `onSnapshot`.
+SDK, on purpose: it only ever does one-shot reads, polled on the collector's ~5-minute write
+cadence, and the full SDK's WebChannel `Listen` stream — used internally even for one-shot
+`getDoc`/`getDocs` — proved flaky on some networks (backchannel GETs 404ing, retried with
+backoff, data appearing only after a few reloads). Lite talks plain REST and avoids that
+stream. Each poll after the first fetches only snapshots newer than what it already has
+(`loadHistoryIncremental` in `public/app.js`), so the 5-minute cadence stays cheaper in reads
+than the old 10-minute full-refetch poll. The page also refreshes immediately on regaining
+focus/visibility (background tabs get their timers throttled) and skips re-rendering charts
+when a poll finds no new tick. If a truly push-based dashboard is ever wanted, that's a
+separate feature and would mean switching back to the full SDK with `onSnapshot`.
 
 ## Local preview (no setup needed)
 
