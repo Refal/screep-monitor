@@ -8,6 +8,14 @@ The bot publishes a compact stats JSON to **RawMemory segment 90** on shard2 eve
 Screeps Web API and stores snapshots in Firestore; `public/` is a static Chart.js dashboard
 reading Firestore directly under read-only security rules.
 
+The dashboard uses the **Firestore Lite** SDK (`firebase-firestore-lite.js`), not the full
+SDK, on purpose: it only ever does one-shot reads on a 10-minute poll, and the full SDK's
+WebChannel `Listen` stream — used internally even for one-shot `getDoc`/`getDocs` — proved
+flaky on some networks (backchannel GETs 404ing, retried with backoff, data appearing only
+after a few reloads). Lite talks plain REST and avoids that stream. If a live-updating
+dashboard is ever wanted, that's a separate feature and would mean switching back to the
+full SDK with `onSnapshot`.
+
 ## Local preview (no setup needed)
 
 ```sh

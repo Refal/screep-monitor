@@ -1,8 +1,13 @@
 import { firebaseConfig } from "./firebase-config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+// Firestore Lite, not the full SDK: the dashboard only ever does one-shot
+// reads on a 10-minute poll (see setInterval below), and the full SDK's
+// WebChannel `Listen` stream — used even for one-shot getDoc/getDocs — has
+// proven flaky on some networks (backchannel GETs 404, retried with
+// backoff). Lite talks plain REST and skips that stream entirely.
 import {
     getFirestore, doc, getDoc, collection, query, where, orderBy, getDocs, Timestamp,
-} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-lite.js";
 const MAX_POINTS = 500;
 
 const $ = id => document.getElementById(id);
@@ -971,13 +976,23 @@ function renderAll() {
 
 // ---------- boot ----------
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
 async function refresh() {
-    setStatus("loading…");
-    try {
-        await Promise.all([loadLatest(), loadHistory()]);
-        renderAll();
-    } catch (err) {
-        setStatus(String(err.message ?? err));
+    const retryDelaysMs = [1000, 3000];
+    for (let attempt = 0; ; attempt++) {
+        setStatus(attempt === 0 ? "loading…" : `loading… (retry ${attempt})`);
+        try {
+            await Promise.all([loadLatest(), loadHistory()]);
+            renderAll();
+            return;
+        } catch (err) {
+            if (attempt >= retryDelaysMs.length) {
+                setStatus(String(err.message ?? err));
+                return;
+            }
+            await sleep(retryDelaysMs[attempt]);
+        }
     }
 }
 
