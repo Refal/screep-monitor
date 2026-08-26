@@ -14,7 +14,12 @@
     "test": "node --test"
   },
   "dependencies": {
-    "firebase-admin": "^13.0.0"
+    "firebase-admin": "^14.3.0"
+  },
+  "overrides": {
+    "uuid": "^11.1.1",
+    "retry-request": "^9.0.1",
+    "teeny-request": "^11.0.1"
   },
   "allowScripts": {
     "@firebase/util@1.15.3": true,

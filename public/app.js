@@ -7,7 +7,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/fireba
 // (backchannel GETs 404, retried with backoff). Lite talks plain REST and
 // skips that stream entirely.
 import {
-    getFirestore, doc, getDoc, collection, query, where, orderBy, getDocs, Timestamp,
+    getFirestore, doc, getDoc, collection, query, where, orderBy, limit, getDocs, Timestamp,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-lite.js";
 import {
     compact, pct, rateSeries, observedMsPerTick, windowRate, stockRate,
@@ -15,6 +15,12 @@ import {
     PARTS_PER_BOOST, MIN_RAW_STOCK,
 } from "./calc.js";
 const MAX_POINTS = 500;
+// firestore.rules caps snapshots list() queries at request.query.limit <= 9000
+// (anonymous-scan quota defense — see README "On the web apiKey"). Sized for
+// the worst legitimate range: 30d at the collector's ~5min cadence is
+// 30 * 24 * 12 = 8,640 docs, so this leaves headroom without opening the cap
+// back up. Both history queries below must carry it or Firestore denies them.
+const MAX_HISTORY_DOCS = 9000;
 
 const $ = id => document.getElementById(id);
 const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -244,7 +250,7 @@ const toRows = snap => snap.docs.map(d => { const v = d.data(); return { ...v, d
 // Returns the row count, for loadHistory's render gate.
 async function loadHistoryFull() {
     const cutoff = Timestamp.fromMillis(Date.now() - rangeHours * 3600e3);
-    const q = query(collection(db, "snapshots"), where("ts", ">=", cutoff), orderBy("ts", "asc"));
+    const q = query(collection(db, "snapshots"), where("ts", ">=", cutoff), orderBy("ts", "asc"), limit(MAX_HISTORY_DOCS));
     historyRaw = toRows(await getDocs(q));
     return historyRaw.length;
 }
@@ -254,7 +260,7 @@ async function loadHistoryFull() {
 // read cost near-constant (1-2 docs) instead of rescanning the whole range.
 async function loadHistoryIncremental() {
     const cursor = historyRaw.at(-1).ts;
-    const q = query(collection(db, "snapshots"), where("ts", ">", cursor), orderBy("ts", "asc"));
+    const q = query(collection(db, "snapshots"), where("ts", ">", cursor), orderBy("ts", "asc"), limit(MAX_HISTORY_DOCS));
     const rows = toRows(await getDocs(q));
     historyRaw.push(...rows);
     const cutoff = Date.now() - rangeHours * 3600e3;

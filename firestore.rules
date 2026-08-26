@@ -4,7 +4,14 @@ service cloud.firestore {
     // Public read-only game stats; all writes go through the Admin SDK
     // (GitHub Actions collector), which bypasses these rules.
     match /snapshots/{id} {
-      allow read: if true;
+      // No client reads a single snapshot by id — only ranged/listed queries
+      // from the dashboard, which always carry an explicit limit() (see
+      // public/app.js MAX_HISTORY_DOCS). Capping list size here bounds the
+      // cost of an anonymous full-collection scan; it does not require
+      // authentication, since none of this project's data is confidential
+      // (see README "On the web apiKey").
+      allow get: if false;
+      allow list: if request.query.limit <= 9000;
       allow write: if false;
     }
     match /meta/{id} {
