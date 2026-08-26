@@ -9,111 +9,17 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/fireba
 import {
     getFirestore, doc, getDoc, collection, query, where, orderBy, getDocs, Timestamp,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-lite.js";
+import {
+    compact, pct, rateSeries, observedMsPerTick, windowRate, stockRate,
+    levelEta, fmtDuration, downsample, rampLevel, boostFillLevel, boostFloor,
+    PARTS_PER_BOOST, MIN_RAW_STOCK,
+} from "./calc.js";
 const MAX_POINTS = 500;
 
 const $ = id => document.getElementById(id);
 const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
-const fmtCompact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 const fmtInt = new Intl.NumberFormat("en");
-const compact = n => (n == null ? "—" : fmtCompact.format(n));
-const pct = (p, pt) => (pt ? (100 * p / pt) : 0);
-
-// Progress points gained between two consecutive {l,p,pt} readings, level-up
-// aware — p resets to ~0 when l increments, so a naive p-delta would go
-// sharply negative right at a level-up. Used for both GCL and per-room RCL.
-function progressDelta(prev, cur) {
-    if (!prev || !cur) return null; // room absent from one of the snapshots
-    if (cur.l === prev.l) return cur.p - prev.p;
-    if (cur.l === prev.l + 1) return (prev.pt - prev.p) + cur.p;
-    return null; // multi-level jump — intermediate progressTotal unknown, can't attribute
-}
-
-// Points gained per tick between consecutive history rows, aligned with
-// history/timeLabels (index 0 has no predecessor, so it's null). `sel` reads
-// the {l,p,pt} reading off a history row (e.g. r => r.gcl, r => r.rooms[room]?.rcl).
-function rateSeries(sel) {
-    return history.map((r, i) => {
-        if (i === 0) return null;
-        const prev = history[i - 1];
-        const dTick = r.tick - prev.tick;
-        const d = dTick > 0 ? progressDelta(sel(prev), sel(r)) : null;
-        return d == null ? null : d / dTick;
-    });
-}
-
-// Observed wall-clock ms per tick over the whole visible window, from the
-// first/last history rows. Standalone (unlike inline in windowRate) so it can
-// back ETAs that aren't {l,p,pt}-shaped, e.g. nuker cooldown ticks. Guards its
-// own length since it no longer sits behind windowRate's early return —
-// history can legitimately be empty (latest loads independently of history).
-function observedMsPerTick() {
-    if (history.length < 2) return null;
-    const first = history[0], last = history[history.length - 1];
-    const dTick = last.tick - first.tick;
-    return dTick > 0 ? (last.date - first.date) / dTick : null;
-}
-
-// Average gain rate over the whole visible window — aggregated rather than
-// extrapolated from the last point so a single noisy interval can't skew the
-// estimate — plus the observed wall-clock ms per tick over that window.
-function windowRate(sel) {
-    if (history.length < 2) return null;
-    let points = 0, ticks = 0;
-    for (let i = 1; i < history.length; i++) {
-        const prev = history[i - 1], cur = history[i];
-        const dTick = cur.tick - prev.tick;
-        if (dTick <= 0) continue;
-        const d = progressDelta(sel(prev), sel(cur));
-        if (d == null) continue;
-        points += d;
-        ticks += dTick;
-    }
-    if (ticks <= 0 || points <= 0) return null;
-    const rate = points / ticks;
-    return { rate, msPerTick: observedMsPerTick() };
-}
-
-// Average non-decreasing rate of a plain numeric series over the window —
-// the nuker-fill analogue of windowRate, but for raw numbers rather than
-// {l,p,pt}. Skips any interval where the value dropped (a nuke launch empties
-// the store; that single step must not poison the refill trend it
-// interrupted) and any interval touching a null reading (room/nuker absent
-// from that snapshot, or predating this field entirely).
-function stockRate(sel) {
-    let gained = 0, ticks = 0;
-    for (let i = 1; i < history.length; i++) {
-        const prev = sel(history[i - 1]), cur = sel(history[i]);
-        const dTick = history[i].tick - history[i - 1].tick;
-        if (prev == null || cur == null || dTick <= 0 || cur < prev) continue;
-        gained += cur - prev;
-        ticks += dTick;
-    }
-    return ticks > 0 && gained > 0 ? gained / ticks : null;
-}
-
-// ETA to the next level for a current {l,p,pt} reading. `pt` is falsy at max
-// level (controller.progressTotal is undefined and JSON.stringify drops it),
-// which reads as "no next level" rather than the misleading 0%/instant ETA
-// a naive division would produce.
-function levelEta(sel, cur) {
-    if (!cur?.pt) return null;
-    const wr = windowRate(sel);
-    if (!wr) return null;
-    const etaTicks = (cur.pt - cur.p) / wr.rate;
-    return { rate: wr.rate, etaTicks, etaMs: wr.msPerTick ? etaTicks * wr.msPerTick : null };
-}
-
-function fmtDuration(ms) {
-    if (ms == null || !Number.isFinite(ms) || ms < 0) return null;
-    const mins = ms / 60000;
-    if (mins < 60) return `${Math.round(mins)}m`;
-    const hours = mins / 60;
-    if (hours < 24) return `${Math.floor(hours)}h ${Math.round(mins % 60)}m`;
-    const days = hours / 24;
-    if (days < 30) return `${Math.floor(days)}d ${Math.round(hours % 24)}h`;
-    return `${Math.round(days)}d`;
-}
 
 // Game facts (compound ladders per boost purpose), same order as the bot CLI.
 // Stock amounts come from the payload (`bst`), maxes from `bmax` — only the
@@ -135,8 +41,6 @@ const RAW_INPUTS = [["hydroxide", "OH"], ["catalyst", "X"], ["ghodium", "G"]];
 // All-rooms matrix drops harvest/carry to keep the column count tight — still
 // shown in the per-room detail table below, which uses BOOST_LADDERS directly.
 const MATRIX_LADDERS = BOOST_LADDERS.filter(([purpose]) => purpose !== "harvest" && purpose !== "carry");
-const PARTS_PER_BOOST = 30; // LAB_BOOST_MINERAL
-const MIN_RAW_STOCK = 100;  // LabManager.MIN_STORAGE_AMOUNT — below this a reagent is unusable
 // Nuker capacities/cooldown — game constants, not in the payload.
 const NUKER_GHODIUM_CAPACITY = 5000;
 const NUKER_ENERGY_CAPACITY = 300000;
@@ -370,15 +274,6 @@ async function loadHistory() {
     return added;
 }
 
-function downsample(rows, max) {
-    if (rows.length <= max) return rows;
-    const step = rows.length / max;
-    const out = [];
-    for (let i = 0; i < max; i++) out.push(rows[Math.floor(i * step)]);
-    out[out.length - 1] = rows[rows.length - 1];
-    return out;
-}
-
 // ---------- rendering ----------
 
 function timeLabels() {
@@ -446,8 +341,8 @@ function lineDataset(label, data, colorVar) {
 // GCL chart and the per-room RCL chart. The avg is omitted (and with it the
 // legend, per baseOptions) when there's no positive gain in range.
 function rateDatasets(label, sel) {
-    const datasets = [lineDataset(label, rateSeries(sel), "--series-1")];
-    const wr = windowRate(sel);
+    const datasets = [lineDataset(label, rateSeries(sel, history), "--series-1")];
+    const wr = windowRate(sel, history);
     if (wr) {
         const avg = lineDataset(`avg ${compact(wr.rate)}/tick`, history.map(() => wr.rate), "--series-2");
         Object.assign(avg, { borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 0, tension: 0 });
@@ -492,7 +387,7 @@ function renderTiles() {
     const creepCount = s => Object.values(s.rooms).reduce(
         (sum, r) => sum + (r.roles ?? []).reduce((a, x) => a + x.c, 0), 0);
     const gclPct = pct(latest.gcl.p, latest.gcl.pt);
-    const eta = levelEta(r => r.gcl, latest.gcl);
+    const eta = levelEta(r => r.gcl, latest.gcl, history);
     const tiles = [
         { label: "GCL", value: latest.gcl.l, delta: `${gclPct.toFixed(1)}% to ${latest.gcl.l + 1}`, sub: etaText(eta) },
         { label: "CPU bucket", value: fmtInt.format(latest.cpu.b), delta: `used ${latest.cpu.u.toFixed(1)} / ${latest.cpu.l}` },
@@ -533,8 +428,8 @@ function renderRoomTiles(room) {
     const cur = latest.rooms[room]?.rcl;
     const rangeLabel = $("range-group").querySelector('[aria-pressed="true"]')?.textContent ?? "range";
     const maxed = !cur?.pt;
-    const wr = windowRate(rclOf);
-    const eta = levelEta(rclOf, cur);
+    const wr = windowRate(rclOf, history);
+    const eta = levelEta(rclOf, cur, history);
     const tiles = [
         {
             label: "RCL", value: cur?.l ?? "—",
@@ -575,8 +470,8 @@ function renderNuker(room, of) {
     let readyTicks = ready ? 0 : cd;
     let etaKnown = true;
     for (const [full, cap, amount, rate] of [
-        [gFull, NUKER_GHODIUM_CAPACITY, g, stockRate(r => r.rooms[room]?.nuk?.[0] ?? null)],
-        [eFull, NUKER_ENERGY_CAPACITY, e, stockRate(r => r.rooms[room]?.nuk?.[1] ?? null)],
+        [gFull, NUKER_GHODIUM_CAPACITY, g, stockRate(r => r.rooms[room]?.nuk?.[0] ?? null, history)],
+        [eFull, NUKER_ENERGY_CAPACITY, e, stockRate(r => r.rooms[room]?.nuk?.[1] ?? null, history)],
     ]) {
         if (full) continue;
         if (!rate) { etaKnown = false; continue; }
@@ -586,7 +481,7 @@ function renderNuker(room, of) {
     // under minBucket) inflate the observed ms/tick and so over-estimate this
     // ETA — pre-existing for the RCL ETA too, but the ~100k-tick cooldown
     // multiplies it far more.
-    const ms = observedMsPerTick();
+    const ms = observedMsPerTick(history);
     const etaLabel = ready ? "ready"
         : !etaKnown ? "—"
         : ms != null ? `~${fmtDuration(readyTicks * ms)}` : `~${compact(readyTicks)} ticks`;
@@ -781,45 +676,6 @@ function renderLabsTable() {
     }));
 }
 
-// Fill ramp (red = short, green = stocked) — 5 buckets plus zero/no-max.
-// A boost costs PARTS_PER_BOOST per part, so a compound stock under that can't
-// boost anything: treat it as absent rather than flagging it red. Raw reagents
-// (OH/X/G) have their own, much higher floor — LabManager won't run a reaction
-// below MIN_RAW_STOCK in storage, so dust below that is unusable too.
-// For raw, the floor is checked before the no-max case: a trace amount reads
-// as absent even when the reagent has no configured max (e.g. G today), so it
-// doesn't get mistaken for a healthy-but-uncapped stock. Compounds keep the
-// opposite order — no-max still wins over the dust floor there — since this
-// change is scoped to raw reagents only.
-// 1..5 fill-ramp bucket for an in-range, non-zero fraction — red = short,
-// green = stocked. Zero/floor/no-max handling is caller-specific (e.g. boost
-// stock treats an empty compound as "absent, not short"; the nuker cell
-// wants 0 ghodium to read red, a real shortfall) so it stays out of here.
-function rampLevel(fill) {
-    if (fill < 0.20) return 1;
-    if (fill < 0.40) return 2;
-    if (fill < 0.60) return 3;
-    if (fill < 0.85) return 4;
-    return 5;
-}
-
-function boostFillLevel(amount, max, raw) {
-    if (raw && !(amount >= MIN_RAW_STOCK)) return 0;   // unusable by LabManager — absent, not "short"
-    if (!raw && !max) return null;                     // no configured max — rendered as an outline chip
-    if (!raw && amount < PARTS_PER_BOOST) return 0;    // dust — can't boost a single part
-    if (!max) return null;                              // raw, past the floor, but no configured max
-    if (!amount) return 0;                              // in-range but empty
-    return rampLevel(amount / max);
-}
-
-// Floor + reason shared by the chip/cell tooltips below, so the "why is this
-// grey" text matches boostFillLevel's own precedence.
-function boostFloor(raw) {
-    return raw
-        ? { amount: MIN_RAW_STOCK, reason: `below lab minimum (${MIN_RAW_STOCK})` }
-        : { amount: PARTS_PER_BOOST, reason: `under one boost (${PARTS_PER_BOOST})` };
-}
-
 function boostChip(label, amount, max, raw) {
     const chip = document.createElement("span");
     chip.className = "chip";
@@ -955,7 +811,7 @@ function renderRoomsTable() {
     tbody.replaceChildren(...rows.map(([name, r]) => {
         const tr = document.createElement("tr");
         const maxed = !r.rcl.pt;
-        const eta = levelEta(row => row.rooms[name]?.rcl ?? null, r.rcl);
+        const eta = levelEta(row => row.rooms[name]?.rcl ?? null, r.rcl, history);
         const cells = [
             name,
             String(r.rcl.l),

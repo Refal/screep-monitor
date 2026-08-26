@@ -25,6 +25,8 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci --omit=dev
+      - name: Run unit tests
+        run: npm test
       # Fail closed if a real key ever gets committed to
       # public/firebase-config.js instead of generated at deploy time.
       - name: Check no secrets committed

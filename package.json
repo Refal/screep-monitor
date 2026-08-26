@@ -10,7 +10,8 @@
   "scripts": {
     "collect": "node scripts/collect.mjs",
     "gen:config": "node scripts/gen-web-config.mjs",
-    "check:no-secrets": "node scripts/check-no-secrets.mjs"
+    "check:no-secrets": "node scripts/check-no-secrets.mjs",
+    "test": "node --test"
   },
   "dependencies": {
     "firebase": "^12.18.0",

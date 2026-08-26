@@ -27,6 +27,19 @@ cd public && python3 -m http.server 8787
 # open http://localhost:8787/?demo=1   (synthetic data; add &theme=light|dark to force a theme)
 ```
 
+## Tests
+
+The rate/ETA/downsampling/boost-threshold logic behind the dashboard lives in
+`public/calc.js`, pure functions with no DOM or Firebase dependency, so they're covered by
+plain `node:test` unit tests in `test/`:
+
+```sh
+npm test
+```
+
+Runs in CI on every push/PR touching `public/`, `scripts/`, or `test/` (`.github/workflows/test.yml`),
+and again as a pre-deploy gate in `deploy.yml`.
+
 ## One-time setup
 
 ### 1. Firebase (Spark plan — no billing account)
