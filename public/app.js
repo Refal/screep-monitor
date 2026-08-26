@@ -3,10 +3,6 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/fireba
 import {
     getFirestore, doc, getDoc, collection, query, where, orderBy, getDocs, Timestamp,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import {
-    initializeAppCheck, ReCaptchaV3Provider,
-} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
-
 const MAX_POINTS = 500;
 
 const $ = id => document.getElementById(id);
@@ -1008,7 +1004,11 @@ if (!DEMO && firebaseConfig.apiKey === "REPLACE_ME") {
         const app = initializeApp(firebaseConfig);
         // App Check: enforced once traffic looks right (see README). Site key
         // is absent until that's set up, so this stays a no-op till then.
+        // Imported dynamically so the ~28KB module is only fetched once a
+        // site key is actually configured.
         if (firebaseConfig.appCheckSiteKey) {
+            const { initializeAppCheck, ReCaptchaV3Provider } =
+                await import("https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js");
             if (location.hostname === "localhost") self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
             initializeAppCheck(app, {
                 provider: new ReCaptchaV3Provider(firebaseConfig.appCheckSiteKey),
