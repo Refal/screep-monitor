@@ -35,8 +35,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-      - run: npm ci --omit=dev
+      # public/calc.js has no imports and the test suite only pulls in
+      # node:test/node:assert — no npm install needed to run it.
       - run: npm test
 
   deploy:
@@ -61,7 +61,9 @@ jobs:
         run: printf '%s' "$FIREBASE_DEPLOY_SA" > "$RUNNER_TEMP/deploy-sa.json"
         env:
           FIREBASE_DEPLOY_SA: ${{ secrets.FIREBASE_DEPLOY_SA }}
+      # Pinned deliberately — leave it pinned rather than letting npx pull
+      # whatever's newest on each deploy. Bump intentionally when needed.
       - name: Deploy hosting + firestore rules
-        run: npx firebase-tools deploy --only hosting,firestore:rules --project screeps-52c72 --non-interactive
+        run: npx --yes firebase-tools@15.28.1 deploy --only hosting,firestore:rules --project screeps-52c72 --non-interactive
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/deploy-sa.json

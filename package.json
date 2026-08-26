@@ -14,7 +14,6 @@
     "test": "node --test"
   },
   "dependencies": {
-    "firebase": "^12.18.0",
     "firebase-admin": "^13.0.0"
   },
   "allowScripts": {
