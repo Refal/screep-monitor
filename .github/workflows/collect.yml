@@ -53,3 +53,12 @@ jobs:
             echo "::error::every collection attempt failed"
             exit 1
           fi
+      # Distinct from the check above: that one reports process failure,
+      # this one reports data freshness (quota exhaustion, a silently wedged
+      # collector, or a Screeps API outage can all leave meta/latest stale
+      # even when individual collect.mjs runs "succeed").
+      - name: Check data freshness
+        run: node scripts/check-freshness.mjs
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+          STALE_MINUTES: "40"

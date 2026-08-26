@@ -2,6 +2,7 @@ node_modules/
 service-account*.json
 *-service-account.json
 .env
+web-config.local.json
 data/
 .firebase/
 firebase-debug.log

@@ -274,9 +274,11 @@ td.na       { color: var(--text-muted); }
 
     <div id="setup-notice" class="notice" hidden>
         <strong>Not configured yet.</strong>
-        <p>Fill in <code>public/firebase-config.js</code> with your Firebase web-app config
-        (Firebase console → Project settings → Your apps), then redeploy with
-        <code>npx firebase-tools deploy --only hosting</code>.</p>
+        <p>Create <code>web-config.local.json</code> with your Firebase web-app config
+        (Firebase console → Project settings → Your apps), run
+        <code>npm run gen:config</code>, then redeploy with
+        <code>npx firebase-tools deploy --only hosting</code>. In CI this is generated
+        from the <code>FIREBASE_WEB_CONFIG</code> secret instead — see README.</p>
     </div>
 </div>
 <script src="vendor/chart.umd.js"></script>

@@ -1,0 +1,43 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "public/**"
+      - "firestore.rules"
+      - "firebase.json"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --omit=dev
+      # Fail closed if a real key ever gets committed to
+      # public/firebase-config.js instead of generated at deploy time.
+      - name: Check no secrets committed
+        run: node scripts/check-no-secrets.mjs
+      - name: Generate firebase-config.js
+        run: node scripts/gen-web-config.mjs
+        env:
+          FIREBASE_WEB_CONFIG: ${{ secrets.FIREBASE_WEB_CONFIG }}
+      - name: Write deploy credentials
+        run: printf '%s' "$FIREBASE_DEPLOY_SA" > "$RUNNER_TEMP/deploy-sa.json"
+        env:
+          FIREBASE_DEPLOY_SA: ${{ secrets.FIREBASE_DEPLOY_SA }}
+      - name: Deploy hosting + firestore rules
+        run: npx firebase-tools deploy --only hosting,firestore:rules --project screeps-52c72 --non-interactive
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/deploy-sa.json

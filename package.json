@@ -8,7 +8,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "collect": "node scripts/collect.mjs"
+    "collect": "node scripts/collect.mjs",
+    "gen:config": "node scripts/gen-web-config.mjs",
+    "check:no-secrets": "node scripts/check-no-secrets.mjs"
   },
   "dependencies": {
     "firebase": "^12.18.0",

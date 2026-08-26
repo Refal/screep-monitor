@@ -3,6 +3,9 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/fireba
 import {
     getFirestore, doc, getDoc, collection, query, where, orderBy, getDocs, Timestamp,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import {
+    initializeAppCheck, ReCaptchaV3Provider,
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check.js";
 
 const MAX_POINTS = 500;
 
@@ -1001,7 +1004,19 @@ if (!DEMO && firebaseConfig.apiKey === "REPLACE_ME") {
     $("setup-notice").hidden = false;
     setStatus("not configured");
 } else {
-    if (!DEMO) db = getFirestore(initializeApp(firebaseConfig));
+    if (!DEMO) {
+        const app = initializeApp(firebaseConfig);
+        // App Check: enforced once traffic looks right (see README). Site key
+        // is absent until that's set up, so this stays a no-op till then.
+        if (firebaseConfig.appCheckSiteKey) {
+            if (location.hostname === "localhost") self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+            initializeAppCheck(app, {
+                provider: new ReCaptchaV3Provider(firebaseConfig.appCheckSiteKey),
+                isTokenAutoRefreshEnabled: true,
+            });
+        }
+        db = getFirestore(app);
+    }
     $("app").hidden = false;
     bindControls();
     refresh();
