@@ -39,7 +39,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
+          node-version: 22
       # public/calc.js has no imports and the test suite only pulls in
       # node:test/node:assert — no npm install needed to run it.
       - run: npm test
@@ -55,7 +55,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 20
+          node-version: 22
       # Fail closed if a real key ever gets committed to
       # public/firebase-config.js instead of generated at deploy time.
       - name: Check no secrets committed
