@@ -37,8 +37,8 @@ plain `node:test` unit tests in `test/`:
 npm test
 ```
 
-Runs in CI on every push/PR touching `public/`, `scripts/`, or `test/` (`.github/workflows/test.yml`),
-and again as a pre-deploy gate in `deploy.yml`.
+Runs in CI as the `test` job in `.github/workflows/deploy.yml` on every push/PR touching
+`public/`, `scripts/`, `test/`, or `package.json`; the `deploy` job only runs after it passes.
 
 ## One-time setup
 

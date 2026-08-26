@@ -5,19 +5,31 @@ on:
     branches: [main]
     paths:
       - "public/**"
+      - "scripts/**"
+      - "test/**"
+      - "package.json"
+      - "firestore.rules"
+      - "firebase.json"
+      - ".github/workflows/deploy.yml"
+  pull_request:
+    paths:
+      - "public/**"
+      - "scripts/**"
+      - "test/**"
+      - "package.json"
       - "firestore.rules"
       - "firebase.json"
       - ".github/workflows/deploy.yml"
   workflow_dispatch: {}
 
 concurrency:
-  group: deploy
+  group: deploy-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,8 +37,18 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci --omit=dev
-      - name: Run unit tests
-        run: npm test
+      - run: npm test
+
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
       # Fail closed if a real key ever gets committed to
       # public/firebase-config.js instead of generated at deploy time.
       - name: Check no secrets committed
