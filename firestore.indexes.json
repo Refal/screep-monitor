@@ -1,0 +1,20 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "snapshots",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "b5", "order": "ASCENDING" },
+        { "fieldPath": "ts", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "snapshots",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "b30", "order": "ASCENDING" },
+        { "fieldPath": "ts", "order": "ASCENDING" }
+      ]
+    }
+  ]
+}

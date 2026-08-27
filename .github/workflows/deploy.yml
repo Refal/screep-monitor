@@ -9,6 +9,7 @@ on:
       - "test/**"
       - "package.json"
       - "firestore.rules"
+      - "firestore.indexes.json"
       - "firebase.json"
       - ".github/workflows/deploy.yml"
   pull_request:
@@ -18,6 +19,7 @@ on:
       - "test/**"
       - "package.json"
       - "firestore.rules"
+      - "firestore.indexes.json"
       - "firebase.json"
       - ".github/workflows/deploy.yml"
   workflow_dispatch: {}
@@ -70,7 +72,7 @@ jobs:
           FIREBASE_DEPLOY_SA: ${{ secrets.FIREBASE_DEPLOY_SA }}
       # Pinned deliberately — leave it pinned rather than letting npx pull
       # whatever's newest on each deploy. Bump intentionally when needed.
-      - name: Deploy hosting + firestore rules
-        run: npx --yes firebase-tools@15.28.1 deploy --only hosting,firestore:rules --project screeps-52c72 --non-interactive
+      - name: Deploy hosting + firestore rules/indexes
+        run: npx --yes firebase-tools@15.28.1 deploy --only hosting,firestore:rules,firestore:indexes --project screeps-52c72 --non-interactive
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/deploy-sa.json

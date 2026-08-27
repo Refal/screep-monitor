@@ -2,6 +2,17 @@
  * Fetches the bot's stats snapshot from RawMemory segment 90 on screeps.com
  * and stores it in Firestore. Runs in GitHub Actions (cron) and locally.
  *
+ * Accepts both wire versions:
+ *   v1 — a single snapshot (t, gcl, cpu, cr, rooms, bmax?)
+ *   v2 — the same head fields plus `h`: a newest-first ring of older
+ *        snapshots the bot kept in memory, published because segment 90 has
+ *        room to spare (~9 KB used of a 95 KB budget) and the bot only
+ *        publishes once per 20 ticks (~82s) while this collector polls every
+ *        5 minutes — without the ring, ~80% of published snapshots were
+ *        never read before being overwritten by the next publish.
+ * v1 support stays until the bot side (screeps2) is confirmed on v2 — see
+ * screep_monitor README for the rollout order.
+ *
  * Env:
  *   SCREEPS_TOKEN                  — screeps.com auth token (required)
  *   GOOGLE_APPLICATION_CREDENTIALS — path to a Firebase service-account JSON (required)
@@ -9,16 +20,35 @@
  *   SCREEPS_SEGMENT                — default 90
  *
  * Firestore layout:
- *   snapshots/<autoId>  { ts, tick, gcl, cpu, cr, rooms, bmax? }
- *   meta/latest         same shape; also used to dedup by tick and to
- *                       trigger the once-a-day retention sweep
+ *   snapshots/<autoId>  { ts, tick, gcl, cpu, cr, rooms, bmax?, b5?, b30? }
+ *   meta/latest         same shape, plus `lod` (bucket-tracking state); also
+ *                       used to dedup by tick and to trigger the once-a-day
+ *                       retention sweep
+ *
+ * `ts` for history entries is interpolated, not insertion time: see
+ * interpolateTimestamps() for why (otherwise a whole outage's worth of
+ * backfilled docs would collapse onto ~one timestamp).
+ *
+ * `b5`/`b30` mark the first stored doc in each 5-/30-minute wall-clock
+ * bucket, so the dashboard can query a downsampled slice for the 7d/30d
+ * ranges instead of paging through everything — see public/app.js and
+ * firestore.indexes.json.
  */
+import { pathToFileURL } from "node:url";
 import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 
 const SHARD = process.env.SCREEPS_SHARD ?? "shard2";
 const SEGMENT = process.env.SCREEPS_SEGMENT ?? "90";
-const RETENTION_DAYS = 60;
+const RETENTION_DAYS = 21; // was 60; the ring raised stored volume ~5x (see README)
+const PRUNE_BATCH = 450;
+const PRUNE_MAX_BATCHES = 20; // caps a single run's delete cost if a backlog ever builds up
+
+// LOD tiers: flag name → wall-clock bucket width. Each flag marks the first
+// stored doc per bucket; the dashboard's coarse ranges query these flags
+// (LOD_FLAG_BY_RANGE in public/app.js), and each flag needs a composite
+// index in firestore.indexes.json. Adding a tier here means updating both.
+const LOD_BUCKET_MS = { b5: 5 * 60_000, b30: 30 * 60_000 };
 
 async function fetchSegment() {
     const token = process.env.SCREEPS_TOKEN;
@@ -31,54 +61,155 @@ async function fetchSegment() {
     return JSON.parse(body.data);
 }
 
+/**
+ * Flattens a v1 or v2 payload into every entry it carries — head plus, for
+ * v2, the newest-first `h` ring — filtered to strictly-newer-than-latestTick
+ * and returned oldest-first (the order they should be inserted in, so
+ * `meta/latest` ends up holding the true newest). Ticks are deduped defensively;
+ * the bot should never publish the same tick twice, but a stale ring entry
+ * surviving a version mismatch is cheap to guard against.
+ */
+export function unseenEntries(payload, latestTick) {
+    const { v, h, ...head } = payload; // everything but the envelope; buildSnapshotDoc whitelists what persists
+    const all = v === 2 && Array.isArray(h) ? [head, ...h] : [head];
+
+    const byTick = new Map();
+    for (const entry of all) {
+        if (latestTick != null && entry.t <= latestTick) continue;
+        byTick.set(entry.t, entry); // first occurrence wins; entries are already newest-first
+    }
+    return [...byTick.values()].sort((a, b) => a.t - b.t);
+}
+
+/**
+ * Assigns each entry a wall-clock ts by interpolating between two real
+ * anchors: the previously stored (latestTick, latestMs) and the current
+ * fetch (headTick=payload.t, headMs=now). Backfilled history entries did
+ * not just arrive — they were published minutes ago — so stamping them with
+ * insertion time would collapse a whole outage's worth of samples onto
+ * ~one instant, corrupting both Firestore's ts-ordering and the dashboard's
+ * observedMsPerTick (public/calc.js), which divides a ts delta by a tick
+ * delta. Falls back to headMs for every entry only on the very first run,
+ * when there is no prior anchor to interpolate from.
+ */
+export function interpolateTimestamps(entries, { headTick, headMs, latestTick, latestMs }) {
+    const msPerTick =
+        latestTick != null && latestMs != null && headTick > latestTick
+            ? (headMs - latestMs) / (headTick - latestTick)
+            : null;
+    return entries.map(e => ({
+        ...e,
+        tsMs: msPerTick != null ? headMs - (headTick - e.t) * msPerTick : headMs,
+    }));
+}
+
+/**
+ * Walks entries oldest-first, flagging the first one to land in each new
+ * wall-clock bucket of every LOD_BUCKET_MS tier. `prevLod` carries the last
+ * bucket ids already flagged from a previous run (stored on meta/latest.lod),
+ * so bucket boundaries stay correct across polls instead of resetting each
+ * run. Returns the flagged docs plus the lod state to persist for next time.
+ */
+export function assignLodFlags(entries, prevLod) {
+    const lod = { ...prevLod };
+    const docs = entries.map(e => {
+        const flags = {};
+        for (const [flag, widthMs] of Object.entries(LOD_BUCKET_MS)) {
+            const id = Math.floor(e.tsMs / widthMs);
+            if (id !== lod[flag]) { flags[flag] = true; lod[flag] = id; }
+        }
+        return { ...e, ...flags };
+    });
+    return { docs, lod };
+}
+
+/** Maps one flagged entry (from assignLodFlags) to the Firestore doc shape. */
+export function buildSnapshotDoc(entry) {
+    const doc = {
+        ts: Timestamp.fromMillis(entry.tsMs),
+        tick: entry.t,
+        gcl: entry.gcl,
+        cpu: entry.cpu,
+        cr: entry.cr,
+        rooms: entry.rooms,
+        ...(entry.bmax ? { bmax: entry.bmax } : {}),
+    };
+    for (const flag of Object.keys(LOD_BUCKET_MS)) if (entry[flag]) doc[flag] = true;
+    return doc;
+}
+
 async function pruneOldSnapshots(db) {
     const cutoff = Timestamp.fromMillis(Date.now() - RETENTION_DAYS * 864e5);
-    const old = await db.collection("snapshots").where("ts", "<", cutoff).limit(400).get();
-    if (old.empty) return 0;
-    const batch = db.batch();
-    old.docs.forEach(doc => batch.delete(doc.ref));
-    await batch.commit();
-    return old.size;
+    let pruned = 0;
+    for (let i = 0; i < PRUNE_MAX_BATCHES; i++) {
+        // .select() with no fields returns doc names only — we only need refs
+        const old = await db.collection("snapshots").where("ts", "<", cutoff).select().limit(PRUNE_BATCH).get();
+        if (old.empty) break;
+        const batch = db.batch();
+        old.docs.forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+        pruned += old.size;
+        if (old.size < PRUNE_BATCH) break; // fewer than a full batch means the query is exhausted
+    }
+    return pruned;
 }
 
 async function main() {
-    const stats = await fetchSegment();
-    if (stats.v !== 1) throw new Error(`Unknown stats payload version: ${stats.v}`);
-
     initializeApp({ credential: applicationDefault() });
     const db = getFirestore();
-
     const latestRef = db.doc("meta/latest");
-    const latest = (await latestRef.get()).data();
 
-    if (latest?.tick === stats.t) {
-        console.log(`Tick ${stats.t} already stored — bot idle or slow ticks, skipping.`);
+    // independent round trips (screeps.com and Firestore) — fetch both at once
+    const [payload, latestSnap] = await Promise.all([fetchSegment(), latestRef.get()]);
+    if (payload.v !== 1 && payload.v !== 2) throw new Error(`Unknown stats payload version: ${payload.v}`);
+    const latest = latestSnap.data();
+    const latestTick = latest?.tick ?? null;
+    const latestMs = latest?.ts?.toMillis() ?? null;
+
+    const entries = unseenEntries(payload, latestTick);
+    if (entries.length === 0) {
+        console.log(`Tick ${payload.t} already stored — bot idle or slow ticks, skipping.`);
         return;
     }
 
-    const doc = {
-        ts: Timestamp.now(),
-        tick: stats.t,
-        gcl: stats.gcl,
-        cpu: stats.cpu,
-        cr: stats.cr,
-        rooms: stats.rooms,
-        ...(stats.bmax ? { bmax: stats.bmax } : {}),
-    };
-    await db.collection("snapshots").add(doc);
-    await latestRef.set(doc);
-    console.log(`Stored tick ${stats.t} (${Object.keys(stats.rooms).length} rooms).`);
+    const headMs = Date.now();
+    const withTs = interpolateTimestamps(entries, { headTick: payload.t, headMs, latestTick, latestMs });
+    const { docs, lod } = assignLodFlags(withTs, latest?.lod);
+
+    const snapshots = db.collection("snapshots");
+    const batch = db.batch();
+    let newestDoc;
+    for (const entry of docs) {
+        newestDoc = buildSnapshotDoc(entry);
+        batch.set(snapshots.doc(), newestDoc);
+    }
+    batch.set(latestRef, { ...newestDoc, lod });
+    await batch.commit();
+
+    const ringDepth = payload.v === 2 ? payload.h?.length ?? 0 : null;
+    const ringNote = ringDepth == null ? "" : `, ring depth ${ringDepth}`;
+    console.log(
+        `Stored ${docs.length} tick(s) [${docs[0].t}..${docs.at(-1).t}] (${Object.keys(payload.rooms).length} rooms)${ringNote}.`
+    );
+    if (ringDepth != null && ringDepth < 4 && latest != null) {
+        // Below poll-covering depth (~4 entries at today's cadence) after the very
+        // first run is the visible signature of a bot global reset whose bootstrap
+        // rehydrate failed — see screeps2 StatsManager's two-phase bootstrap.
+        console.log(`::warning::segment ${SEGMENT} ring depth is only ${ringDepth} — check for a failed bot restart bootstrap.`);
+    }
 
     // retention sweep on the first run of each UTC day
     const prevDay = latest?.ts?.toDate().toISOString().slice(0, 10);
     const today = new Date().toISOString().slice(0, 10);
     if (prevDay && prevDay !== today) {
-        const pruned = await pruneOldSnapshots(db);
-        if (pruned) console.log(`Pruned ${pruned} snapshots older than ${RETENTION_DAYS} days.`);
+        const prunedCount = await pruneOldSnapshots(db);
+        if (prunedCount) console.log(`Pruned ${prunedCount} snapshots older than ${RETENTION_DAYS} days.`);
     }
 }
 
-main().catch(err => {
-    console.error(err);
-    process.exit(1);
-});
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+    main().catch(err => {
+        console.error(err);
+        process.exit(1);
+    });
+}

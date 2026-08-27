@@ -4,9 +4,14 @@ Room-statistics dashboard for the screeps2 bot — fully card-free:
 GitHub Actions (collector, every 5 min) → Firestore (Firebase Spark) → Firebase Hosting (dashboard).
 
 The bot publishes a compact stats JSON to **RawMemory segment 90** on shard2 every 20 ticks
-(`StatsManager` in the screeps2 repo). `scripts/collect.mjs` fetches that segment from the
-Screeps Web API and stores snapshots in Firestore; `public/` is a static Chart.js dashboard
-reading Firestore directly under read-only security rules.
+(`StatsManager` in the screeps2 repo, ~82s at today's shard speed) — well under the segment's
+95 KB budget, so it also keeps a ring of recent snapshots in its own heap and publishes those
+alongside the latest one (wire version `v: 2`; `v: 1` is a bare single snapshot, still accepted
+for compatibility during rollout). Without the ring, a 5-minute collector poll only ever saw
+the newest of several snapshots published since the last poll — most were silently overwritten
+before being read. `scripts/collect.mjs` fetches the segment from the Screeps Web API, walks
+the ring for anything not yet stored, and stores it in Firestore; `public/` is a static
+Chart.js dashboard reading Firestore directly under read-only security rules.
 
 The dashboard uses the **Firestore Lite** SDK (`firebase-firestore-lite.js`), not the full
 SDK, on purpose: it only ever does one-shot reads, polled on the collector's ~5-minute write
@@ -132,7 +137,16 @@ gh workflow run collect                # first manual run
 ## Operations
 
 - Dashboard: `https://<project-id>.web.app` (public read-only; game stats only).
-- Retention: the collector deletes snapshots older than 60 days on the first run of each UTC day.
-- Quotas (Spark free tier): 144 writes/day of ~20k, reads well under 50k/day.
-- Bot side: adjust cadence/segment in `screeps2/src/config/config.stats.ts`;
+- Retention: the collector deletes snapshots older than 21 days on the first run of each UTC
+  day (`RETENTION_DAYS` in `collect.mjs`). Lowered from 60 days when the ring buffer raised
+  full-resolution storage from ~200 to ~1,050 snapshots/day (~9 MB/day, ~190 MB steady state
+  at 21 days — well under Spark's 1 GB).
+- Quotas (Spark free tier): ~1,050 snapshot writes/day + ~288 `meta/latest` updates ≈ 1,340
+  of 20k; dashboard reads stay bounded by `MAX_HISTORY_DOCS` (9000) regardless of range,
+  thanks to the `b5`/`b30` bucket-leader flags the 7d/30d ranges query instead of every doc
+  (see `LOD_FLAG_BY_RANGE` in `public/app.js`).
+- Bot side: adjust cadence/segment/ring budget in `screeps2/src/config/config.stats.ts`;
   check the segment with `node scripts/screepsLive.mjs segment 90` in the screeps2 repo.
+- Rollout order when changing the wire format again: deploy the collector first with support
+  for both the old and new version, confirm it's live, then publish the new version from the
+  bot. Doing it in the other order leaves the collector unable to parse what the bot sends.

@@ -16,11 +16,18 @@ import {
 } from "./calc.js";
 const MAX_POINTS = 500;
 // firestore.rules caps snapshots list() queries at request.query.limit <= 9000
-// (anonymous-scan quota defense — see README "On the web apiKey"). Sized for
-// the worst legitimate range: 30d at the collector's ~5min cadence is
-// 30 * 24 * 12 = 8,640 docs, so this leaves headroom without opening the cap
-// back up. Both history queries below must carry it or Firestore denies them.
+// (anonymous-scan quota defense — see README "On the web apiKey"). Both
+// history queries below must carry it or Firestore denies them.
 const MAX_HISTORY_DOCS = 9000;
+// The bot publishes roughly once every 20 ticks (~82s at today's shard
+// speed), so full resolution over the longer ranges would blow past
+// MAX_HISTORY_DOCS: 7d is ~7,300 docs (fits, but thin margin if the shard's
+// tick speeds up) and 30d is ~31,600 (does not fit at all). collect.mjs
+// flags the first stored doc in each 5-/30-minute wall-clock bucket (`b5`,
+// `b30`) so these ranges can query a downsampled slice instead — see
+// firestore.indexes.json for the composite indexes this requires. Ranges
+// absent here (6h, 24h) fetch every doc unfiltered.
+const LOD_FLAG_BY_RANGE = { 168: "b5", 720: "b30" };
 
 const $ = id => document.getElementById(id);
 const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -245,13 +252,24 @@ async function loadLatest() {
 
 const toRows = snap => snap.docs.map(d => { const v = d.data(); return { ...v, date: v.ts.toDate() }; });
 
+// Builds the snapshots query for the current range: the caller's ts predicate
+// plus the range's LOD flag (if any). Both history loaders go through here so
+// a full fetch and a later incremental fetch can never disagree about
+// resolution — a range switch clears historyRaw first (see bindControls), so
+// incremental only ever appends rows fetched under the current range's flag.
+function historyQuery(tsClause) {
+    const flag = LOD_FLAG_BY_RANGE[rangeHours];
+    return query(collection(db, "snapshots"), tsClause,
+        ...(flag ? [where(flag, "==", true)] : []),
+        orderBy("ts", "asc"), limit(MAX_HISTORY_DOCS));
+}
+
 // Fetches the full `rangeHours` window into historyRaw. Used on first load,
 // on a range switch, and as the fallback when an incremental fetch fails.
 // Returns the row count, for loadHistory's render gate.
 async function loadHistoryFull() {
     const cutoff = Timestamp.fromMillis(Date.now() - rangeHours * 3600e3);
-    const q = query(collection(db, "snapshots"), where("ts", ">=", cutoff), orderBy("ts", "asc"), limit(MAX_HISTORY_DOCS));
-    historyRaw = toRows(await getDocs(q));
+    historyRaw = toRows(await getDocs(historyQuery(where("ts", ">=", cutoff))));
     return historyRaw.length;
 }
 
@@ -259,9 +277,7 @@ async function loadHistoryFull() {
 // and drops rows that have aged out of the current window. Keeps a poll's
 // read cost near-constant (1-2 docs) instead of rescanning the whole range.
 async function loadHistoryIncremental() {
-    const cursor = historyRaw.at(-1).ts;
-    const q = query(collection(db, "snapshots"), where("ts", ">", cursor), orderBy("ts", "asc"), limit(MAX_HISTORY_DOCS));
-    const rows = toRows(await getDocs(q));
+    const rows = toRows(await getDocs(historyQuery(where("ts", ">", historyRaw.at(-1).ts))));
     historyRaw.push(...rows);
     const cutoff = Date.now() - rangeHours * 3600e3;
     while (historyRaw.length && historyRaw[0].date.getTime() < cutoff) historyRaw.shift();
