@@ -42,8 +42,10 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-      # public/calc.js has no imports and the test suite only pulls in
-      # node:test/node:assert — no npm install needed to run it.
+          cache: npm
+      # test/collect.test.js imports scripts/collect.mjs, which needs
+      # firebase-admin — the suite no longer runs on node builtins alone.
+      - run: npm ci
       - run: npm test
 
   deploy:
