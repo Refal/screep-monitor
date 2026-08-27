@@ -187,3 +187,195 @@ export function boostFloor(raw) {
         ? { amount: MIN_RAW_STOCK, reason: `below lab minimum (${MIN_RAW_STOCK})` }
         : { amount: PARTS_PER_BOOST, reason: `under one boost (${PARTS_PER_BOOST})` };
 }
+
+// ---------------------------------------------------------------------------
+// Defense (thr / ThreatSummary) — screeps2/src/utils/console/threatReport.ts
+// and healthSnapshot.ts are the source of truth these mirror. `thr` is
+// dropped first by StatsManager's payload-size degradation (same step as
+// `roles`), so it's present on meta/latest but only best-effort in stored
+// history — see README. Every function here treats an absent `thr` as
+// "unknown", never "clear": a degraded snapshot carries no information about
+// safety, and reading it as safe would hide the exact rooms most likely to
+// be under-observed during a real fight (the payload gets big when there's a
+// lot going on).
+
+// towerDamageAtRange(TOWER_FALLOFF_RANGE) — screeps2 fleetSizing.ts:83-87.
+export const TOWER_DPS_PER_ARMED = 150;
+
+// CRITICAL_RAMPAT_SAFE — screeps2 config/config.buildPriority.ts:33. Ramparts
+// under this get repair priority 0 in the bot itself, so it's an absolute
+// cliff, not a fraction-of-target ramp level.
+export const CRITICAL_RAMPART_HITS = 4000;
+
+// The only role generateSpawnManifest still emits for on-demand squads/guards
+// (screeps2 config/remoteRoles/provider.remoteDefender.ts:56). `thr.def[]`
+// only ever contains home_defender/home_melee_defender (COMBAT_ROLES,
+// threatReport.ts:20-25 — the remote_defender/remote_healer entries there are
+// dead, no provider emits them any more), so army_member guards have to be
+// found by scanning `roles` separately and merged in by the caller.
+export const MANIFEST_GUARD_ROLE = "army_member";
+
+// RCL-scaled repair targets — screeps2 config/config.repairs.ts:18-27,
+// DEFAULT_WALL_MAX_HEALTH / DEFAULT_RAMPART_MAX_HEALTH /
+// DEFAULT_SAFE_ZONE_RAMPART_MAX_HEALTH, copied verbatim (REPAIRS_BY_SHARD is
+// empty today, so the defaults are live everywhere). Colouring barrier hits
+// against these rather than an absolute threshold is the point: a healthy
+// RCL6 rampart and a neglected RCL8 one must not read the same.
+export const BARRIER_TARGETS = {
+    wall: { 1: 1000, 2: 5000, 3: 10_000, 4: 50_000, 5: 100_000, 6: 300_000, 7: 1_000_000, 8: 2_000_000, default: 5000 },
+    rampart: { 1: 2000, 2: 10_000, 3: 20_000, 4: 50_000, 5: 200_000, 6: 500_000, 7: 1_000_000, 8: 2_000_000, default: 10_000 },
+    zoneRampart: { 1: 2_000, 2: 10_000, 3: 20_000, 4: 200_000, 5: 1_000_000, 6: 2_000_000, 7: 5_000_000, 8: 50_000_000, default: 10_000 },
+};
+
+// Mirrors the bot's own console formatter — threatReport.ts:99-103 — term for
+// term, so a value on the dashboard reads identically to the same value in
+// threatReport()/healthSnapshot(). Deliberately not compact(): Intl's
+// "compact" notation renders "1M" (no decimal) and is locale-sensitive: this
+// needs to match the bot's fixed one-decimal K/M formatting exactly.
+export function fmtHits(hits) {
+    if (hits == null) return "—";
+    if (hits >= 1_000_000) return `${(hits / 1_000_000).toFixed(1)}M`;
+    if (hits >= 1_000) return `${(hits / 1_000).toFixed(1)}K`;
+    return `${hits}`;
+}
+
+export function barrierTarget(kind, rcl) {
+    const ladder = BARRIER_TARGETS[kind];
+    if (!ladder) return null;
+    return ladder[rcl] ?? ladder.default;
+}
+
+// null (not a ramp bucket) when hits is absent — absence must never render as
+// "good" just because there's nothing to fill the bar with.
+export function barrierLevel(hits, kind, rcl) {
+    if (hits == null) return null;
+    const target = barrierTarget(kind, rcl);
+    if (!target) return null;
+    return rampLevel(Math.min(1, hits / target));
+}
+
+// Absolute cliff below CRITICAL_RAMPART_HITS, independent of RCL — walls
+// aren't covered (the bot's own priority-0 rule is rampart-only).
+export function isCriticalBarrier(hits, kind) {
+    return kind !== "wall" && hits != null && hits < CRITICAL_RAMPART_HITS;
+}
+
+// Reproduces roomStatusIcon (threatReport.ts:120-126) term for term, so this
+// dashboard and the bot's own console command never disagree about a room's
+// posture. `thr.def` is guarded with `?? []` since a hand-written or
+// pre-field Firestore doc could lack it even though live payloads always
+// have it.
+export function roomPosture(thr) {
+    if (!thr) return { level: "unknown", label: "unknown", reasons: [] };
+    if (thr.h === 0) return { level: "clear", label: "clear", reasons: [] };
+    const reasons = [];
+    if (thr.twrArmed === 0) reasons.push(thr.twrTotal ? "no armed tower" : "no tower built");
+    if (thr.sm === undefined && thr.smAvail === 0) reasons.push("no safe-mode charge");
+    if ((thr.def ?? []).some(s => s.cur < s.des)) reasons.push("defender slots short");
+    const level = reasons.length ? "exposed" : "engaged";
+    return { level, label: level, reasons };
+}
+
+// Order for the empire defense table — an alarm panel, not an alphabetical
+// listing: the rooms that need eyes on them belong at the top. `unknown`
+// ranks above `clear` on purpose — an unknown room might be the one that's
+// actually burning; a payload that's silent about a room is not the same as
+// a payload that says it's fine.
+const POSTURE_RANK = { exposed: 0, engaged: 1, unknown: 2, clear: 3 };
+export function sortByPosture(entries) {
+    return [...entries].sort(([nameA, roomA], [nameB, roomB]) => {
+        const rankA = POSTURE_RANK[roomPosture(roomA.thr).level];
+        const rankB = POSTURE_RANK[roomPosture(roomB.thr).level];
+        return rankA !== rankB ? rankA - rankB : nameA.localeCompare(nameB);
+    });
+}
+
+// thr.dps is already worst-case armed-tower damage; heal is the hostiles'
+// boost-folded healing per tick. Named (rather than left inline) so the
+// table cell, the empire tile, and the balance chart can't drift apart on
+// what "net" means.
+export function netTowerDps(thr) {
+    return thr.dps - (thr.heal ?? 0);
+}
+
+// Everything the dashboard needs to render the def[] cell/chart correctly,
+// including both false-alarm traps around an empty def[]:
+//
+//  - def[] only ever contains home_defender/home_melee_defender slots
+//    (COMBAT_ROLES). On-demand army_member guards live in `roles`, not
+//    `thr.def`, so they're found separately here and merged in as `guards`.
+//  - def[] being EMPTY is the normal, healthy state most of the time:
+//    computePlan (homeDefensePlan.ts:118-125) returns undefined — meaning no
+//    requirement is ever generated — when there are no hostiles, when
+//    hostiles carry no attack parts, or while safe mode is active. Only one
+//    of the possible "empty" states (armed hostiles, no plan at all) is bad.
+//  - `roles` legitimately loses its army_member rows the moment a home room
+//    has combat hostiles in it (generateSpawnManifest suppresses all remote
+//    requirements then, spawnManifest.ts:8-11) — `suppressed` flags this so
+//    the caller can say "absent, not lost" instead of implying attrition.
+export function defenderSummary(thr, roles) {
+    const guards = (roles ?? []).filter(x => x.r === MANIFEST_GUARD_ROLE);
+    const suppressed = !!thr && thr.h > 0 && ((thr.melee ?? 0) + (thr.ranged ?? 0)) > 0;
+    if (!thr) return { state: "unknown", cur: 0, des: 0, slots: [], guards, suppressed };
+
+    const slots = thr.def ?? [];
+    if (slots.length === 0) {
+        let state;
+        if (thr.sm !== undefined) state = "safe-mode";
+        else if (thr.h === 0) state = "none-needed";
+        else if ((thr.melee ?? 0) + (thr.ranged ?? 0) === 0) state = "unarmed";
+        else state = "no-plan"; // armed hostiles present and no plan at all — the only bad empty
+        return { state, cur: 0, des: 0, slots, guards, suppressed };
+    }
+
+    const cur = slots.reduce((a, s) => a + s.cur, 0);
+    const des = slots.reduce((a, s) => a + s.des, 0);
+    return { state: cur < des ? "short" : "staffed", cur, des, slots, guards, suppressed };
+}
+
+// Collapses consecutive thr.h>0 rows per room into episodes for the attack
+// log. Rows without a `thr` at all (degraded) are skipped without ending an
+// in-progress episode — a single degraded row mid-fight must not split one
+// attack into two log entries. Reports its own coverage (rows that carried
+// any thr vs total rows walked) so the caller can say "N of M snapshots had
+// threat detail" instead of ever implying an uncovered stretch was quiet —
+// see the README note on why `thr` history coverage isn't guaranteed.
+export function hostileEpisodes(history) {
+    const open = new Map(); // room -> in-progress episode
+    const episodes = [];
+    let covered = 0;
+    for (const row of history) {
+        let rowCovered = false;
+        for (const [room, r] of Object.entries(row.rooms ?? {})) {
+            if (!r.thr) continue;
+            rowCovered = true;
+            if (r.thr.h > 0) {
+                let ep = open.get(room);
+                if (!ep) {
+                    ep = {
+                        room, fromMs: row.date, toMs: row.date, fromTick: row.tick, toTick: row.tick,
+                        peakH: 0, peakDmg: 0, owners: new Set(), boosted: false,
+                    };
+                    open.set(room, ep);
+                }
+                ep.toMs = row.date;
+                ep.toTick = row.tick;
+                ep.peakH = Math.max(ep.peakH, r.thr.h);
+                ep.peakDmg = Math.max(ep.peakDmg, (r.thr.melee ?? 0) + (r.thr.ranged ?? 0));
+                for (const o of r.thr.owners ?? []) ep.owners.add(o);
+                if ((r.thr.boosted ?? 0) > 0) ep.boosted = true;
+            } else if (open.has(room)) {
+                episodes.push(finishEpisode(open.get(room)));
+                open.delete(room);
+            }
+        }
+        if (rowCovered) covered++;
+    }
+    for (const ep of open.values()) episodes.push(finishEpisode(ep));
+    episodes.sort((a, b) => b.toMs - a.toMs);
+    return { episodes, covered, total: history.length };
+}
+
+function finishEpisode(ep) {
+    return { ...ep, owners: [...ep.owners] };
+}

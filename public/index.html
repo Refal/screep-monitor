@@ -133,6 +133,7 @@ tbody tr:hover { background: var(--ghost); }
 .chip { width: 13px; height: 13px; border-radius: 3px; flex: 0 0 auto; box-shadow: inset 0 0 0 1px var(--border); }
 .chip.nomax { background: transparent; box-shadow: inset 0 0 0 1px var(--text-muted); opacity: .45; }
 .nuker-fill { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.def-fill { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
 #boost-matrix th { font-size: 11px; }
 #boost-matrix th .th-sym { color: var(--text-muted); font-weight: 400; }
 #boost-matrix td { padding: 6px 8px; }
@@ -142,6 +143,7 @@ tbody tr:hover { background: var(--ghost); }
 .viz-legend .ramp { display: inline-flex; align-items: center; gap: 3px; }
 
 td.short    { color: var(--status-warning); }
+td.serious  { color: var(--status-serious); }
 td.critical { color: var(--status-critical); }
 td.na       { color: var(--text-muted); }
 
@@ -188,6 +190,49 @@ td.na       { color: var(--text-muted); }
             <div class="card"><h3>CPU bucket</h3><div class="plot"><canvas id="c-bucket"></canvas></div></div>
             <div class="card"><h3>Reaction uptime · % of lab rooms reacting</h3><div class="plot"><canvas id="c-uptime"></canvas></div></div>
         </div>
+
+        <h2>Defense · all rooms (latest snapshot)</h2>
+        <div class="tiles" id="defense-tiles"></div>
+        <div class="table-wrap">
+            <table id="defense-table">
+                <thead><tr>
+                    <th>Room</th>
+                    <th>Posture</th>
+                    <th>Hostiles</th>
+                    <th title="hostile melee + ranged damage per tick, boosts folded in">In dmg/t</th>
+                    <th title="towers with energy / built">Towers</th>
+                    <th title="worst-case tower dps minus hostile heal/tick — negative means towers alone cannot break the heal">Net dps</th>
+                    <th>Safe mode</th>
+                    <th title="weakest own rampart; hover for the weakest wall">Rampart</th>
+                    <th title="weakest rampart inside the configured defender zone — the one you actually fight behind">Zone rampart</th>
+                    <th title="home defense fleet from the live spawn manifest; on-demand squads are not included">Defenders</th>
+                </tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div class="viz-legend">
+            <span class="ramp">
+                <span class="swatch" style="background: var(--fill-1)"></span>
+                <span class="swatch" style="background: var(--fill-2)"></span>
+                <span class="swatch" style="background: var(--fill-3)"></span>
+                <span class="swatch" style="background: var(--fill-4)"></span>
+                <span class="swatch" style="background: var(--fill-5)"></span>
+                weak → at target · % of the bot's RCL-scaled repair target
+            </span>
+            <span>“unknown” = this snapshot had its threat detail dropped (payload degradation), not “clear”</span>
+            <span>Defenders covers home_defender / home_melee_defender only — on-demand squads are invisible to this payload</span>
+        </div>
+
+        <h2>Recent hostile activity</h2>
+        <div class="table-wrap">
+            <table id="attack-log">
+                <thead><tr>
+                    <th>Room</th><th>When</th><th>Ticks</th><th>Peak hostiles</th><th>Peak dmg/t</th><th>Aggressors</th>
+                </tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <p id="attack-log-note" class="viz-legend"></p>
 
         <h2 id="boosts-title">Boosts · all rooms (latest)</h2>
         <div class="table-wrap">
@@ -240,7 +285,7 @@ td.na       { color: var(--text-muted); }
             <table id="rooms-table">
                 <thead><tr>
                     <th>Room</th><th>RCL</th><th>Progress</th><th>ETA → next</th><th>Spawn energy</th>
-                    <th>Storage</th><th>Terminal</th><th>Creeps</th><th>Queue</th><th>Threat</th>
+                    <th>Storage</th><th>Terminal</th><th>Creeps</th><th>Queue</th>
                     <th title="ghodium · energy fill vs capacity; ready = both full and off cooldown">Nuker</th>
                 </tr></thead>
                 <tbody></tbody>
@@ -269,6 +314,21 @@ td.na       { color: var(--text-muted); }
                 </tr></thead>
                 <tbody></tbody>
             </table>
+        </div>
+
+        <div id="defense-section">
+            <h2 id="defense-title">Defense</h2>
+            <div class="tiles" id="defense-room-tiles"></div>
+            <div class="charts">
+                <div class="card" id="defenders-card">
+                    <h3>Defense fleet · current vs desired (latest)</h3>
+                    <div class="plot"><canvas id="c-defenders"></canvas></div>
+                </div>
+                <div class="card" id="balance-card">
+                    <h3>Damage balance · per tick</h3>
+                    <div class="plot"><canvas id="c-balance"></canvas></div>
+                </div>
+            </div>
         </div>
 
         <div id="nuker-section" hidden>

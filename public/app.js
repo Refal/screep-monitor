@@ -13,6 +13,9 @@ import {
     compact, pct, rateSeries, observedMsPerTick, windowRate, stockRate,
     levelEta, fmtDuration, downsample, rampLevel, boostFillLevel, boostFloor,
     PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, bucketId, LOD_BY_RANGE,
+    fmtHits, roomPosture, defenderSummary, barrierTarget, barrierLevel, isCriticalBarrier,
+    netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, TOWER_DPS_PER_ARMED,
+    MANIFEST_GUARD_ROLE,
 } from "./calc.js";
 const MAX_POINTS = 500;
 // firestore.rules caps snapshots list() queries at request.query.limit <= 9000
@@ -135,6 +138,85 @@ function demoNuk(k, i, n, f) {
     }
 }
 
+// Defense payload per room (k) — six rooms, six distinct posture states so
+// every roomPosture/defenderSummary branch is exercised at once: quiet &
+// healthy (with guard slots — one healthy, one short); a boosted attack the
+// towers are winning against; towers dry with no defense plan at all (an
+// empty def[] can't itself add a "defender slots short" posture reason —
+// .some() on [] is vacuously false, so this room's exposed badge still
+// attributes to "no armed tower" alone, while defenderSummary separately
+// renders the worst defender state, "no-plan", in its own cell); a defender
+// deficit stacked with no safe-mode charge and a critical rampart (def[]
+// recovers over the window, f-driven, so the bar chart has real shape); safe
+// mode absorbing unarmed intruders (smAvail:0 must NOT read as exposed here
+// — the active mode is the fallback); and thr dropped entirely (payload
+// degradation — the caller must also drop `roles` alongside it, see
+// DEGRADATION_STEPS in StatsManager.ts, so this demo row never teaches a
+// shape that can't occur in the real payload). Barrier hits drift gently
+// with f so they don't look frozen across a range switch.
+function demoThr(k, i, n, f) {
+    switch (k) {
+        case 0: // quiet, healthy
+            return {
+                h: 0, twrArmed: 3, twrTotal: 3, dps: 450, smAvail: 1,
+                rmp: Math.round(1_900_000 * (0.9 + 0.1 * f)), defRmp: 42_000_000, wall: 1_800_000, def: [],
+            };
+        case 1: // boosted attack, towers holding
+            return {
+                h: 4, owners: ["Kasami"], melee: 480, ranged: 300, heal: 720, boosted: 26,
+                twrArmed: 3, twrTotal: 3, dps: 450, smAvail: 1,
+                rmp: Math.round(180_000 * (0.7 + 0.3 * f)), defRmp: 3_100_000,
+                def: [{ role: "home_defender", cur: 3, des: 3 }, { role: "home_melee_defender", cur: 1, des: 1 }],
+            };
+        case 2: // towers dry, no defense plan at all (defenderSummary's "no-plan" — the one bad empty def[])
+            return {
+                h: 2, melee: 120, ranged: 0, heal: 0,
+                twrArmed: 0, twrTotal: 2, dps: 0, smAvail: 1, def: [],
+            };
+        case 3: { // defender deficit + no safe mode + critical rampart, recovering over the window
+            const cur = Math.max(1, Math.floor(4 * f));
+            return {
+                h: 6, melee: 640, ranged: 420, heal: 200, boosted: 12,
+                twrArmed: 2, twrTotal: 3, dps: 300, smAvail: 0, smCd: 42000,
+                rmp: Math.round(3200 * (0.9 + 0.2 * f)), defRmp: 210_000, wall: 40_000,
+                def: [{ role: "home_defender", cur, des: 4 }, { role: "home_melee_defender", cur: 0, des: 2 }],
+            };
+        }
+        case 4: // safe mode active, unarmed intruders — smAvail:0 must not read as exposed
+            return {
+                h: 3, owners: ["Scout"], melee: 0, ranged: 0, heal: 240, boosted: 0,
+                sm: 12000, smAvail: 0, smCd: 0, twrArmed: 1, twrTotal: 1, dps: 150, def: [],
+            };
+        case 5: // thr dropped entirely (payload degradation)
+            return undefined;
+        default:
+            return undefined;
+    }
+}
+
+// Role slots per room (k). Rooms 0 and 4 carry army_member guard rows (room
+// 0: one healthy, one short) since their hostile state doesn't suppress
+// remote requirements (no hostiles, and heal-only hostiles, respectively —
+// see `suppressed` in defenderSummary); rooms 1-3 have combat hostiles, so
+// generateSpawnManifest would suppress those rows in the real bot, and
+// they're omitted here for the same reason. Room 5's thr is dropped, and
+// `roles` is dropped alongside it (DEGRADATION_STEPS drops both together).
+function demoRoles(k) {
+    if (k === 5) return undefined;
+    const base = [
+        { r: "hauler", c: 3, d: 3 }, { r: "upgrader", c: 2 + k % 2, d: 3 },
+        { r: "source_miner", c: 2, d: 2 }, { r: "builder", c: 1, d: 2 },
+        { r: "remote_miner", rm: "E16S57", c: 1, d: 2 },
+    ];
+    if (k === 0) {
+        return [...base,
+            { r: MANIFEST_GUARD_ROLE, rm: "E16S57", c: 1, d: 1 },
+            { r: MANIFEST_GUARD_ROLE, rm: "E14S58", c: 0, d: 1 }];
+    }
+    if (k === 4) return [...base, { r: MANIFEST_GUARD_ROLE, c: 1, d: 1 }];
+    return base;
+}
+
 function synthDemo() {
     const roomNames = ["E15S57", "E18S59", "E21S41", "E21S55", "E23S44", "E27S41"];
     // Per-room fill band for the boosts matrix — spans empty/low/mid/high/full,
@@ -168,18 +250,16 @@ function synthDemo() {
             const frac = fillFrac[k];
             const spec = rclSpecs[k];
             const nuk = demoNuk(k, i, n, f);
+            const roles = demoRoles(k);
+            const thr = demoThr(k, i, n, f);
             const gained = spec.totalGain * f + spec.oscAmp * Math.sin(i / spec.oscPeriod + k);
             rooms[name] = {
                 rcl: advanceRcl(spec.level, spec.progress, Math.max(0, gained)),
                 e: 1200 + Math.round(600 * Math.sin(i / 5 + k)), ec: 1800,
                 se: 200000 + f * 80000 + 20000 * Math.sin(i / 9 + k), te: k * 40000,
                 q: (i + k) % 9,
-                roles: [
-                    { r: "hauler", c: 3, d: 3 }, { r: "upgrader", c: 2 + k % 2, d: 3 },
-                    { r: "source_miner", c: 2, d: 2 }, { r: "builder", c: 1, d: 2 },
-                    { r: "remote_miner", rm: "E16S57", c: 1, d: 2 },
-                ],
-                thr: k === 1 ? { h: 2, melee: 3, ranged: 1, boosted: 0 } : { h: 0 },
+                ...(roles ? { roles } : {}),
+                ...(thr ? { thr } : {}),
                 lab: k === 0
                     ? { s: "reaction", o: "XGH2O",
                         i1: ["GH2O", Math.round(3000 * (1 - f))], i2: ["X", Math.round(2800 * (1 - f))],
@@ -412,12 +492,17 @@ function renderTiles() {
         (sum, r) => sum + (r.roles ?? []).reduce((a, x) => a + x.c, 0), 0);
     const gclPct = pct(latest.gcl.p, latest.gcl.pt);
     const eta = levelEta(r => r.gcl, latest.gcl, history);
+    const postureCounts = { exposed: 0, engaged: 0, unknown: 0, clear: 0 };
+    for (const r of Object.values(latest.rooms)) postureCounts[roomPosture(r.thr).level]++;
+    const { exposed, engaged, unknown } = postureCounts;
+    const worstLabel = exposed ? "exposed" : engaged ? "engaged" : unknown ? "unknown" : "clear";
     const tiles = [
         { label: "GCL", value: latest.gcl.l, delta: `${gclPct.toFixed(1)}% to ${latest.gcl.l + 1}`, sub: etaText(eta) },
         { label: "CPU bucket", value: fmtInt.format(latest.cpu.b), delta: `used ${latest.cpu.u.toFixed(1)} / ${latest.cpu.l}` },
         { label: "Credits", value: compact(latest.cr), delta: first ? `${latest.cr - first.cr >= 0 ? "+" : ""}${compact(latest.cr - first.cr)} over range` : "" },
         { label: "Rooms", value: Object.keys(latest.rooms).length, delta: "owned" },
         { label: "Creeps", value: creepCount(latest), delta: "alive (tracked roles)" },
+        { label: "Defense", value: worstLabel, delta: `${exposed} exposed · ${engaged} engaged`, sub: unknown ? `${unknown} unknown` : "all clear" },
     ];
     renderTileRow("tiles", tiles);
 }
@@ -442,6 +527,150 @@ function renderEmpireCharts() {
     renderLine("uptime", "c-uptime",
         [lineDataset("Reacting", uptime, "--series-1")],
         { yMax: 100, unit: "%" });
+}
+
+// Empire-wide defense rollup tiles. Rooms with no `thr` this snapshot are
+// excluded from every aggregate below rather than counted as zero — a
+// degraded room contributes no information, and treating its absence as
+// "safe" would hide exactly the rooms most likely to be mid-fight (the
+// payload gets big, and thr/roles are dropped first, when there's a lot
+// going on). Each tile has a fixed unit regardless of state.
+function renderDefenseTiles() {
+    const rooms = Object.entries(latest.rooms);
+    const withThr = rooms.filter(([, r]) => r.thr);
+    const unknownCount = rooms.length - withThr.length;
+
+    const totalH = withThr.reduce((a, [, r]) => a + r.thr.h, 0);
+    const hostileRoomCount = withThr.filter(([, r]) => r.thr.h > 0).length;
+    const owners = new Set();
+    let anyBoosted = false;
+    for (const [, r] of withThr) {
+        for (const o of r.thr.owners ?? []) owners.add(o);
+        if ((r.thr.boosted ?? 0) > 0) anyBoosted = true;
+    }
+
+    const armedSum = withThr.reduce((a, [, r]) => a + r.thr.twrArmed, 0);
+    const totalSum = withThr.reduce((a, [, r]) => a + r.thr.twrTotal, 0);
+    const dpsSum = withThr.reduce((a, [, r]) => a + r.thr.dps, 0);
+    const noArmedTower = withThr.filter(([, r]) => r.thr.twrArmed === 0 && r.thr.twrTotal > 0).length;
+
+    const outgunned = withThr
+        .map(entry => [entry, netTowerDps(entry[1].thr)])
+        .filter(([[, r], net]) => r.thr.h > 0 && net < 0)
+        .sort((a, b) => a[1] - b[1]);
+    const worstOutgunned = outgunned[0]?.[0];
+    const worstOutgunnedNet = outgunned[0]?.[1];
+
+    const smAvails = withThr.map(([, r]) => r.thr.smAvail);
+    const minSmAvail = smAvails.length ? Math.min(...smAvails) : null;
+    const activeSm = withThr.filter(([, r]) => r.thr.sm !== undefined).length;
+    const zeroSm = withThr.filter(([, r]) => r.thr.smAvail === 0).length;
+    const longestCd = withThr.reduce((a, [, r]) => Math.max(a, r.thr.smCd ?? 0), 0);
+    const ms = observedMsPerTick(history);
+
+    const rmps = withThr.filter(([, r]) => r.thr.rmp != null);
+    const weakestRmp = rmps.length ? rmps.reduce((a, b) => a[1].thr.rmp < b[1].thr.rmp ? a : b) : null;
+    const defRmps = withThr.map(([, r]) => r.thr.defRmp).filter(v => v != null);
+    const minDefRmp = defRmps.length ? Math.min(...defRmps) : null;
+    const criticalRmpCount = withThr.filter(([, r]) => isCriticalBarrier(r.thr.rmp, "rampart")).length;
+
+    const tiles = [
+        {
+            label: "Hostiles", value: fmtInt.format(totalH), delta: `in ${hostileRoomCount} room${hostileRoomCount === 1 ? "" : "s"}`,
+            sub: [owners.size ? [...owners].join(", ") : null, anyBoosted ? "⚡ boosted parts" : null, unknownCount ? `${unknownCount} rooms unknown` : null]
+                .filter(Boolean).join(" · ") || undefined,
+        },
+        {
+            label: "Towers", value: `${armedSum}/${totalSum}`, delta: noArmedTower ? `${noArmedTower} room${noArmedTower === 1 ? "" : "s"} with no armed tower` : "all armed",
+            sub: `worst-case ${fmtInt.format(dpsSum)} dps`,
+        },
+        {
+            label: "Outgunned", value: outgunned.length, delta: outgunned.length ? "heal beats tower dps" : "—",
+            sub: worstOutgunned ? `${worstOutgunned[0]} ${fmtInt.format(worstOutgunnedNet)}` : "—",
+        },
+        {
+            label: "Safe-mode charges (min)", value: minSmAvail ?? "—", delta: `${activeSm} active · ${zeroSm} room${zeroSm === 1 ? "" : "s"} at 0`,
+            sub: longestCd ? `longest cooldown ~${ms != null ? fmtDuration(longestCd * ms) : `${compact(longestCd)} ticks`}` : undefined,
+        },
+        {
+            label: "Weakest rampart", value: weakestRmp ? fmtHits(weakestRmp[1].thr.rmp) : "—", delta: weakestRmp ? weakestRmp[0] : "—",
+            sub: `zone ${fmtHits(minDefRmp)} · ${criticalRmpCount} under ${fmtHits(CRITICAL_RAMPART_HITS)}`,
+        },
+    ];
+    renderTileRow("defense-tiles", tiles);
+}
+
+function renderDefenseTable() {
+    const tbody = $("defense-table").querySelector("tbody");
+    const rows = sortByPosture(Object.entries(latest.rooms));
+    tbody.replaceChildren(...rows.map(([name, r]) => {
+        const tr = document.createElement("tr");
+        const nameTd = document.createElement("td");
+        nameTd.textContent = name;
+        tr.append(nameTd);
+        tr.append(postureBadge(r.thr));
+        tr.append(hostilesCell(r.thr));
+        tr.append(dmgInCell(r.thr));
+        tr.append(towersCell(r.thr));
+        tr.append(netDpsCell(r.thr));
+        tr.append(safeModeCell(r.thr));
+        const wallTitle = r.thr?.wall != null ? `weakest wall ${fmtHits(r.thr.wall)}` : "";
+        tr.append(barrierCell(r.thr?.rmp, "rampart", r.rcl.l, wallTitle));
+        tr.append(barrierCell(r.thr?.defRmp, "zoneRampart", r.rcl.l));
+        tr.append(defCell(r.thr, r.roles));
+        return tr;
+    }));
+}
+
+const ATTACK_LOG_MAX_ROWS = 20;
+
+function renderAttackLog() {
+    const { episodes, covered, total } = hostileEpisodes(history);
+    const tbody = $("attack-log").querySelector("tbody");
+    if (covered === 0) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 6;
+        td.className = "na";
+        td.textContent = "no threat detail in this range";
+        tr.append(td);
+        tbody.replaceChildren(tr);
+    } else if (episodes.length === 0) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 6;
+        td.className = "na";
+        td.textContent = "no hostiles observed in this range";
+        tr.append(td);
+        tbody.replaceChildren(tr);
+    } else {
+        tbody.replaceChildren(...episodes.slice(0, ATTACK_LOG_MAX_ROWS).map(ep => {
+            const tr = document.createElement("tr");
+            const ago = Date.now() - ep.toMs.getTime();
+            const roomTd = document.createElement("td");
+            roomTd.textContent = ep.room;
+            const whenTd = document.createElement("td");
+            whenTd.textContent = ago < 60000 ? "just now" : `${fmtDuration(ago)} ago`;
+            whenTd.title = `${ep.fromMs.toLocaleString()} – ${ep.toMs.toLocaleString()}`;
+            tr.append(roomTd, whenTd);
+            const cells = [
+                `${ep.fromTick} – ${ep.toTick}`,
+                `${ep.peakH}${ep.boosted ? " ⚡" : ""}`,
+                fmtInt.format(ep.peakDmg),
+                ep.owners.join(", ") || "—",
+            ];
+            for (const text of cells) {
+                const td = document.createElement("td");
+                td.textContent = text;
+                tr.append(td);
+            }
+            return tr;
+        }));
+    }
+    const note = covered < total
+        ? `${covered} of ${total} snapshots in range carried threat detail — gaps are payload degradation, not quiet periods`
+        : `${covered} of ${total} snapshots in range carried threat detail`;
+    $("attack-log-note").textContent = note;
 }
 
 // Stat strip for the selected room's controller: level, progress, upgrade
@@ -538,6 +767,90 @@ function renderNuker(room, of) {
     renderLine("nuker", "c-nuker", [gDataset, eDataset], { yMax: 100, unit: "%" });
 }
 
+// Per-room defense detail: five tiles + two cards (defense fleet roster,
+// damage balance). Unlike renderNuker, the section itself is never hidden —
+// thr is present on meta/latest for every owned room (nuk only exists for
+// rooms with a nuker), so a section that vanishes on room switch would just
+// be jarring; "unknown" is itself the information when thr really is
+// absent. The two cards still hide+destroy individually on an empty roster
+// / no hostiles, same ResizeObserver discipline as renderNuker.
+function renderRoomDefense(room) {
+    const r = latest.rooms[room];
+    const thr = r?.thr;
+    const owners = thr?.owners;
+    $("defense-title").textContent = `Defense · ${room}${owners?.length ? ` · ${owners.join(", ")}` : ""}`;
+
+    if (!thr) {
+        renderTileRow("defense-room-tiles", [
+            { label: "Defense", value: "unknown", delta: DEGRADED_TITLE, sub: "payload degradation — see README" },
+        ]);
+        for (const key of ["defenders", "balance"]) { charts[key]?.destroy(); delete charts[key]; }
+        $("defenders-card").hidden = true;
+        $("balance-card").hidden = true;
+        return;
+    }
+
+    const posture = roomPosture(thr);
+    const netDps = netTowerDps(thr);
+    const ms = observedMsPerTick(history);
+    const smActive = thr.sm !== undefined;
+    const smValue = smActive
+        ? (ms != null ? `~${fmtDuration(thr.sm * ms)}` : `~${compact(thr.sm)} ticks`)
+        : pluralCount(thr.smAvail, "charge");
+    const smSub = smActive ? "" : (thr.smCd ? `cooldown ${ms != null ? fmtDuration(thr.smCd * ms) : `~${compact(thr.smCd)} ticks`}` : "");
+
+    renderTileRow("defense-room-tiles", [
+        { label: "Posture", value: posture.label, delta: posture.reasons.join(" · ") || (thr.h === 0 ? "no hostiles" : ""), sub: `${thr.h} hostiles` },
+        { label: "Hostiles", value: fmtInt.format(thr.h), delta: (thr.owners ?? []).join(", ") || "—",
+          sub: thr.h ? `melee ${fmtInt.format(thr.melee ?? 0)} · ranged ${fmtInt.format(thr.ranged ?? 0)} · heal ${fmtInt.format(thr.heal ?? 0)} per tick` : "" },
+        { label: "Towers", value: `${thr.twrArmed}/${thr.twrTotal}`, delta: `worst-case ${fmtInt.format(thr.dps)} dps`,
+          sub: thr.h ? (netDps < 0 ? `heal exceeds tower dps by ${fmtInt.format(-netDps)}` : `towers out-damage heal by ${fmtInt.format(netDps)}`) : "" },
+        { label: "Safe mode", value: smValue, delta: smActive ? "active" : "available", sub: smSub },
+        { label: "Barriers", value: fmtHits(thr.rmp), delta: `zone ${fmtHits(thr.defRmp)}`,
+          sub: `wall ${fmtHits(thr.wall)} · targets ${fmtHits(barrierTarget("rampart", r.rcl.l))} / ${fmtHits(barrierTarget("zoneRampart", r.rcl.l))} at RCL ${r.rcl.l}` },
+    ]);
+
+    // Defense fleet card: def[] home-defender slots plus army_member guards
+    // (a separate role, found via `roles`, not `thr.def` — see
+    // MANIFEST_GUARD_ROLE in calc.js) merged into one current-vs-desired
+    // chart. An empty roster is usually healthy (see defenderSummary), so
+    // its explanation moves into the Posture tile's sub rather than being
+    // lost along with the hidden card.
+    const defSummary = defenderSummary(thr, r.roles);
+    const rows = [
+        ...defSummary.slots.map(s => ({ label: s.role + (s.room ? ` → ${s.room}` : ""), cur: s.cur, des: s.des })),
+        ...defSummary.guards.map(g => ({ label: `guard: ${g.r}${g.rm ? ` → ${g.rm}` : ""}`, cur: g.c, des: g.d })),
+    ];
+    if (rows.length === 0) {
+        charts.defenders?.destroy();
+        delete charts.defenders;
+        $("defenders-card").hidden = true;
+    } else {
+        $("defenders-card").hidden = false;
+        renderBarRows("defenders", "c-defenders", rows.map(x => x.label), [
+            { label: "Current", data: rows.map(x => x.cur), backgroundColor: cssVar("--series-1"),
+              borderRadius: { topRight: 4, bottomRight: 4 }, maxBarThickness: 14 },
+            { label: "Desired", data: rows.map(x => x.des), backgroundColor: cssVar("--series-2"),
+              borderRadius: { topRight: 4, bottomRight: 4 }, maxBarThickness: 14 },
+        ]);
+    }
+
+    // Damage balance card: nothing to compare against when there are no hostiles.
+    if (thr.h === 0) {
+        charts.balance?.destroy();
+        delete charts.balance;
+        $("balance-card").hidden = true;
+    } else {
+        $("balance-card").hidden = false;
+        renderBarRows("balance", "c-balance", ["Incoming dmg/t", "Hostile heal/t", "Tower dps"], [{
+            label: "per tick",
+            data: [(thr.melee ?? 0) + (thr.ranged ?? 0), thr.heal ?? 0, thr.dps],
+            backgroundColor: [cssVar("--status-critical"), cssVar("--status-warning"), cssVar("--series-3")],
+            borderRadius: { topRight: 4, bottomRight: 4 }, maxBarThickness: 14,
+        }], { rowHeight: 40 });
+    }
+}
+
 function renderRoomCharts() {
     const room = selectedRoom;
     $("room-title").textContent = `Room ${room}`;
@@ -561,13 +874,16 @@ function renderRoomCharts() {
     renderRolesChart(room);
     renderBoostGrid(room);
     renderNuker(room, of);
+    renderRoomDefense(room);
 }
 
-function renderRolesChart(room) {
-    charts.roles?.destroy();
-    const roles = latest.rooms[room]?.roles ?? [];
-    const labels = roles.map(x => x.rm ? `${x.r} → ${x.rm}` : x.r);
-    const opts = baseOptions(2);
+// Shared horizontal-bar recipe for "current vs desired"-style charts — roles,
+// the defense fleet, and the damage-balance bars all use this. The options
+// object (axes swapped, per-row height) is identical across all three; only
+// the labels/datasets differ.
+function renderBarRows(key, canvasId, labels, datasets, { rowHeight = 34, minHeight = 200 } = {}) {
+    charts[key]?.destroy();
+    const opts = baseOptions(datasets.length);
     // legend swatches mirror the mark: rects for bars, not line keys
     opts.plugins.legend.labels.boxWidth = 10;
     opts.plugins.legend.labels.boxHeight = 10;
@@ -586,21 +902,20 @@ function renderRolesChart(room) {
             border: { color: cssVar("--axis") },
         },
     };
-    charts.roles = new Chart($("c-roles"), {
-        type: "bar",
-        data: {
-            labels,
-            datasets: [
-                { label: "Current", data: roles.map(x => x.c), backgroundColor: cssVar("--series-1"),
-                  borderRadius: { topRight: 4, bottomRight: 4 }, maxBarThickness: 14 },
-                { label: "Desired", data: roles.map(x => x.d), backgroundColor: cssVar("--series-2"),
-                  borderRadius: { topRight: 4, bottomRight: 4 }, maxBarThickness: 14 },
-            ],
-        },
-        options: opts,
-    });
-    const card = $("c-roles").closest(".plot");
-    card.style.height = `${Math.max(200, roles.length * 34 + 60)}px`;
+    charts[key] = new Chart($(canvasId), { type: "bar", data: { labels, datasets }, options: opts });
+    const card = $(canvasId).closest(".plot");
+    card.style.height = `${Math.max(minHeight, labels.length * rowHeight + 60)}px`;
+}
+
+function renderRolesChart(room) {
+    const roles = latest.rooms[room]?.roles ?? [];
+    const labels = roles.map(x => x.rm ? `${x.r} → ${x.rm}` : x.r);
+    renderBarRows("roles", "c-roles", labels, [
+        { label: "Current", data: roles.map(x => x.c), backgroundColor: cssVar("--series-1"),
+          borderRadius: { topRight: 4, bottomRight: 4 }, maxBarThickness: 14 },
+        { label: "Desired", data: roles.map(x => x.d), backgroundColor: cssVar("--series-2"),
+          borderRadius: { topRight: 4, bottomRight: 4 }, maxBarThickness: 14 },
+    ]);
 }
 
 function makeBadge(color, text) {
@@ -613,15 +928,6 @@ function makeBadge(color, text) {
     label.textContent = text;
     badge.append(swatch, label);
     return badge;
-}
-
-function threatBadge(thr) {
-    let level, text;
-    if (!thr || thr.h === 0) { level = "good"; text = "clear"; }
-    else if (thr.boosted > 0) { level = "critical"; text = `${thr.h} hostiles ⚠ boosted`; }
-    else if ((thr.melee ?? 0) + (thr.ranged ?? 0) > 0) { level = "serious"; text = `${thr.h} hostiles armed`; }
-    else { level = "warning"; text = `${thr.h} hostiles`; }
-    return makeBadge(cssVar(`--status-${level}`), text);
 }
 
 // Small fill square for the rooms-table nuker cell — same visual language as
@@ -656,6 +962,167 @@ function nukerCell(nuk) {
     td.title = `${ready ? "ready · " : cd > 0 ? `cooldown ${fmtInt.format(cd)} · ` : ""}`
         + `ghodium ${fmtInt.format(g)} / ${fmtInt.format(NUKER_GHODIUM_CAPACITY)} · `
         + `energy ${fmtInt.format(e)} / ${fmtInt.format(NUKER_ENERGY_CAPACITY)}`;
+    return td;
+}
+
+// ---------- defense cell builders ----------
+// Every cell here treats a missing `thr` as "unknown" (na + an explanatory
+// title), never as "clear" — see the note atop the defense section of
+// calc.js for why that distinction matters.
+
+const POSTURE_COLOR = { clear: "--status-good", engaged: "--status-warning", exposed: "--status-critical", unknown: "--text-muted" };
+const DEGRADED_TITLE = "threat detail dropped from this snapshot";
+
+const pluralCount = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+// Shared cur-vs-des severity threshold for the two "current/desired" cells on
+// this page (creeps, def[]) — half of desired or worse is critical, any
+// shortfall short of that is just short.
+const shortfallClass = (cur, des) => (cur < des ? (cur < des * 0.5 ? "critical" : "short") : "");
+
+function postureBadge(thr) {
+    const td = document.createElement("td");
+    const { level, reasons } = roomPosture(thr);
+    td.append(makeBadge(cssVar(POSTURE_COLOR[level]), level));
+    td.title = reasons.length ? reasons.join(" · ") : (level === "unknown" ? DEGRADED_TITLE : "");
+    return td;
+}
+
+function hostilesCell(thr) {
+    const td = document.createElement("td");
+    if (!thr) { td.textContent = "—"; td.className = "na"; td.title = DEGRADED_TITLE; return td; }
+    if (thr.h === 0) { td.textContent = "0"; td.className = "na"; return td; }
+    td.textContent = String(thr.h);
+    td.className = thr.boosted > 0 ? "critical" : "serious";
+    const parts = [];
+    if (thr.owners?.length) parts.push(thr.owners.join(", "));
+    parts.push(`melee ${fmtInt.format(thr.melee ?? 0)}/t`, `ranged ${fmtInt.format(thr.ranged ?? 0)}/t`, `heal ${fmtInt.format(thr.heal ?? 0)}/t`);
+    if (thr.boosted > 0) parts.push(`${thr.boosted} boosted parts`);
+    td.title = parts.join(" · ");
+    return td;
+}
+
+// One column for melee+ranged rather than two — the sum is what's compared
+// against tower dps; splitting it adds width without adding a decision.
+function dmgInCell(thr) {
+    const td = document.createElement("td");
+    if (!thr || thr.h === 0) { td.textContent = "—"; td.className = "na"; return td; }
+    const dmg = (thr.melee ?? 0) + (thr.ranged ?? 0);
+    td.textContent = fmtInt.format(dmg);
+    td.title = `melee ${fmtInt.format(thr.melee ?? 0)}/t · ranged ${fmtInt.format(thr.ranged ?? 0)}/t `
+        + `· heal ${fmtInt.format(thr.heal ?? 0)}/t${thr.boosted ? ` · ${thr.boosted} boosted parts` : ""}`;
+    return td;
+}
+
+function towersCell(thr) {
+    const td = document.createElement("td");
+    if (!thr) { td.textContent = "—"; td.className = "na"; td.title = DEGRADED_TITLE; return td; }
+    if (thr.twrTotal === 0) { td.textContent = "—"; td.className = "na"; td.title = "no tower built (RCL < 3?)"; return td; }
+    td.textContent = `${thr.twrArmed}/${thr.twrTotal}`;
+    if (thr.twrArmed === 0) td.className = "critical";
+    else if (thr.twrArmed < thr.twrTotal) td.className = "short";
+    td.title = `worst-case ${fmtInt.format(thr.dps)} dps`;
+    return td;
+}
+
+// The single most decision-relevant number on the page: negative means
+// towers alone cannot out-damage what the hostiles are healing back.
+function netDpsCell(thr) {
+    const td = document.createElement("td");
+    if (!thr) { td.textContent = "—"; td.className = "na"; td.title = DEGRADED_TITLE; return td; }
+    if (thr.h === 0) { td.textContent = fmtInt.format(thr.dps); td.className = "na"; return td; }
+    const net = netTowerDps(thr);
+    td.textContent = `${net >= 0 ? "+" : ""}${fmtInt.format(net)}`;
+    if (net < 0) td.className = "critical";
+    td.title = `tower dps ${fmtInt.format(thr.dps)} (${thr.twrArmed} armed × ${TOWER_DPS_PER_ARMED}) `
+        + `− hostile heal ${fmtInt.format(thr.heal ?? 0)}/t`;
+    return td;
+}
+
+function safeModeCell(thr) {
+    const td = document.createElement("td");
+    if (!thr) { td.textContent = "—"; td.className = "na"; td.title = DEGRADED_TITLE; return td; }
+    if (thr.sm !== undefined) {
+        td.append(makeBadge(cssVar("--series-1"), `active ${compact(thr.sm)}t`));
+    } else {
+        td.textContent = pluralCount(thr.smAvail, "charge");
+        if (thr.smAvail === 0) td.className = thr.h > 0 ? "critical" : "short";
+    }
+    if (thr.smCd) td.title = `cooldown ${fmtInt.format(thr.smCd)}`;
+    return td;
+}
+
+// `kind` is one of calc.js's BARRIER_TARGETS keys ("rampart"/"zoneRampart"/
+// "wall"); `rcl` resolves the RCL-scaled repair target the hits are ramped
+// against, so a healthy low-RCL rampart and a neglected high-RCL one never
+// read the same color.
+function barrierCell(hits, kind, rcl, extraTitle) {
+    const td = document.createElement("td");
+    if (hits == null) {
+        td.textContent = "—";
+        td.className = "na";
+        td.title = kind === "zoneRampart" ? "no rampart inside the configured defender zone" : "no own rampart";
+        return td;
+    }
+    const level = barrierLevel(hits, kind, rcl);
+    const critical = isCriticalBarrier(hits, kind);
+    td.append(makeBadge(cssVar(critical ? "--status-critical" : `--fill-${level}`), fmtHits(hits)));
+    td.title = `${fmtHits(hits)} / target ${fmtHits(barrierTarget(kind, rcl))} at RCL ${rcl}${extraTitle ? ` · ${extraTitle}` : ""}`;
+    return td;
+}
+
+// def[] slots and army_member guard rows use different field names
+// (role/room/cur/des vs RoleStats' r/rm/c/d) — format each the same way here
+// so both read consistently in tooltips.
+const fmtSlot = (role, room, cur, des) => `${role}${room ? ` → ${room}` : ""} ${cur}/${des}`;
+const slotLabel = s => fmtSlot(s.role, s.room, s.cur, s.des);
+const guardLabel = g => fmtSlot(g.r, g.rm, g.c, g.d);
+
+const DEF_STATE_EXPLAIN = {
+    unknown: DEGRADED_TITLE,
+    "none-needed": "no threat — no defense fleet planned",
+    "safe-mode": "safe mode active — no fleet planned while it holds",
+    unarmed: "hostiles present but carry no attack parts — no fleet planned",
+    "no-plan": "armed hostiles and no home defense plan — sizing failed or nothing fieldable",
+};
+
+function defCell(thr, roles) {
+    const td = document.createElement("td");
+    const s = defenderSummary(thr, roles);
+    // Suppressed remote requirements (including army_member guards) vanish
+    // from `roles` by design while combat hostiles are in the room — say so
+    // rather than let an empty guard list read as attrition.
+    const suppressedNote = s.suppressed
+        ? `remote spawn requirements (incl. ${s.guards.length ? `${s.guards.length} ` : ""}army_member guards) `
+            + `are suppressed while combat hostiles are in this room — absent, not lost`
+        : (s.guards.length ? `guards: ${s.guards.map(guardLabel).join(", ")}` : "");
+
+    if (s.state in DEF_STATE_EXPLAIN) {
+        td.textContent = s.state === "no-plan" ? "none" : "—";
+        td.className = s.state === "no-plan" ? "critical" : "na";
+        td.title = [DEF_STATE_EXPLAIN[s.state], suppressedNote].filter(Boolean).join(" · ");
+        return td;
+    }
+
+    // staffed / short — shortfallClass, so the two current-vs-desired cells
+    // on this page read alike.
+    td.className = shortfallClass(s.cur, s.des);
+    const wrap = document.createElement("span");
+    wrap.className = "def-fill";
+    wrap.append(document.createTextNode(`${s.cur}/${s.des}`));
+    const chipsWrap = document.createElement("span");
+    chipsWrap.className = "chips";
+    for (const slot of s.slots) {
+        const chip = document.createElement("span");
+        chip.className = "chip";
+        const frac = slot.des ? slot.cur / slot.des : 1;
+        chip.style.background = slot.cur === 0 ? cssVar("--grid") : cssVar(`--fill-${rampLevel(Math.min(1, frac))}`);
+        chip.title = slotLabel(slot);
+        chipsWrap.append(chip);
+    }
+    wrap.append(chipsWrap);
+    td.append(wrap);
+    td.title = suppressedNote;
     return td;
 }
 
@@ -814,7 +1281,7 @@ function creepsCell(roles) {
     const des = roles.reduce((a, x) => a + x.d, 0);
     td.textContent = `${cur} / ${des}`;
     if (cur < des) {
-        td.className = cur < des * 0.5 ? "critical" : "short";
+        td.className = shortfallClass(cur, des);
         td.title = "short: " + roles.filter(x => x.c < x.d)
             .map(x => `${x.rm ? `${x.r} → ${x.rm}` : x.r} ${x.c}/${x.d}`).join(", ");
     }
@@ -854,9 +1321,6 @@ function renderRoomsTable() {
         const queueTd = document.createElement("td");
         queueTd.textContent = String(r.q);
         tr.append(queueTd);
-        const threatTd = document.createElement("td");
-        threatTd.append(threatBadge(r.thr));
-        tr.append(threatTd);
         tr.append(nukerCell(r.nuk));
         return tr;
     }));
@@ -878,6 +1342,9 @@ function renderAll() {
     renderTiles();
     renderRoomSelect();
     renderEmpireCharts();
+    renderDefenseTiles();
+    renderDefenseTable();
+    renderAttackLog();
     renderRoomCharts();
     renderBoostMatrix();
     renderLabsTable();

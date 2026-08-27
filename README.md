@@ -12,6 +12,15 @@ before being read. `scripts/collect.mjs` fetches the segment from the Screeps We
 the ring for anything not yet stored, and stores it in Firestore; `public/` is a static
 Chart.js dashboard reading Firestore directly under read-only security rules.
 
+The **Defense** section is deliberately built from `meta/latest` rather than a time series.
+`StatsManager`'s payload-size degradation drops `roles`/`thr` first (`DEGRADATION_STEPS`,
+~35% of the history budget), so historical `thr` coverage in stored `snapshots` docs is
+size-dependent and not guaranteed — the head snapshot on `meta/latest` is the one place it's
+always complete. The attack log (`hostileEpisodes` in `public/calc.js`) reports its own
+coverage (`N of M snapshots in range carried threat detail`) rather than ever implying an
+uncovered stretch was quiet. Before adding a "hostiles over time" chart, check that coverage
+number for the range you care about.
+
 The dashboard uses the **Firestore Lite** SDK (`firebase-firestore-lite.js`), not the full
 SDK, on purpose: it only ever does one-shot reads, polled on the collector's ~5-minute write
 cadence, and the full SDK's WebChannel `Listen` stream — used internally even for one-shot

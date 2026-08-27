@@ -5,6 +5,8 @@ import {
     compact, pct, progressDelta, rateSeries, observedMsPerTick, windowRate, stockRate,
     levelEta, fmtDuration, downsample, rampLevel, boostFillLevel, boostFloor,
     PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, LOD_BY_RANGE, RETENTION_DAYS,
+    fmtHits, barrierTarget, barrierLevel, isCriticalBarrier, roomPosture, defenderSummary,
+    netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, MANIFEST_GUARD_ROLE,
 } from "../public/calc.js";
 
 describe("pct", () => {
@@ -255,6 +257,269 @@ describe("boostFloor", () => {
     });
     test("boostable compounds use the one-boost floor", () => {
         assert.deepEqual(boostFloor(false), { amount: PARTS_PER_BOOST, reason: `under one boost (${PARTS_PER_BOOST})` });
+    });
+});
+
+describe("fmtHits", () => {
+    test("mirrors the bot's own console formatter, including its sub-1K/1M quirks", () => {
+        assert.equal(fmtHits(999), "999");
+        assert.equal(fmtHits(1000), "1.0K");
+        assert.equal(fmtHits(1500), "1.5K");
+        // Deliberately matching the bot's own fmtHits, not "fixing" it here:
+        // 999_999 stays in the K bucket rather than rounding up into "1.0M".
+        assert.equal(fmtHits(999_999), "1000.0K");
+        assert.equal(fmtHits(1_000_000), "1.0M");
+        assert.equal(fmtHits(2_500_000), "2.5M");
+        assert.equal(fmtHits(0), "0");
+    });
+    test("renders an em dash for a missing reading", () => {
+        assert.equal(fmtHits(null), "—");
+        assert.equal(fmtHits(undefined), "—");
+    });
+});
+
+describe("barrierTarget", () => {
+    test("resolves the RCL-scaled ladder per kind", () => {
+        assert.equal(barrierTarget("rampart", 1), 2000);
+        assert.equal(barrierTarget("rampart", 8), 2_000_000);
+        assert.equal(barrierTarget("wall", 1), 1000);
+        assert.equal(barrierTarget("wall", 8), 2_000_000);
+        assert.equal(barrierTarget("zoneRampart", 8), 50_000_000); // not a copy of the plain rampart ladder
+    });
+    test("falls back to the ladder's default outside RCL 1-8", () => {
+        assert.equal(barrierTarget("rampart", 0), 10_000);
+        assert.equal(barrierTarget("rampart", 9), 10_000);
+    });
+    test("returns null for an unknown barrier kind", () => {
+        assert.equal(barrierTarget("moat", 5), null);
+    });
+});
+
+describe("barrierLevel", () => {
+    test("returns null when hits are absent (unknown, never good)", () => {
+        assert.equal(barrierLevel(null, "rampart", 1), null);
+    });
+    test("ramps against the RCL target", () => {
+        assert.equal(barrierLevel(2000, "rampart", 1), 5);  // at target
+        assert.equal(barrierLevel(200, "rampart", 1), 1);   // 10% of target
+    });
+    test("clamps above-target hits to the top bucket instead of overflowing", () => {
+        assert.equal(barrierLevel(4000, "rampart", 1), 5);  // 2x target
+    });
+});
+
+describe("isCriticalBarrier", () => {
+    test("flags a rampart just under the absolute critical-repair floor", () => {
+        assert.equal(isCriticalBarrier(CRITICAL_RAMPART_HITS - 1, "rampart"), true);
+    });
+    test("does not flag a rampart at or above the floor", () => {
+        assert.equal(isCriticalBarrier(CRITICAL_RAMPART_HITS, "rampart"), false);
+    });
+    test("never flags walls (the bot's priority-0 rule is rampart-only)", () => {
+        assert.equal(isCriticalBarrier(100, "wall"), false);
+    });
+    test("does not flag an absent reading", () => {
+        assert.equal(isCriticalBarrier(null, "rampart"), false);
+    });
+});
+
+describe("roomPosture", () => {
+    test("a missing thr is unknown, not clear", () => {
+        assert.deepEqual(roomPosture(undefined), { level: "unknown", label: "unknown", reasons: [] });
+    });
+    test("no hostiles is clear", () => {
+        assert.deepEqual(roomPosture({ h: 0 }), { level: "clear", label: "clear", reasons: [] });
+    });
+    test("an unarmed tower alone is exposed with exactly that reason", () => {
+        const p = roomPosture({ h: 1, twrArmed: 0, twrTotal: 3, smAvail: 1, def: [] });
+        assert.equal(p.level, "exposed");
+        assert.deepEqual(p.reasons, ["no armed tower"]);
+    });
+    test("no towers built reads distinctly from an unarmed tower", () => {
+        const p = roomPosture({ h: 1, twrArmed: 0, twrTotal: 0, smAvail: 1, def: [] });
+        assert.deepEqual(p.reasons, ["no tower built"]);
+    });
+    test("no inactive safe-mode charge alone is exposed with exactly that reason", () => {
+        const p = roomPosture({ h: 1, twrArmed: 1, twrTotal: 1, smAvail: 0, def: [] });
+        assert.equal(p.level, "exposed");
+        assert.deepEqual(p.reasons, ["no safe-mode charge"]);
+    });
+    test("a defender deficit alone is exposed with exactly that reason", () => {
+        const p = roomPosture({ h: 1, twrArmed: 1, twrTotal: 1, smAvail: 1, def: [{ role: "home_defender", cur: 1, des: 2 }] });
+        assert.equal(p.level, "exposed");
+        assert.deepEqual(p.reasons, ["defender slots short"]);
+    });
+    test("all three red conditions at once report all three reasons", () => {
+        const p = roomPosture({ h: 1, twrArmed: 0, twrTotal: 2, smAvail: 0, def: [{ role: "home_defender", cur: 1, des: 2 }] });
+        assert.equal(p.level, "exposed");
+        assert.equal(p.reasons.length, 3);
+    });
+    test("hostiles present but every defense layer holding is engaged, not exposed", () => {
+        const p = roomPosture({ h: 2, twrArmed: 1, twrTotal: 1, smAvail: 1, def: [] });
+        assert.deepEqual(p, { level: "engaged", label: "engaged", reasons: [] });
+    });
+    test("active safe mode with smAvail 0 is not a reason (the mode itself is the fallback)", () => {
+        const p = roomPosture({ h: 1, twrArmed: 1, twrTotal: 1, sm: 100, smAvail: 0, def: [] });
+        assert.deepEqual(p.reasons, []);
+    });
+    test("does not throw when def is absent from an otherwise-valid thr", () => {
+        assert.doesNotThrow(() => roomPosture({ h: 1, twrArmed: 1, twrTotal: 1, smAvail: 1 }));
+    });
+});
+
+describe("defenderSummary", () => {
+    test("unknown when thr is absent, but guards are still read from roles", () => {
+        const s = defenderSummary(undefined, [{ r: MANIFEST_GUARD_ROLE, c: 1, d: 1 }]);
+        assert.equal(s.state, "unknown");
+        assert.equal(s.cur, 0);
+        assert.equal(s.des, 0);
+        assert.equal(s.guards.length, 1);
+        assert.equal(s.suppressed, false);
+    });
+    test("safe-mode: active safe mode explains an empty def[]", () => {
+        assert.equal(defenderSummary({ h: 2, sm: 100, def: [] }, []).state, "safe-mode");
+    });
+    test("none-needed: no hostiles explains an empty def[]", () => {
+        assert.equal(defenderSummary({ h: 0, def: [] }, []).state, "none-needed");
+    });
+    test("unarmed: hostiles with no attack parts explain an empty def[]", () => {
+        assert.equal(defenderSummary({ h: 2, melee: 0, ranged: 0, def: [] }, []).state, "unarmed");
+    });
+    test("no-plan: armed hostiles and an empty def[] is the only bad empty state", () => {
+        assert.equal(defenderSummary({ h: 2, melee: 100, ranged: 0, def: [] }, []).state, "no-plan");
+    });
+    test("staffed: def[] fully meets desired", () => {
+        const thr = { h: 2, melee: 100, def: [{ role: "home_defender", cur: 2, des: 2 }] };
+        const s = defenderSummary(thr, []);
+        assert.equal(s.state, "staffed");
+        assert.equal(s.cur, 2);
+        assert.equal(s.des, 2);
+    });
+    test("short: def[] under desired", () => {
+        const thr = { h: 2, melee: 100, def: [{ role: "home_defender", cur: 1, des: 2 }, { role: "home_melee_defender", cur: 0, des: 1 }] };
+        const s = defenderSummary(thr, []);
+        assert.equal(s.state, "short");
+        assert.equal(s.cur, 1);
+        assert.equal(s.des, 3);
+    });
+    test("suppressed is true when hostiles carry attack parts (remote slots vanish by design)", () => {
+        const thr = { h: 2, melee: 50, ranged: 0, def: [{ role: "home_defender", cur: 1, des: 1 }] };
+        assert.equal(defenderSummary(thr, []).suppressed, true);
+    });
+    test("suppressed is false for heal-only hostiles (not combat hostiles to the manifest gate)", () => {
+        const thr = { h: 2, melee: 0, ranged: 0, heal: 50, def: [{ role: "home_defender", cur: 1, des: 1 }] };
+        assert.equal(defenderSummary(thr, []).suppressed, false);
+    });
+    test("guards default to empty when roles is undefined", () => {
+        const thr = { h: 0, def: [] };
+        assert.deepEqual(defenderSummary(thr, undefined).guards, []);
+    });
+});
+
+describe("netTowerDps", () => {
+    test("towers outpacing heal is positive", () => {
+        assert.equal(netTowerDps({ dps: 450, heal: 200 }), 250);
+    });
+    test("heal outpacing towers is negative", () => {
+        assert.equal(netTowerDps({ dps: 100, heal: 300 }), -200);
+    });
+    test("treats an absent heal as zero", () => {
+        assert.equal(netTowerDps({ dps: 150 }), 150);
+    });
+});
+
+describe("sortByPosture", () => {
+    test("orders exposed, then engaged, then unknown, then clear", () => {
+        const exposed = { thr: { h: 1, twrArmed: 0, twrTotal: 1, smAvail: 1, def: [] } };
+        const engaged = { thr: { h: 1, twrArmed: 1, twrTotal: 1, smAvail: 1, def: [] } };
+        const unknown = { thr: undefined };
+        const clear = { thr: { h: 0 } };
+        const sorted = sortByPosture([["D", clear], ["C", unknown], ["B", engaged], ["A", exposed]]);
+        assert.deepEqual(sorted.map(([name]) => name), ["A", "B", "C", "D"]);
+    });
+    test("ties within a posture level break alphabetically by room name", () => {
+        const exposed = { thr: { h: 1, twrArmed: 0, twrTotal: 1, smAvail: 1, def: [] } };
+        const sorted = sortByPosture([["W2N2", exposed], ["W1N1", exposed]]);
+        assert.deepEqual(sorted.map(([name]) => name), ["W1N1", "W2N2"]);
+    });
+});
+
+describe("hostileEpisodes", () => {
+    // rooms: { name: {h,melee,...} | null }; null means that room's thr was
+    // dropped from this row entirely (degraded), not that it's quiet.
+    function row(tick, ms, rooms) {
+        const out = {};
+        for (const [name, t] of Object.entries(rooms)) out[name] = t ? { thr: t } : {};
+        return { tick, date: new Date(ms), rooms: out };
+    }
+
+    test("empty history yields no episodes and zero coverage", () => {
+        assert.deepEqual(hostileEpisodes([]), { episodes: [], covered: 0, total: 0 });
+    });
+    test("merges consecutive hostile rows into one episode, tracking peaks", () => {
+        const history = [
+            row(0, 0, { W1: { h: 1, melee: 50, ranged: 0 } }),
+            row(100, 1000, { W1: { h: 3, melee: 100, ranged: 20 } }),
+            row(200, 2000, { W1: { h: 0 } }),
+        ];
+        const { episodes, covered, total } = hostileEpisodes(history);
+        assert.equal(episodes.length, 1);
+        assert.equal(episodes[0].room, "W1");
+        assert.equal(episodes[0].peakH, 3);
+        assert.equal(episodes[0].peakDmg, 120);
+        assert.equal(episodes[0].fromTick, 0);
+        assert.equal(episodes[0].toTick, 100);
+        assert.equal(covered, 3);
+        assert.equal(total, 3);
+    });
+    test("splits into separate episodes across a quiet gap", () => {
+        const history = [
+            row(0, 0, { W1: { h: 2, melee: 50, ranged: 0 } }),
+            row(100, 1000, { W1: { h: 0 } }),
+            row(200, 2000, { W1: { h: 1, melee: 30, ranged: 0 } }),
+        ];
+        const { episodes } = hostileEpisodes(history);
+        assert.equal(episodes.length, 2);
+        // newest first
+        assert.equal(episodes[0].fromTick, 200);
+        assert.equal(episodes[1].fromTick, 0);
+    });
+    test("a degraded row (thr absent) mid-fight does not split the episode or end it early", () => {
+        const history = [
+            row(0, 0, { W1: { h: 1, melee: 50, ranged: 0 } }),
+            row(100, 1000, { W1: null }), // degraded — room present but no thr this tick
+            row(200, 2000, { W1: { h: 2, melee: 80, ranged: 0 } }),
+        ];
+        const { episodes, covered, total } = hostileEpisodes(history);
+        assert.equal(episodes.length, 1);
+        assert.equal(episodes[0].fromTick, 0);
+        assert.equal(episodes[0].toTick, 200);
+        assert.equal(episodes[0].peakH, 2);
+        assert.equal(covered, 2);
+        assert.equal(total, 3);
+    });
+    test("an episode still open at the end of history is still reported", () => {
+        const history = [row(0, 0, { W1: { h: 1, melee: 10, ranged: 0 } })];
+        const { episodes } = hostileEpisodes(history);
+        assert.equal(episodes.length, 1);
+        assert.equal(episodes[0].toTick, 0);
+    });
+    test("aggregates owners and boosted-part sightings across an episode", () => {
+        const history = [
+            row(0, 0, { W1: { h: 1, melee: 50, ranged: 0, owners: ["Bob"], boosted: 0 } }),
+            row(100, 1000, { W1: { h: 2, melee: 80, ranged: 0, owners: ["Bob", "Alice"], boosted: 5 } }),
+        ];
+        const { episodes } = hostileEpisodes(history);
+        assert.deepEqual([...episodes[0].owners].sort(), ["Alice", "Bob"]);
+        assert.equal(episodes[0].boosted, true);
+    });
+    test("tracks two rooms under attack in the same row as independent episodes", () => {
+        const history = [
+            row(0, 0, { W1: { h: 1, melee: 10, ranged: 0 }, W2: { h: 2, melee: 20, ranged: 0 } }),
+        ];
+        const { episodes } = hostileEpisodes(history);
+        assert.equal(episodes.length, 2);
+        assert.deepEqual(episodes.map(e => e.room).sort(), ["W1", "W2"]);
     });
 });
 
