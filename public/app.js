@@ -12,23 +12,13 @@ import {
 import {
     compact, pct, rateSeries, observedMsPerTick, windowRate, stockRate,
     levelEta, fmtDuration, downsample, rampLevel, boostFillLevel, boostFloor,
-    PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, bucketId,
+    PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, bucketId, LOD_BY_RANGE,
 } from "./calc.js";
 const MAX_POINTS = 500;
 // firestore.rules caps snapshots list() queries at request.query.limit <= 9000
 // (anonymous-scan quota defense — see README "On the web apiKey"). Both
 // history queries below must carry it or Firestore denies them.
 const MAX_HISTORY_DOCS = 9000;
-// The bot publishes roughly once every 20 ticks (~82s at today's shard
-// speed), so full resolution over the longer ranges would blow past
-// MAX_HISTORY_DOCS (30d is ~31,600 docs) — and even where it fits, most of
-// the fetch would be discarded by the MAX_POINTS downsample. collect.mjs
-// flags the first stored doc per wall-clock bucket (widths in calc.js's
-// LOD_BUCKET_MS, shared with the collector), so each range queries a slice
-// sized just under MAX_POINTS: 24h at b5 ≈ 288 docs, 7d at b30 ≈ 336, 30d at
-// b120 ≈ 360. Each flag needs a composite index — see firestore.indexes.json.
-// Ranges absent here (6h, ~260 docs) fetch every doc unfiltered.
-const LOD_BY_RANGE = { 24: "b5", 168: "b30", 720: "b120" };
 
 const $ = id => document.getElementById(id);
 const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -158,7 +148,7 @@ function synthDemo() {
     // oscAmp is capped well under (totalGain / MAX_POINTS) * oscPeriod — the
     // point where the oscillation's slope would exceed the trend's and the
     // rate would dip negative — so RCL/tick stays positive at every range,
-    // including 30d where n hits the MAX_POINTS ceiling and the trend is weakest.
+    // including 21d where n hits the MAX_POINTS ceiling and the trend is weakest.
     const rclSpecs = [
         { level: 5, progress: 300000, totalGain: 350000, oscAmp: 3500, oscPeriod: 9 },
         { level: 6, progress: 2100000, totalGain: 500000, oscAmp: 4000, oscPeriod: 7 },

@@ -31,17 +31,16 @@
  *
  * `b5`/`b30`/`b120` mark the first stored doc in each 5-/30-/120-minute
  * wall-clock bucket, so the dashboard can query a downsampled slice for the
- * 24h/7d/30d ranges instead of paging through everything — see public/app.js
+ * 24h/7d/21d ranges instead of paging through everything — see public/calc.js
  * and firestore.indexes.json.
  */
 import { pathToFileURL } from "node:url";
 import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
-import { LOD_BUCKET_MS, bucketId } from "../public/calc.js";
+import { LOD_BUCKET_MS, bucketId, RETENTION_DAYS } from "../public/calc.js";
 
 const SHARD = process.env.SCREEPS_SHARD ?? "shard2";
 const SEGMENT = process.env.SCREEPS_SEGMENT ?? "90";
-const RETENTION_DAYS = 21; // was 60; the ring raised stored volume ~5x (see README)
 const PRUNE_BATCH = 450;
 const PRUNE_MAX_BATCHES = 20; // caps a single run's delete cost if a backlog ever builds up
 

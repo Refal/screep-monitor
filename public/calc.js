@@ -21,6 +21,25 @@ export const MIN_RAW_STOCK = 100;  // LabManager.MIN_STORAGE_AMOUNT — below th
 // is ever queried).
 export const LOD_BUCKET_MS = { b5: 5 * 60_000, b30: 30 * 60_000, b120: 120 * 60_000 };
 
+// Snapshot retention window. Drives both the collector's daily prune sweep
+// and the longest selectable dashboard range (the "21d" button), so the UI
+// can never offer a window the data doesn't cover. Was 60; the ring raised
+// stored volume ~5x (see README "Operations").
+export const RETENTION_DAYS = 21;
+
+// Range (hours) → LOD flag queried by the dashboard. The bot publishes
+// roughly once every 20 ticks (~82s at today's shard speed), so full
+// resolution over the longer ranges would blow past the dashboard's
+// MAX_HISTORY_DOCS query cap (21d is ~22,000 docs) — and even where it fits,
+// most of the fetch would be discarded by the MAX_POINTS downsample.
+// collect.mjs flags the first stored doc per wall-clock bucket (widths in
+// LOD_BUCKET_MS above), so each range queries a slice sized just under the
+// 500-point render cap: 24h at b5 ≈ 288 docs, 7d at b30 ≈ 336, 21d at
+// b120 ≈ 252. Each flag needs a composite index — see firestore.indexes.json.
+// Ranges absent here (6h, ~260 docs) fetch every doc unfiltered. Keys must
+// match the data-range buttons in index.html (asserted in test/calc.test.js).
+export const LOD_BY_RANGE = { 24: "b5", 168: "b30", [RETENTION_DAYS * 24]: "b120" };
+
 // Which wall-clock bucket a timestamp falls in. The collector's flagging and
 // the dashboard's poll-skip must agree on this alignment, so both call this.
 export const bucketId = (tsMs, widthMs) => Math.floor(tsMs / widthMs);

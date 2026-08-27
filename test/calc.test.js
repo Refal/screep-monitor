@@ -1,9 +1,10 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
     compact, pct, progressDelta, rateSeries, observedMsPerTick, windowRate, stockRate,
     levelEta, fmtDuration, downsample, rampLevel, boostFillLevel, boostFloor,
-    PARTS_PER_BOOST, MIN_RAW_STOCK,
+    PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, LOD_BY_RANGE, RETENTION_DAYS,
 } from "../public/calc.js";
 
 describe("pct", () => {
@@ -254,5 +255,33 @@ describe("boostFloor", () => {
     });
     test("boostable compounds use the one-boost floor", () => {
         assert.deepEqual(boostFloor(false), { amount: PARTS_PER_BOOST, reason: `under one boost (${PARTS_PER_BOOST})` });
+    });
+});
+
+describe("time-range buttons vs retention", () => {
+    // The dashboard's range buttons, the LOD_BY_RANGE map, and the collector's
+    // prune window live in three different files; a range outside retention
+    // fails silently (the query just returns the shorter window under the
+    // longer label). Keep them mechanically in sync, like the composite-index
+    // check in collect.test.js.
+    const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+    const ranges = [...html.matchAll(/data-range="(\d+)"/g)].map(m => Number(m[1]));
+
+    test("index.html defines at least one range button", () => {
+        assert.ok(ranges.length > 0);
+    });
+    test("no button offers a window longer than retention", () => {
+        for (const hours of ranges) {
+            assert.ok(hours <= RETENTION_DAYS * 24, `${hours}h button exceeds ${RETENTION_DAYS}d retention`);
+        }
+    });
+    test("the longest button spans exactly the retention window", () => {
+        assert.equal(Math.max(...ranges), RETENTION_DAYS * 24);
+    });
+    test("every LOD_BY_RANGE key has a matching button, and every flag a bucket width", () => {
+        for (const [hours, flag] of Object.entries(LOD_BY_RANGE)) {
+            assert.ok(ranges.includes(Number(hours)), `LOD_BY_RANGE has ${hours}h but index.html has no such button`);
+            assert.ok(flag in LOD_BUCKET_MS, `LOD_BY_RANGE flag ${flag} missing from LOD_BUCKET_MS`);
+        }
     });
 });
