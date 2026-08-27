@@ -1,8 +1,10 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
     unseenEntries, interpolateTimestamps, assignLodFlags, buildSnapshotDoc,
 } from "../scripts/collect.mjs";
+import { LOD_BUCKET_MS } from "../public/calc.js";
 
 const room = { rcl: { l: 8, p: 1, pt: 2 }, e: 1, ec: 1, se: 1, te: 1, q: 0 };
 const entry = t => ({ t, gcl: { l: 1, p: 1, pt: 2 }, cpu: { u: 1, l: 20, b: 1000 }, cr: 0, rooms: { W1N1: room } });
@@ -66,16 +68,19 @@ describe("interpolateTimestamps", () => {
 });
 
 describe("assignLodFlags", () => {
-    test("flags the first entry in each new 5-minute bucket", () => {
-        const entries = [
-            { tsMs: 0 },              // bucket 0
-            { tsMs: 4 * 60_000 },     // still bucket 0
-            { tsMs: 5 * 60_000 },     // bucket 1
-            { tsMs: 11 * 60_000 },    // bucket 2
-        ];
-        const { docs } = assignLodFlags(entries, null);
-        assert.deepEqual(docs.map(d => Boolean(d.b5)), [true, false, true, true]);
-    });
+    // One case per tier, driven off the shared tier map so a new tier is
+    // covered (here and in the index-file check below) without a new test.
+    for (const [flag, widthMs] of Object.entries(LOD_BUCKET_MS)) {
+        test(`flags the first entry in each new ${flag} bucket`, () => {
+            const entries = [
+                { tsMs: 0 },            // bucket 0
+                { tsMs: widthMs - 1 },  // still bucket 0
+                { tsMs: widthMs },      // bucket 1
+            ];
+            const { docs } = assignLodFlags(entries, null);
+            assert.deepEqual(docs.map(d => Boolean(d[flag])), [true, false, true]);
+        });
+    }
 
     test("flags the first entry in each new 30-minute bucket independently of b5", () => {
         const entries = [{ tsMs: 0 }, { tsMs: 30 * 60_000 }];
@@ -92,7 +97,7 @@ describe("assignLodFlags", () => {
 
     test("returns lod state reflecting the last entry processed", () => {
         const { lod } = assignLodFlags([{ tsMs: 0 }, { tsMs: 6 * 60_000 }], null);
-        assert.deepEqual(lod, { b5: 1, b30: 0 });
+        assert.deepEqual(lod, { b5: 1, b30: 0, b120: 0 });
     });
 });
 
@@ -104,14 +109,35 @@ describe("buildSnapshotDoc", () => {
         assert.deepEqual(doc.rooms, { W1N1: room });
     });
 
-    test("omits bmax/b5/b30 when absent, includes them when present", () => {
+    test("omits bmax/b5/b30/b120 when absent, includes them when present", () => {
         const bare = buildSnapshotDoc({ ...entry(100), tsMs: 0 });
         assert.equal("bmax" in bare, false);
         assert.equal("b5" in bare, false);
+        assert.equal("b120" in bare, false);
 
-        const full = buildSnapshotDoc({ ...entry(100), tsMs: 0, bmax: { XGHO2: 3000 }, b5: true, b30: true });
+        const full = buildSnapshotDoc({ ...entry(100), tsMs: 0, bmax: { XGHO2: 3000 }, b5: true, b30: true, b120: true });
         assert.deepEqual(full.bmax, { XGHO2: 3000 });
         assert.equal(full.b5, true);
         assert.equal(full.b30, true);
+        assert.equal(full.b120, true);
+    });
+});
+
+describe("firestore.indexes.json", () => {
+    // A missing composite index is invisible locally — the collector writes
+    // the flag happily and the failure only surfaces as FAILED_PRECONDITION
+    // in a viewer's browser console. Keep the tier map and the index file
+    // mechanically in sync instead of by comment.
+    test("every LOD flag has its (flag ASC, ts ASC) composite index on snapshots", () => {
+        const { indexes } = JSON.parse(
+            readFileSync(new URL("../firestore.indexes.json", import.meta.url), "utf8"));
+        for (const flag of Object.keys(LOD_BUCKET_MS)) {
+            const found = indexes.some(ix => ix.collectionGroup === "snapshots"
+                && JSON.stringify(ix.fields) === JSON.stringify([
+                    { fieldPath: flag, order: "ASCENDING" },
+                    { fieldPath: "ts", order: "ASCENDING" },
+                ]));
+            assert.ok(found, `missing composite index for ${flag}`);
+        }
     });
 });

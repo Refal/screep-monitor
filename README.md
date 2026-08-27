@@ -95,7 +95,8 @@ with a dedicated `gh-deploy` service account. One-time setup for that:
 ```sh
 # GCP Console → IAM & Admin → Service Accounts → Create "gh-deploy", grant
 # roles/firebasehosting.admin, roles/firebaserules.admin,
-# roles/serviceusage.serviceUsageConsumer, then Keys → Add key → JSON.
+# roles/serviceusage.serviceUsageConsumer, roles/datastore.indexAdmin
+# (the last one for firestore:indexes deploys), then Keys → Add key → JSON.
 gh secret set FIREBASE_DEPLOY_SA < gh-deploy-key.json
 gh secret set FIREBASE_WEB_CONFIG < web-config.local.json
 rm gh-deploy-key.json   # don't leave the key on disk
@@ -140,11 +141,14 @@ gh workflow run collect                # first manual run
 - Retention: the collector deletes snapshots older than 21 days on the first run of each UTC
   day (`RETENTION_DAYS` in `collect.mjs`). Lowered from 60 days when the ring buffer raised
   full-resolution storage from ~200 to ~1,050 snapshots/day (~9 MB/day, ~190 MB steady state
-  at 21 days — well under Spark's 1 GB).
+  at 21 days — well under Spark's 1 GB). A Firestore TTL policy was evaluated and rejected:
+  TTL deletes have no free allowance (billing required, so not Spark-compatible), and TTL
+  expires on the field's own value, so it would also need a dedicated `expireAt` field.
 - Quotas (Spark free tier): ~1,050 snapshot writes/day + ~288 `meta/latest` updates ≈ 1,340
-  of 20k; dashboard reads stay bounded by `MAX_HISTORY_DOCS` (9000) regardless of range,
-  thanks to the `b5`/`b30` bucket-leader flags the 7d/30d ranges query instead of every doc
-  (see `LOD_FLAG_BY_RANGE` in `public/app.js`).
+  of 20k; dashboard reads are sized to the chart's 500-point render cap — the 24h/7d/30d
+  ranges query only `b5`/`b30`/`b120` bucket-leader docs (~288/336/360 per full fetch; 6h
+  fetches every doc, ~260), and incremental polls skip the query entirely until the current
+  bucket rolls over (see `LOD_BY_RANGE` in `public/app.js`).
 - Bot side: adjust cadence/segment/ring budget in `screeps2/src/config/config.stats.ts`;
   check the segment with `node scripts/screepsLive.mjs segment 90` in the screeps2 repo.
 - Rollout order when changing the wire format again: deploy the collector first with support

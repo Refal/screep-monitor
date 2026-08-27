@@ -20,7 +20,7 @@
  *   SCREEPS_SEGMENT                — default 90
  *
  * Firestore layout:
- *   snapshots/<autoId>  { ts, tick, gcl, cpu, cr, rooms, bmax?, b5?, b30? }
+ *   snapshots/<autoId>  { ts, tick, gcl, cpu, cr, rooms, bmax?, b5?, b30?, b120? }
  *   meta/latest         same shape, plus `lod` (bucket-tracking state); also
  *                       used to dedup by tick and to trigger the once-a-day
  *                       retention sweep
@@ -29,26 +29,21 @@
  * interpolateTimestamps() for why (otherwise a whole outage's worth of
  * backfilled docs would collapse onto ~one timestamp).
  *
- * `b5`/`b30` mark the first stored doc in each 5-/30-minute wall-clock
- * bucket, so the dashboard can query a downsampled slice for the 7d/30d
- * ranges instead of paging through everything — see public/app.js and
- * firestore.indexes.json.
+ * `b5`/`b30`/`b120` mark the first stored doc in each 5-/30-/120-minute
+ * wall-clock bucket, so the dashboard can query a downsampled slice for the
+ * 24h/7d/30d ranges instead of paging through everything — see public/app.js
+ * and firestore.indexes.json.
  */
 import { pathToFileURL } from "node:url";
 import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import { LOD_BUCKET_MS, bucketId } from "../public/calc.js";
 
 const SHARD = process.env.SCREEPS_SHARD ?? "shard2";
 const SEGMENT = process.env.SCREEPS_SEGMENT ?? "90";
 const RETENTION_DAYS = 21; // was 60; the ring raised stored volume ~5x (see README)
 const PRUNE_BATCH = 450;
 const PRUNE_MAX_BATCHES = 20; // caps a single run's delete cost if a backlog ever builds up
-
-// LOD tiers: flag name → wall-clock bucket width. Each flag marks the first
-// stored doc per bucket; the dashboard's coarse ranges query these flags
-// (LOD_FLAG_BY_RANGE in public/app.js), and each flag needs a composite
-// index in firestore.indexes.json. Adding a tier here means updating both.
-const LOD_BUCKET_MS = { b5: 5 * 60_000, b30: 30 * 60_000 };
 
 async function fetchSegment() {
     const token = process.env.SCREEPS_TOKEN;
@@ -105,7 +100,9 @@ export function interpolateTimestamps(entries, { headTick, headMs, latestTick, l
 
 /**
  * Walks entries oldest-first, flagging the first one to land in each new
- * wall-clock bucket of every LOD_BUCKET_MS tier. `prevLod` carries the last
+ * wall-clock bucket of every LOD_BUCKET_MS tier (shared via public/calc.js —
+ * the dashboard's LOD_BY_RANGE maps ranges onto the same flags). `prevLod`
+ * carries the last
  * bucket ids already flagged from a previous run (stored on meta/latest.lod),
  * so bucket boundaries stay correct across polls instead of resetting each
  * run. Returns the flagged docs plus the lod state to persist for next time.
@@ -115,7 +112,7 @@ export function assignLodFlags(entries, prevLod) {
     const docs = entries.map(e => {
         const flags = {};
         for (const [flag, widthMs] of Object.entries(LOD_BUCKET_MS)) {
-            const id = Math.floor(e.tsMs / widthMs);
+            const id = bucketId(e.tsMs, widthMs);
             if (id !== lod[flag]) { flags[flag] = true; lod[flag] = id; }
         }
         return { ...e, ...flags };
@@ -138,6 +135,9 @@ export function buildSnapshotDoc(entry) {
     return doc;
 }
 
+// Manual sweep on purpose, not a Firestore TTL policy — TTL needs billing and
+// a dedicated expireAt field (see README "Operations" for the full rationale);
+// these deletes fit easily inside the 20k/day free quota.
 async function pruneOldSnapshots(db) {
     const cutoff = Timestamp.fromMillis(Date.now() - RETENTION_DAYS * 864e5);
     let pruned = 0;

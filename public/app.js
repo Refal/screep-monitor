@@ -12,7 +12,7 @@ import {
 import {
     compact, pct, rateSeries, observedMsPerTick, windowRate, stockRate,
     levelEta, fmtDuration, downsample, rampLevel, boostFillLevel, boostFloor,
-    PARTS_PER_BOOST, MIN_RAW_STOCK,
+    PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, bucketId,
 } from "./calc.js";
 const MAX_POINTS = 500;
 // firestore.rules caps snapshots list() queries at request.query.limit <= 9000
@@ -21,13 +21,14 @@ const MAX_POINTS = 500;
 const MAX_HISTORY_DOCS = 9000;
 // The bot publishes roughly once every 20 ticks (~82s at today's shard
 // speed), so full resolution over the longer ranges would blow past
-// MAX_HISTORY_DOCS: 7d is ~7,300 docs (fits, but thin margin if the shard's
-// tick speeds up) and 30d is ~31,600 (does not fit at all). collect.mjs
-// flags the first stored doc in each 5-/30-minute wall-clock bucket (`b5`,
-// `b30`) so these ranges can query a downsampled slice instead — see
-// firestore.indexes.json for the composite indexes this requires. Ranges
-// absent here (6h, 24h) fetch every doc unfiltered.
-const LOD_FLAG_BY_RANGE = { 168: "b5", 720: "b30" };
+// MAX_HISTORY_DOCS (30d is ~31,600 docs) — and even where it fits, most of
+// the fetch would be discarded by the MAX_POINTS downsample. collect.mjs
+// flags the first stored doc per wall-clock bucket (widths in calc.js's
+// LOD_BUCKET_MS, shared with the collector), so each range queries a slice
+// sized just under MAX_POINTS: 24h at b5 ≈ 288 docs, 7d at b30 ≈ 336, 30d at
+// b120 ≈ 360. Each flag needs a composite index — see firestore.indexes.json.
+// Ranges absent here (6h, ~260 docs) fetch every doc unfiltered.
+const LOD_BY_RANGE = { 24: "b5", 168: "b30", 720: "b120" };
 
 const $ = id => document.getElementById(id);
 const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -258,7 +259,7 @@ const toRows = snap => snap.docs.map(d => { const v = d.data(); return { ...v, d
 // resolution — a range switch clears historyRaw first (see bindControls), so
 // incremental only ever appends rows fetched under the current range's flag.
 function historyQuery(tsClause) {
-    const flag = LOD_FLAG_BY_RANGE[rangeHours];
+    const flag = LOD_BY_RANGE[rangeHours];
     return query(collection(db, "snapshots"), tsClause,
         ...(flag ? [where(flag, "==", true)] : []),
         orderBy("ts", "asc"), limit(MAX_HISTORY_DOCS));
@@ -277,6 +278,17 @@ async function loadHistoryFull() {
 // and drops rows that have aged out of the current window. Keeps a poll's
 // read cost near-constant (1-2 docs) instead of rescanning the whole range.
 async function loadHistoryIncremental() {
+    // On a flagged range, each bucket holds exactly one flagged doc (the
+    // collector's lod cursor persists across runs) and the collector never
+    // stamps ts beyond its own now — so while we're still inside the same
+    // bucket as the newest leader we hold, a new leader cannot exist yet.
+    // Skip the query entirely instead of billing a read to learn nothing.
+    // Clock skew at a bucket edge costs at most one extra poll of latency.
+    const widthMs = LOD_BUCKET_MS[LOD_BY_RANGE[rangeHours]];
+    if (widthMs && bucketId(Date.now(), widthMs)
+            === bucketId(historyRaw.at(-1).date.getTime(), widthMs)) {
+        return 0;
+    }
     const rows = toRows(await getDocs(historyQuery(where("ts", ">", historyRaw.at(-1).ts))));
     historyRaw.push(...rows);
     const cutoff = Date.now() - rangeHours * 3600e3;

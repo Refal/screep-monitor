@@ -1,8 +1,9 @@
 // Pure calculation/formatting helpers shared by the dashboard (app.js) and
-// covered directly by unit tests (../test/calc.test.js). Nothing in here
-// touches the DOM, Chart.js, or Firebase, and nothing holds mutable module
-// state — every input the functions need (history, in particular) is passed
-// in explicitly, so they can be exercised without a browser environment.
+// the collector (../scripts/collect.mjs), covered directly by unit tests
+// (../test/calc.test.js). Nothing in here touches the DOM, Chart.js, or
+// Firebase, and nothing holds mutable module state — every input the
+// functions need (history, in particular) is passed in explicitly, so they
+// can be exercised without a browser environment.
 
 const fmtCompact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 export const compact = n => (n == null ? "—" : fmtCompact.format(n));
@@ -10,6 +11,19 @@ export const pct = (p, pt) => (pt ? (100 * p / pt) : 0);
 
 export const PARTS_PER_BOOST = 30; // LAB_BOOST_MINERAL
 export const MIN_RAW_STOCK = 100;  // LabManager.MIN_STORAGE_AMOUNT — below this a reagent is unusable
+
+// LOD tiers: flag name → wall-clock bucket width. The collector stamps the
+// first stored doc per bucket with the flag; the dashboard's coarse ranges
+// query the flags to fetch a downsampled slice. Lives here so producer and
+// consumer can never disagree about a width. Each flag needs a composite
+// index in firestore.indexes.json (asserted in test/collect.test.js; the
+// flags' auto single-field indexes are disabled there — only the composite
+// is ever queried).
+export const LOD_BUCKET_MS = { b5: 5 * 60_000, b30: 30 * 60_000, b120: 120 * 60_000 };
+
+// Which wall-clock bucket a timestamp falls in. The collector's flagging and
+// the dashboard's poll-skip must agree on this alignment, so both call this.
+export const bucketId = (tsMs, widthMs) => Math.floor(tsMs / widthMs);
 
 // Progress points gained between two consecutive {l,p,pt} readings, level-up
 // aware — p resets to ~0 when l increments, so a naive p-delta would go
