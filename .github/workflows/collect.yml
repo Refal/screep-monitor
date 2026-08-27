@@ -1,8 +1,10 @@
 name: collect
 
 on:
+  # Fallback only — see "Chain next run" below. Off the top of the hour,
+  # which is the most contended scheduler slot.
   schedule:
-    - cron: "0 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -29,12 +31,14 @@ jobs:
         run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-      # GitHub's `schedule` trigger is best-effort and silently drops events
-      # under load — a bare */10 cron was actually firing every 17-84 min.
-      # So this step polls internally for ~50 min per run; the cron just
-      # restarts it, and `concurrency: collect` (cancel-in-progress: false)
-      # keeps one successor queued so the next hour starts the instant this
-      # one ends.
+      # GitHub's `schedule` trigger is best-effort and can silently drop
+      # events entirely — observed once for ~13h straight, not just delayed.
+      # So this step polls internally for ~50 min per run, and continuity
+      # comes from the "Chain next run" step below dispatching the next run
+      # directly, rather than from cron. `concurrency: collect`
+      # (cancel-in-progress: false) keeps the dispatched successor queued so
+      # it starts the instant this run ends. `schedule` above is kept only
+      # as a recovery path in case the chain itself breaks.
       - name: Collect snapshots for ~50 minutes
         shell: bash
         env:
@@ -67,3 +71,18 @@ jobs:
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
           STALE_MINUTES: "40"
+      # Self-chaining: dispatches the next run directly so continuity
+      # doesn't depend on `schedule` firing. Runs even if collection or the
+      # freshness check above failed — a failed run must still chain, or one
+      # bad run silently ends the loop for good. Needs a PAT
+      # (`secrets.CHAIN_TOKEN`, `actions: write` on this repo): runs
+      # dispatched by the default GITHUB_TOKEN don't trigger further
+      # workflow runs, so that token can't be used here.
+      #
+      # Kill switch: `gh workflow disable collect.yml` — a self-triggering
+      # workflow has no other obvious off switch.
+      - name: Chain next run
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.CHAIN_TOKEN }}
+        run: gh workflow run collect.yml --repo ${{ github.repository }}

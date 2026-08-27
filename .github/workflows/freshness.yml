@@ -1,0 +1,41 @@
+name: freshness
+
+# Independent staleness alarm. Runs on its own schedule, separate from
+# collect.yml, so that a dead collector (which produces no signal on its
+# own — see collect.yml) still gets caught. Not bulletproof: this is itself
+# `schedule`-driven and can be dropped the same way collect.yml's was, but
+# a dropped 1-minute check is far less likely to go unnoticed for hours than
+# a dead ~50-minute collector.
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --omit=dev
+      - name: Write Firebase credentials
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      # Threshold is looser than collect.yml's in-run check (40 min) because
+      # it must tolerate a full collector cycle plus handoff plus one missed
+      # chain, not just one bad poll within a run.
+      - name: Check data freshness
+        run: node scripts/check-freshness.mjs
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+          STALE_MINUTES: "75"
