@@ -7,6 +7,7 @@ import {
     PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, LOD_BY_RANGE, RETENTION_DAYS,
     fmtHits, barrierTarget, barrierLevel, isCriticalBarrier, roomPosture, defenderSummary,
     netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, MANIFEST_GUARD_ROLE,
+    SHARD, roomUrl, roomHistoryUrl,
 } from "../public/calc.js";
 
 describe("pct", () => {
@@ -523,14 +524,43 @@ describe("hostileEpisodes", () => {
     });
 });
 
+describe("roomUrl / roomHistoryUrl", () => {
+    test("roomUrl links to the room view on the default shard", () => {
+        assert.equal(roomUrl("E23S45"), "https://screeps.com/a/#!/room/shard2/E23S45");
+    });
+    test("roomHistoryUrl links to the history viewer at the given tick", () => {
+        assert.equal(roomHistoryUrl("E23S45", 76746600), "https://screeps.com/a/#!/history/shard2/E23S45?t=76746600");
+    });
+    test("roomHistoryUrl floors a mid-block tick to its 100-tick file boundary", () => {
+        assert.equal(roomHistoryUrl("E23S45", 76746637), "https://screeps.com/a/#!/history/shard2/E23S45?t=76746600");
+    });
+    test("roomHistoryUrl leaves a tick already on a boundary unchanged", () => {
+        assert.equal(roomHistoryUrl("E23S45", 76746700), "https://screeps.com/a/#!/history/shard2/E23S45?t=76746700");
+    });
+});
+
+const indexHtml = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+
+describe("header shard label vs SHARD", () => {
+    // index.html hardcodes "shard2" as a no-JS fallback for #shard-label;
+    // app.js overwrites it with SHARD at load. If SHARD ever changes, the
+    // fallback would silently show the wrong shard until JS runs — keep them
+    // in sync mechanically, same reasoning as the range-vs-retention check
+    // below.
+    test("the #shard-label fallback text matches SHARD", () => {
+        const m = indexHtml.match(/<span class="sub" id="shard-label">([^<]*)<\/span>/);
+        assert.ok(m, "#shard-label span not found in index.html");
+        assert.equal(m[1], SHARD);
+    });
+});
+
 describe("time-range buttons vs retention", () => {
     // The dashboard's range buttons, the LOD_BY_RANGE map, and the collector's
     // prune window live in three different files; a range outside retention
     // fails silently (the query just returns the shorter window under the
     // longer label). Keep them mechanically in sync, like the composite-index
     // check in collect.test.js.
-    const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
-    const ranges = [...html.matchAll(/data-range="(\d+)"/g)].map(m => Number(m[1]));
+    const ranges = [...indexHtml.matchAll(/data-range="(\d+)"/g)].map(m => Number(m[1]));
 
     test("index.html defines at least one range button", () => {
         assert.ok(ranges.length > 0);

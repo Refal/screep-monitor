@@ -147,6 +147,14 @@ td.serious  { color: var(--status-serious); }
 td.critical { color: var(--status-critical); }
 td.na       { color: var(--text-muted); }
 
+.room-link {
+    color: inherit; text-decoration: underline dotted var(--text-muted); text-underline-offset: 2px;
+}
+.room-link:hover, .room-link:focus-visible { color: var(--series-1); text-decoration-color: var(--series-1); }
+.room-link:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; border-radius: 2px; }
+#room-title .room-link { text-decoration: none; }
+#room-title .room-link:hover, #room-title .room-link:focus-visible { text-decoration: underline; }
+
 .notice {
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
     padding: 24px; color: var(--text-secondary); margin-top: 24px;
@@ -165,7 +173,7 @@ td.na       { color: var(--text-muted); }
 <div class="wrap">
     <header>
         <h1>Screeps Monitor</h1>
-        <span class="sub">shard2</span>
+        <span class="sub" id="shard-label">shard2</span>
         <span id="status">loading…</span>
     </header>
 

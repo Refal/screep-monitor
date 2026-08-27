@@ -12,6 +12,23 @@ export const pct = (p, pt) => (pt ? (100 * p / pt) : 0);
 export const PARTS_PER_BOOST = 30; // LAB_BOOST_MINERAL
 export const MIN_RAW_STOCK = 100;  // LabManager.MIN_STORAGE_AMOUNT — below this a reagent is unusable
 
+// The shard the collector polls and the only shard this dashboard shows.
+// Single source for the header label, the collector's API URL default and the
+// screeps.com deep links below, so they cannot drift apart.
+export const SHARD = "shard2";
+
+// Screeps keeps room history in 100-tick files, and the history viewer's `t`
+// is one of those file ids — an arbitrary tick renders an empty replay, so
+// floor to the block boundary.
+const HISTORY_TICK_BLOCK = 100;
+
+export const roomUrl = room =>
+    `https://screeps.com/a/#!/room/${SHARD}/${room}`;
+
+export const roomHistoryUrl = (room, tick) =>
+    `https://screeps.com/a/#!/history/${SHARD}/${room}` +
+    `?t=${Math.floor(tick / HISTORY_TICK_BLOCK) * HISTORY_TICK_BLOCK}`;
+
 // LOD tiers: flag name → wall-clock bucket width. The collector stamps the
 // first stored doc per bucket with the flag; the dashboard's coarse ranges
 // query the flags to fetch a downsampled slice. Lives here so producer and

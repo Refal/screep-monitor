@@ -33,9 +33,9 @@
 import { pathToFileURL } from "node:url";
 import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
-import { LOD_BUCKET_MS, bucketId, RETENTION_DAYS } from "../public/calc.js";
+import { LOD_BUCKET_MS, bucketId, RETENTION_DAYS, SHARD as DEFAULT_SHARD } from "../public/calc.js";
 
-const SHARD = process.env.SCREEPS_SHARD ?? "shard2";
+const SHARD = process.env.SCREEPS_SHARD ?? DEFAULT_SHARD;
 const SEGMENT = process.env.SCREEPS_SEGMENT ?? "90";
 const PRUNE_BATCH = 450;
 const PRUNE_MAX_BATCHES = 20; // caps a single run's delete cost if a backlog ever builds up

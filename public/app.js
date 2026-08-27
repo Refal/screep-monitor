@@ -15,7 +15,7 @@ import {
     PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, bucketId, LOD_BY_RANGE,
     fmtHits, roomPosture, defenderSummary, barrierTarget, barrierLevel, isCriticalBarrier,
     netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, TOWER_DPS_PER_ARMED,
-    MANIFEST_GUARD_ROLE,
+    MANIFEST_GUARD_ROLE, SHARD, roomUrl, roomHistoryUrl,
 } from "./calc.js";
 const MAX_POINTS = 500;
 // firestore.rules caps snapshots list() queries at request.query.limit <= 9000
@@ -78,6 +78,10 @@ const params = new URLSearchParams(location.search);
 const DEMO = params.has("demo");
 const themeOverride = params.get("theme");
 if (themeOverride) document.documentElement.dataset.theme = themeOverride;
+// Keeps the header's shard label in sync with the shard the room/history
+// links above point at — see SHARD in calc.js. The literal in index.html is
+// only a no-JS fallback.
+$("shard-label").textContent = SHARD;
 
 // Real controller.progressTotal per level (1..7 → points to reach the next
 // level); level 8 has none (max). Used only to make the demo RCL series walk
@@ -605,9 +609,7 @@ function renderDefenseTable() {
     const rows = sortByPosture(Object.entries(latest.rooms));
     tbody.replaceChildren(...rows.map(([name, r]) => {
         const tr = document.createElement("tr");
-        const nameTd = document.createElement("td");
-        nameTd.textContent = name;
-        tr.append(nameTd);
+        tr.append(roomLinkCell(name));
         tr.append(postureBadge(r.thr));
         tr.append(hostilesCell(r.thr));
         tr.append(dmgInCell(r.thr));
@@ -647,14 +649,21 @@ function renderAttackLog() {
         tbody.replaceChildren(...episodes.slice(0, ATTACK_LOG_MAX_ROWS).map(ep => {
             const tr = document.createElement("tr");
             const ago = Date.now() - ep.toMs.getTime();
-            const roomTd = document.createElement("td");
-            roomTd.textContent = ep.room;
             const whenTd = document.createElement("td");
             whenTd.textContent = ago < 60000 ? "just now" : `${fmtDuration(ago)} ago`;
             whenTd.title = `${ep.fromMs.toLocaleString()} – ${ep.toMs.toLocaleString()}`;
-            tr.append(roomTd, whenTd);
+            tr.append(roomLinkCell(ep.room), whenTd);
+            const ticksTd = document.createElement("td");
+            ticksTd.append(
+                roomLink({
+                    href: roomHistoryUrl(ep.room, ep.fromTick),
+                    text: String(ep.fromTick),
+                    title: "replay from the first tick hostiles were observed",
+                }),
+                ` – ${ep.toTick}`,
+            );
+            tr.append(ticksTd);
             const cells = [
-                `${ep.fromTick} – ${ep.toTick}`,
                 `${ep.peakH}${ep.boosted ? " ⚡" : ""}`,
                 fmtInt.format(ep.peakDmg),
                 ep.owners.join(", ") || "—",
@@ -778,7 +787,8 @@ function renderRoomDefense(room) {
     const r = latest.rooms[room];
     const thr = r?.thr;
     const owners = thr?.owners;
-    $("defense-title").textContent = `Defense · ${room}${owners?.length ? ` · ${owners.join(", ")}` : ""}`;
+    $("defense-title").replaceChildren("Defense · ", roomNameLink(room),
+        owners?.length ? ` · ${owners.join(", ")}` : "");
 
     if (!thr) {
         renderTileRow("defense-room-tiles", [
@@ -853,7 +863,7 @@ function renderRoomDefense(room) {
 
 function renderRoomCharts() {
     const room = selectedRoom;
-    $("room-title").textContent = `Room ${room}`;
+    $("room-title").replaceChildren("Room ", roomNameLink(room));
     const of = fn => history.map(r => (r.rooms[room] ? fn(r.rooms[room]) : null));
     renderRoomTiles(room);
     renderLine("rcl", "c-rcl",
@@ -916,6 +926,30 @@ function renderRolesChart(room) {
         { label: "Desired", data: roles.map(x => x.d), backgroundColor: cssVar("--series-2"),
           borderRadius: { topRight: 4, bottomRight: 4 }, maxBarThickness: 14 },
     ]);
+}
+
+// Room names deep-link to screeps.com. A real <a href> rather than a click
+// handler so middle-click, copy-link and open-in-new-tab all work; target
+// _blank keeps this tab's poll loop (scheduleNextPoll) running underneath.
+function roomLink({ href, text, title } = {}) {
+    const a = document.createElement("a");
+    a.className = "room-link";
+    a.href = href;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.textContent = text;
+    if (title) a.title = title;
+    return a;
+}
+
+function roomNameLink(room) {
+    return roomLink({ href: roomUrl(room), text: room });
+}
+
+function roomLinkCell(room) {
+    const td = document.createElement("td");
+    td.append(roomNameLink(room));
+    return td;
 }
 
 function makeBadge(color, text) {
@@ -1145,11 +1179,9 @@ function renderLabsTable() {
     tbody.replaceChildren(...rows.map(([name, r]) => {
         const tr = document.createElement("tr");
         const lab = r.lab;
-        const nameTd = document.createElement("td");
-        nameTd.textContent = name;
         const statusTd = document.createElement("td");
         statusTd.append(lab ? labStatusBadge(lab.s) : document.createTextNode("—"));
-        tr.append(nameTd, statusTd);
+        tr.append(roomLinkCell(name), statusTd);
         const cells = lab ? [
             lab.o ? `${lab.i1?.[0] ?? "?"} + ${lab.i2?.[0] ?? "?"} → ${lab.o}` : "—",
             lab.i1 ? `${lab.i1[0]} ${fmtInt.format(lab.i1[1])}` : "—",
@@ -1244,9 +1276,7 @@ function renderBoostMatrix() {
     tbody.replaceChildren(...rows.map(([name, r]) => {
         const bst = r.bst ?? {};
         const tr = document.createElement("tr");
-        const nameTd = document.createElement("td");
-        nameTd.textContent = name;
-        tr.append(nameTd);
+        tr.append(roomLinkCell(name));
         for (const [purpose, tiers] of MATRIX_LADDERS) {
             const td = document.createElement("td");
             const wrap = document.createElement("div");
@@ -1301,10 +1331,10 @@ function renderRoomsTable() {
     const rows = Object.entries(latest.rooms).sort(([a], [b]) => a.localeCompare(b));
     tbody.replaceChildren(...rows.map(([name, r]) => {
         const tr = document.createElement("tr");
+        tr.append(roomLinkCell(name));
         const maxed = !r.rcl.pt;
         const eta = levelEta(row => row.rooms[name]?.rcl ?? null, r.rcl, history);
         const cells = [
-            name,
             String(r.rcl.l),
             maxed ? "max" : `${pct(r.rcl.p, r.rcl.pt).toFixed(1)}%`,
             etaCellText(eta, maxed),
