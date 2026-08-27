@@ -2,16 +2,12 @@
  * Fetches the bot's stats snapshot from RawMemory segment 90 on screeps.com
  * and stores it in Firestore. Runs in GitHub Actions (cron) and locally.
  *
- * Accepts both wire versions:
- *   v1 — a single snapshot (t, gcl, cpu, cr, rooms, bmax?)
- *   v2 — the same head fields plus `h`: a newest-first ring of older
- *        snapshots the bot kept in memory, published because segment 90 has
- *        room to spare (~9 KB used of a 95 KB budget) and the bot only
- *        publishes once per 20 ticks (~82s) while this collector polls every
- *        5 minutes — without the ring, ~80% of published snapshots were
- *        never read before being overwritten by the next publish.
- * v1 support stays until the bot side (screeps2) is confirmed on v2 — see
- * screep_monitor README for the rollout order.
+ * Payload shape: a head snapshot (t, gcl, cpu, cr, rooms, bmax?) plus `h`, a
+ * newest-first ring of older snapshots the bot kept in memory, published
+ * because segment 90 has room to spare (~9 KB used of a 95 KB budget) and
+ * the bot only publishes once per 20 ticks (~82s) while this collector
+ * polls every 5 minutes — without the ring, ~80% of published snapshots
+ * were never read before being overwritten by the next publish.
  *
  * Env:
  *   SCREEPS_TOKEN                  — screeps.com auth token (required)
@@ -56,16 +52,16 @@ async function fetchSegment() {
 }
 
 /**
- * Flattens a v1 or v2 payload into every entry it carries — head plus, for
- * v2, the newest-first `h` ring — filtered to strictly-newer-than-latestTick
- * and returned oldest-first (the order they should be inserted in, so
- * `meta/latest` ends up holding the true newest). Ticks are deduped defensively;
- * the bot should never publish the same tick twice, but a stale ring entry
- * surviving a version mismatch is cheap to guard against.
+ * Flattens a payload into every entry it carries — the head snapshot plus
+ * the newest-first `h` ring — filtered to strictly-newer-than-latestTick and
+ * returned oldest-first (the order they should be inserted in, so
+ * `meta/latest` ends up holding the true newest). Ticks are deduped
+ * defensively; the bot should never publish the same tick twice, but a
+ * stale ring entry is cheap to guard against.
  */
 export function unseenEntries(payload, latestTick) {
-    const { v, h, ...head } = payload; // everything but the envelope; buildSnapshotDoc whitelists what persists
-    const all = v === 2 && Array.isArray(h) ? [head, ...h] : [head];
+    const { h, ...head } = payload; // buildSnapshotDoc whitelists what persists
+    const all = Array.isArray(h) ? [head, ...h] : [head];
 
     const byTick = new Map();
     for (const entry of all) {
@@ -160,7 +156,6 @@ async function main() {
 
     // independent round trips (screeps.com and Firestore) — fetch both at once
     const [payload, latestSnap] = await Promise.all([fetchSegment(), latestRef.get()]);
-    if (payload.v !== 1 && payload.v !== 2) throw new Error(`Unknown stats payload version: ${payload.v}`);
     const latest = latestSnap.data();
     const latestTick = latest?.tick ?? null;
     const latestMs = latest?.ts?.toMillis() ?? null;
@@ -185,12 +180,11 @@ async function main() {
     batch.set(latestRef, { ...newestDoc, lod });
     await batch.commit();
 
-    const ringDepth = payload.v === 2 ? payload.h?.length ?? 0 : null;
-    const ringNote = ringDepth == null ? "" : `, ring depth ${ringDepth}`;
+    const ringDepth = payload.h?.length ?? 0;
     console.log(
-        `Stored ${docs.length} tick(s) [${docs[0].t}..${docs.at(-1).t}] (${Object.keys(payload.rooms).length} rooms)${ringNote}.`
+        `Stored ${docs.length} tick(s) [${docs[0].t}..${docs.at(-1).t}] (${Object.keys(payload.rooms).length} rooms), ring depth ${ringDepth}.`
     );
-    if (ringDepth != null && ringDepth < 4 && latest != null) {
+    if (ringDepth < 4 && latest != null) {
         // Below poll-covering depth (~4 entries at today's cadence) after the very
         // first run is the visible signature of a bot global reset whose bootstrap
         // rehydrate failed — see screeps2 StatsManager's two-phase bootstrap.

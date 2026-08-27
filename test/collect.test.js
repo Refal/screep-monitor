@@ -10,39 +10,29 @@ const room = { rcl: { l: 8, p: 1, pt: 2 }, e: 1, ec: 1, se: 1, te: 1, q: 0 };
 const entry = t => ({ t, gcl: { l: 1, p: 1, pt: 2 }, cpu: { u: 1, l: 20, b: 1000 }, cr: 0, rooms: { W1N1: room } });
 
 describe("unseenEntries", () => {
-    test("v1 payload with no prior tick returns just the head", () => {
-        const payload = { v: 1, ...entry(100) };
+    test("payload with no ring returns just the head", () => {
+        const payload = { ...entry(100) };
         assert.deepEqual(unseenEntries(payload, null).map(e => e.t), [100]);
     });
 
-    test("v1 payload already stored returns nothing", () => {
-        const payload = { v: 1, ...entry(100) };
-        assert.deepEqual(unseenEntries(payload, 100), []);
-    });
-
-    test("v2 payload with no prior tick returns head + ring, oldest-first", () => {
-        const payload = { v: 2, ...entry(140), h: [entry(120), entry(100)] };
+    test("payload with no prior tick returns head + ring, oldest-first", () => {
+        const payload = { ...entry(140), h: [entry(120), entry(100)] };
         assert.deepEqual(unseenEntries(payload, null).map(e => e.t), [100, 120, 140]);
     });
 
-    test("v2 payload only returns entries strictly newer than the stored tick", () => {
-        const payload = { v: 2, ...entry(140), h: [entry(120), entry(100)] };
+    test("payload only returns entries strictly newer than the stored tick", () => {
+        const payload = { ...entry(140), h: [entry(120), entry(100)] };
         assert.deepEqual(unseenEntries(payload, 100).map(e => e.t), [120, 140]);
     });
 
-    test("v2 payload fully caught up returns nothing", () => {
-        const payload = { v: 2, ...entry(140), h: [entry(120), entry(100)] };
+    test("payload fully caught up returns nothing", () => {
+        const payload = { ...entry(140), h: [entry(120), entry(100)] };
         assert.deepEqual(unseenEntries(payload, 140), []);
     });
 
     test("dedups a tick that appears in both the head and the ring", () => {
-        const payload = { v: 2, ...entry(140), h: [entry(140), entry(100)] };
+        const payload = { ...entry(140), h: [entry(140), entry(100)] };
         assert.deepEqual(unseenEntries(payload, null).map(e => e.t), [100, 140]);
-    });
-
-    test("v1 field unknown/unrecognized falls back to head-only (defensive)", () => {
-        const payload = { v: 1, ...entry(100), h: [entry(80)] }; // h present but v1 -> ignored
-        assert.deepEqual(unseenEntries(payload, null).map(e => e.t), [100]);
     });
 });
 

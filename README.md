@@ -6,8 +6,7 @@ GitHub Actions (collector, every 5 min) → Firestore (Firebase Spark) → Fireb
 The bot publishes a compact stats JSON to **RawMemory segment 90** on shard2 every 20 ticks
 (`StatsManager` in the screeps2 repo, ~82s at today's shard speed) — well under the segment's
 95 KB budget, so it also keeps a ring of recent snapshots in its own heap and publishes those
-alongside the latest one (wire version `v: 2`; `v: 1` is a bare single snapshot, still accepted
-for compatibility during rollout). Without the ring, a 5-minute collector poll only ever saw
+alongside the latest one (wire version `v: 2`). Without the ring, a 5-minute collector poll only ever saw
 the newest of several snapshots published since the last poll — most were silently overwritten
 before being read. `scripts/collect.mjs` fetches the segment from the Screeps Web API, walks
 the ring for anything not yet stored, and stores it in Firestore; `public/` is a static
@@ -122,7 +121,7 @@ GOOGLE_APPLICATION_CREDENTIALS=./service-account.json \
 node scripts/collect.mjs
 ```
 
-Expected: `Stored tick <N> (<M> rooms).` — and the doc appears in the Firestore console.
+Expected: `Stored N tick(s) [a..b] (M rooms), ring depth D.` — and the doc appears in the Firestore console.
 A second immediate run prints `Tick <N> already stored` (dedup).
 
 ### 3. GitHub (public repo — private repos would burn ~4,300 Actions minutes/month on a 10-min cron)
