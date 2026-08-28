@@ -232,6 +232,11 @@ export const CRITICAL_RAMPART_HITS = 4000;
 // found by scanning `roles` separately and merged in by the caller.
 export const MANIFEST_GUARD_ROLE = "army_member";
 
+// Nuker capacities/cooldown — game constants, not in any payload.
+export const NUKER_GHODIUM_CAPACITY = 5000;
+export const NUKER_ENERGY_CAPACITY = 300000;
+export const NUKER_COOLDOWN = 100000; // ticks after a launch
+
 // RCL-scaled repair targets — screeps2 config/config.repairs.ts:18-27,
 // DEFAULT_WALL_MAX_HEALTH / DEFAULT_RAMPART_MAX_HEALTH /
 // DEFAULT_SAFE_ZONE_RAMPART_MAX_HEALTH, copied verbatim (REPAIRS_BY_SHARD is

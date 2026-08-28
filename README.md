@@ -46,6 +46,10 @@ cd public && python3 -m http.server 8787
 # open http://localhost:8787/?demo=1   (synthetic data; add &theme=light|dark to force a theme)
 ```
 
+`?demo=1` works only against this local server: the generator lives in `public/demo.js`,
+which `firebase.json`'s hosting `ignore` excludes from every deploy, and `app.js` reaches
+it with a dynamic `import()` gated on `?demo=1` so production never requests it.
+
 ## Tests
 
 The rate/ETA/downsampling/boost-threshold logic behind the dashboard lives in
