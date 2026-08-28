@@ -2,7 +2,7 @@
  * Fetches the bot's stats snapshot from RawMemory segment 90 on screeps.com
  * and stores it in Firestore. Runs in GitHub Actions (cron) and locally.
  *
- * Payload shape: a head snapshot (t, gcl, cpu, cr, rooms, bmax?) plus `h`, a
+ * Payload shape: a head snapshot (t, gcl, gpl, cpu, cr, rooms, bmax?) plus `h`, a
  * newest-first ring of older snapshots the bot kept in memory, published
  * because segment 90 has room to spare (~9 KB used of a 95 KB budget) and
  * the bot only publishes once per 20 ticks (~82s) while this collector
@@ -16,7 +16,7 @@
  *   SCREEPS_SEGMENT                — default 90
  *
  * Firestore layout:
- *   snapshots/<autoId>  { ts, tick, gcl, cpu, cr, rooms, bmax?, b5?, b30?, b120? }
+ *   snapshots/<autoId>  { ts, tick, gcl, gpl?, cpu, cr, rooms, bmax?, b5?, b30?, b120? }
  *   meta/latest         same shape, plus `lod` (bucket-tracking state); also
  *                       used to dedup by tick and to trigger the once-a-day
  *                       retention sweep
@@ -121,6 +121,7 @@ export function buildSnapshotDoc(entry) {
         ts: Timestamp.fromMillis(entry.tsMs),
         tick: entry.t,
         gcl: entry.gcl,
+        ...(entry.gpl ? { gpl: entry.gpl } : {}),
         cpu: entry.cpu,
         cr: entry.cr,
         rooms: entry.rooms,

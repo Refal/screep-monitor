@@ -7,7 +7,10 @@ import {
 import { LOD_BUCKET_MS } from "../public/calc.js";
 
 const room = { rcl: { l: 8, p: 1, pt: 2 }, e: 1, ec: 1, se: 1, te: 1, q: 0 };
-const entry = t => ({ t, gcl: { l: 1, p: 1, pt: 2 }, cpu: { u: 1, l: 20, b: 1000 }, cr: 0, rooms: { W1N1: room } });
+const entry = t => ({
+    t, gcl: { l: 1, p: 1, pt: 2 }, gpl: { l: 3, p: 200, pt: 2000 },
+    cpu: { u: 1, l: 20, b: 1000 }, cr: 0, rooms: { W1N1: room },
+});
 
 describe("unseenEntries", () => {
     test("payload with no ring returns just the head", () => {
@@ -97,10 +100,14 @@ describe("buildSnapshotDoc", () => {
         assert.equal(doc.tick, 100);
         assert.equal(doc.ts.toMillis(), 12_345);
         assert.deepEqual(doc.rooms, { W1N1: room });
+        assert.deepEqual(doc.gpl, { l: 3, p: 200, pt: 2000 });
     });
 
-    test("omits bmax/b5/b30/b120 when absent, includes them when present", () => {
-        const bare = buildSnapshotDoc({ ...entry(100), tsMs: 0 });
+    test("omits gpl/bmax/b5/b30/b120 when absent, includes them when present", () => {
+        const noGpl = { ...entry(100), tsMs: 0 };
+        delete noGpl.gpl; // e.g. a ring entry rehydrated from a pre-gpl segment after a global reset
+        const bare = buildSnapshotDoc(noGpl);
+        assert.equal("gpl" in bare, false);
         assert.equal("bmax" in bare, false);
         assert.equal("b5" in bare, false);
         assert.equal("b120" in bare, false);

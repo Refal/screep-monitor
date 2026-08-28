@@ -179,6 +179,33 @@ describe("levelEta", () => {
     });
 });
 
+describe("optional per-tick fields (e.g. gpl before it started publishing)", () => {
+    // Mirrors the real gpl rollout: the collector starts persisting gpl on a
+    // given deploy, so existing snapshots predate the field and only later
+    // rows carry it. progressDelta's !prev/!cur guard (both undefined and a
+    // missing key read as absent) means rateSeries, windowRate and levelEta
+    // must all skip across that gap without any gpl-specific handling.
+    const history = [
+        { tick: 0, date: new Date(0) },                                     // pre-gpl
+        { tick: 100, date: new Date(1000) },                                // pre-gpl
+        { tick: 200, date: new Date(2000), gpl: { l: 5, p: 0, pt: 1000 } },  // gpl starts here
+        { tick: 300, date: new Date(3000), gpl: { l: 5, p: 100, pt: 1000 } },
+    ];
+    test("rateSeries stays null until both sides of an interval carry the field", () => {
+        assert.deepEqual(rateSeries(r => r.gpl, history), [null, null, null, 1]);
+    });
+    test("windowRate aggregates only the covered interval", () => {
+        const wr = windowRate(r => r.gpl, history);
+        assert.equal(wr.rate, 1); // 100 points / 100 ticks, the one interval with both readings
+        assert.equal(wr.msPerTick, 10); // observedMsPerTick still spans the full first/last window
+    });
+    test("levelEta extrapolates from the covered rate alone", () => {
+        const eta = levelEta(r => r.gpl, { l: 5, p: 100, pt: 1000 }, history);
+        assert.equal(eta.rate, 1);
+        assert.equal(eta.etaTicks, 900);
+    });
+});
+
 describe("fmtDuration", () => {
     test("returns null for invalid input", () => {
         assert.equal(fmtDuration(null), null);

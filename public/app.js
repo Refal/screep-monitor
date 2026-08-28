@@ -57,7 +57,7 @@ let db;
 let rangeHours = 24;
 let selectedRoom = null;
 let latest = null;
-let history = [];        // downsampled [{date, tick, gcl, cpu, cr, rooms}]
+let history = [];        // downsampled [{date, tick, gcl, gpl?, cpu, cr, rooms}]
 let historyRaw = [];     // every fetched row for the current range, un-downsampled
 let inFlight = false;
 let lastPollAt = 0;
@@ -198,6 +198,31 @@ function demoThr(k, i, n, f) {
     }
 }
 
+// GPL (empire-wide, not per-room) state at row i. Modeled as a staircase, not
+// a ramp: real GPL only advances while some room sits at EnergyLevel.HIGH
+// (isPowerProcessingActive, screeps2 config.powerSpawn.ts), so gain happens
+// in bursts separated by flat stretches, unlike GCL's steady climb. Also
+// starts partway through the window — mirrors demoNuk's case 5 — since the
+// field is new: real history will look exactly like this (a leading gap)
+// until RETENTION_DAYS of collector runs catch up. Returns null before the
+// field "starts publishing", which the caller drops from the row entirely
+// rather than storing, exercising the null-gap path the live dashboard must
+// also survive.
+const GPL_LEVEL = 5;
+const GPL_PT = 1000 * (GPL_LEVEL + 1) ** 2; // POWER_LEVEL_MULTIPLY * (level+1) ** POWER_LEVEL_POW
+function demoGpl(i, n) {
+    const appearAt = Math.floor(n * 0.25);
+    if (i < appearAt) return null;
+    const j = i - appearAt;
+    const period = Math.max(6, Math.floor((n - appearAt) / 5)); // ~5 burst cycles across the visible span
+    const burstSteps = Math.max(1, Math.floor(period * 0.3));   // processing only runs ~30% of each cycle
+    const gainPerStep = 40;
+    const fullCycles = Math.floor(j / period);
+    const activeInPartial = Math.min((j % period) + 1, burstSteps);
+    const p = Math.min(GPL_PT * 0.9, (fullCycles * burstSteps + activeInPartial) * gainPerStep);
+    return { l: GPL_LEVEL, p, pt: GPL_PT };
+}
+
 // Role slots per room (k). Rooms 0 and 4 carry army_member guard rows (room
 // 0: one healthy, one short) since their hostile state doesn't suppress
 // remote requirements (no hostiles, and heal-only hostiles, respectively —
@@ -289,6 +314,7 @@ function synthDemo() {
                 ...(nuk ? { nuk } : {}),
             };
         });
+        const gpl = demoGpl(i, n);
         rows.push({
             ts: { toDate: () => date }, date, tick: 76680000 + i * 120,
             // mild oscillation on top of the upward trend so the GCL/tick chart
@@ -298,6 +324,7 @@ function synthDemo() {
             // count scales with n like every other synthetic series here,
             // instead of aliasing once 500 samples must cover 30 days.
             gcl: { l: 9, p: 6000000 + f * 6000000 + 60000 * Math.sin(i / 6), pt: 48032810 },
+            ...(gpl ? { gpl } : {}),
             cpu: { u: 20 + 8 * Math.sin(i / 7), l: 110, b: Math.min(10000, 6000 + i * 40) },
             cr: 323000000 + i * 9000,
             rooms,
@@ -502,12 +529,19 @@ function renderTiles() {
     const worstLabel = exposed ? "exposed" : engaged ? "engaged" : unknown ? "unknown" : "clear";
     const tiles = [
         { label: "GCL", value: latest.gcl.l, delta: `${gclPct.toFixed(1)}% to ${latest.gcl.l + 1}`, sub: etaText(eta) },
+    ];
+    if (latest.gpl != null) {
+        const gplPct = pct(latest.gpl.p, latest.gpl.pt);
+        const gplEta = levelEta(r => r.gpl, latest.gpl, history);
+        tiles.push({ label: "GPL", value: latest.gpl.l, delta: `${gplPct.toFixed(1)}% to ${latest.gpl.l + 1}`, sub: etaText(gplEta) });
+    }
+    tiles.push(
         { label: "CPU bucket", value: fmtInt.format(latest.cpu.b), delta: `used ${latest.cpu.u.toFixed(1)} / ${latest.cpu.l}` },
         { label: "Credits", value: compact(latest.cr), delta: first ? `${latest.cr - first.cr >= 0 ? "+" : ""}${compact(latest.cr - first.cr)} over range` : "" },
         { label: "Rooms", value: Object.keys(latest.rooms).length, delta: "owned" },
         { label: "Creeps", value: creepCount(latest), delta: "alive (tracked roles)" },
         { label: "Defense", value: worstLabel, delta: `${exposed} exposed · ${engaged} engaged`, sub: unknown ? `${unknown} unknown` : "all clear" },
-    ];
+    );
     renderTileRow("tiles", tiles);
 }
 
@@ -518,6 +552,14 @@ function renderEmpireCharts() {
         [lineDataset("GCL progress", history.map(r => pct(r.gcl.p, r.gcl.pt)), "--series-1")],
         { yMax: 100, unit: "%" });
     renderLine("gclRate", "c-gcl-rate", rateDatasets("GCL/tick", r => r.gcl));
+    $("card-gpl").hidden = $("card-gpl-rate").hidden = latest.gpl == null;
+    if (latest.gpl != null) {
+        $("gpl-next").textContent = String(latest.gpl.l + 1);
+        renderLine("gpl", "c-gpl",
+            [lineDataset("GPL progress", history.map(r => r.gpl ? pct(r.gpl.p, r.gpl.pt) : null), "--series-1")],
+            { yMax: 100, unit: "%" });
+        renderLine("gplRate", "c-gpl-rate", rateDatasets("GPL/tick", r => r.gpl));
+    }
     renderLine("cpu", "c-cpu",
         [lineDataset("CPU used", history.map(r => r.cpu.u), "--series-1")],
         { yMax: latest.cpu.l });

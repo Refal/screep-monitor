@@ -21,6 +21,12 @@ coverage (`N of M snapshots in range carried threat detail`) rather than ever im
 uncovered stretch was quiet. Before adding a "hostiles over time" chart, check that coverage
 number for the range you care about.
 
+`gpl` (power level) is the opposite case: it's not in any `DEGRADATION_STEPS` step, so its
+history coverage in `snapshots` is always complete going forward. The only gap is time-based,
+not size-based — it only exists in payloads published after the collector started persisting
+it, so the GPL cards fill in from a blank left edge over the following `RETENTION_DAYS` and
+can't be backfilled.
+
 The dashboard uses the **Firestore Lite** SDK (`firebase-firestore-lite.js`), not the full
 SDK, on purpose: it only ever does one-shot reads, polled on the collector's ~5-minute write
 cadence, and the full SDK's WebChannel `Listen` stream — used internally even for one-shot
