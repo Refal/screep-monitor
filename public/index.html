@@ -244,6 +244,42 @@ td.na       { color: var(--text-muted); }
         </div>
         <p id="attack-log-note" class="viz-legend"></p>
 
+        <h2>Remote threats · non-owned rooms (latest snapshot)</h2>
+        <div class="tiles" id="remote-tiles"></div>
+        <div class="table-wrap">
+            <table id="remote-table">
+                <thead><tr>
+                    <th>Room</th>
+                    <th title="how actionable this is, using the bot's own ranking: armed stronghold, then any non-Keeper hostile, then a level-0 core, then Keepers only">Class</th>
+                    <th title="home room farming this remote; “corridor” means an incidental sighting that belongs to no home">Home</th>
+                    <th>Hostiles</th>
+                    <th title="hostile melee + ranged damage per tick, boosts folded in">In dmg/t</th>
+                    <th title="hostile healing per tick, boosts folded in">Heal/t</th>
+                    <th title="invader core hits and level — L0 is a harmless reserving core, L1-5 an armed stronghold">Core</th>
+                    <th title="the bot's own cached age for this sighting, not the snapshot's age">Last seen</th>
+                </tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div class="viz-legend">
+            <span>“keepers” is an SK room’s standing guards — routine, and excluded from Recent remote activity below</span>
+            <span>a level-0 core is a harmless reserving core; the bot keeps farming next to it</span>
+            <span>“Last seen” past 300 ticks is a memory of a room that has gone dark, not a live reading</span>
+        </div>
+
+        <h2>Recent remote activity</h2>
+        <div class="table-wrap">
+            <table id="remote-log">
+                <thead><tr>
+                    <th>Room</th><th>Home</th><th>When</th>
+                    <th title="first through last tick the hostiles were actually seen — both ends come from the sighting's own age, not from the snapshots that carried it">Ticks</th>
+                    <th>Peak hostiles</th><th>Peak dmg/t</th><th>Core</th>
+                </tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <p id="remote-log-note" class="viz-legend"></p>
+
         <h2 id="boosts-title">Boosts · all rooms (latest)</h2>
         <div class="table-wrap">
             <table id="boost-matrix">

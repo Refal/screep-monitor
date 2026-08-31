@@ -2,7 +2,7 @@
  * Fetches the bot's stats snapshot from RawMemory segment 90 on screeps.com
  * and stores it in Firestore. Runs in GitHub Actions (cron) and locally.
  *
- * Payload shape: a head snapshot (t, gcl, gpl, cpu, cr, rooms, bmax?) plus `h`, a
+ * Payload shape: a head snapshot (t, gcl, gpl, cpu, cr, rooms, bmax?, rt?) plus `h`, a
  * newest-first ring of older snapshots the bot kept in memory, published
  * because segment 90 has room to spare (~9 KB used of a 95 KB budget) and
  * the bot only publishes once per 20 ticks (~82s) while this collector
@@ -16,7 +16,7 @@
  *   SCREEPS_SEGMENT                — default 90
  *
  * Firestore layout:
- *   snapshots/<autoId>  { ts, tick, gcl, gpl?, cpu, cr, rooms, bmax?, b5?, b30?, b120? }
+ *   snapshots/<autoId>  { ts, tick, gcl, gpl?, cpu, cr, rooms, bmax?, rt?, b5?, b30?, b120? }
  *   meta/latest         same shape, plus `lod` (bucket-tracking state); also
  *                       used to dedup by tick and to trigger the once-a-day
  *                       retention sweep
@@ -126,6 +126,13 @@ export function buildSnapshotDoc(entry) {
         cr: entry.cr,
         rooms: entry.rooms,
         ...(entry.bmax ? { bmax: entry.bmax } : {}),
+        // `?.length`, not truthiness: an empty array is truthy, and `rt: []` is the
+        // one shape the dashboard cannot read — its "nothing cached" vs "degraded
+        // away" branches both key off the field being ABSENT (hasThreatDetail in
+        // public/calc.js), so an empty array renders a table with no rows and no
+        // explanation. The bot omits `rt` on an empty list; this keeps that
+        // invariant local instead of trusting the other repo for it.
+        ...(entry.rt?.length ? { rt: entry.rt } : {}),
     };
     for (const flag of Object.keys(LOD_BUCKET_MS)) if (entry[flag]) doc[flag] = true;
     return doc;

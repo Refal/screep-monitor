@@ -8,6 +8,7 @@ import {
     fmtHits, barrierTarget, barrierLevel, isCriticalBarrier, roomPosture, defenderSummary,
     netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, MANIFEST_GUARD_ROLE,
     SHARD, roomUrl, roomHistoryUrl,
+    remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes,
 } from "../public/calc.js";
 
 describe("pct", () => {
@@ -548,6 +549,248 @@ describe("hostileEpisodes", () => {
         const { episodes } = hostileEpisodes(history);
         assert.equal(episodes.length, 2);
         assert.deepEqual(episodes.map(e => e.room).sort(), ["W1", "W2"]);
+    });
+});
+
+describe("remoteThreatClass", () => {
+    test("an armed core outranks everything", () => {
+        assert.equal(remoteThreatClass({ room: "W1", h: 0, age: 1, core: 5e6, coreLvl: 3 }), "stronghold");
+    });
+    test("any non-Keeper owner is a real threat", () => {
+        assert.equal(remoteThreatClass({ room: "W1", h: 2, age: 1, owners: ["Invader"] }), "hostiles");
+        assert.equal(remoteThreatClass({ room: "W1", h: 4, age: 1, owners: ["Source Keeper", "Kasami"] }), "hostiles");
+    });
+    // The two traps the bot's own remoteThreatRank comment calls out.
+    test("a level-0 reserving core does not outrank a room holding real hostiles", () => {
+        const core0 = { room: "W1", h: 0, age: 1, core: 1e5, coreLvl: 0 };
+        const raid = { room: "W2", h: 3, age: 1, owners: ["Kasami"] };
+        assert.equal(remoteThreatClass(core0), "core");
+        assert.deepEqual(sortRemoteThreats([core0, raid]).map(e => e.room), ["W2", "W1"]);
+    });
+    test("a Source Keeper-only room ranks last", () => {
+        assert.equal(remoteThreatClass({ room: "W1", h: 3, age: 1, owners: ["Source Keeper"] }), "keepers");
+    });
+    test("no owners and no core at all is keepers, not hostiles", () => {
+        assert.equal(remoteThreatClass({ room: "W1", h: 0, age: 1 }), "keepers");
+    });
+});
+
+describe("sortRemoteThreats", () => {
+    test("orders by class, then hostile count, then freshness", () => {
+        const entries = [
+            { room: "W5", h: 3, age: 1, owners: ["Source Keeper"] },          // keepers
+            { room: "W4", h: 1, age: 1, owners: ["Invader"] },                // hostiles, fewer
+            { room: "W3", h: 5, age: 9, owners: ["Invader"] },                // hostiles, more
+            { room: "W2", h: 0, age: 1, core: 1e5, coreLvl: 0 },              // core
+            { room: "W1", h: 2, age: 1, core: 5e6, coreLvl: 2 },              // stronghold
+        ];
+        assert.deepEqual(sortRemoteThreats(entries).map(e => e.room), ["W1", "W3", "W4", "W2", "W5"]);
+    });
+    test("breaks a full tie on freshness, then room name, and does not mutate its input", () => {
+        const entries = [
+            { room: "W2", h: 2, age: 5, owners: ["Invader"] },
+            { room: "W1", h: 2, age: 5, owners: ["Invader"] },
+            { room: "W3", h: 2, age: 2, owners: ["Invader"] },
+        ];
+        const before = [...entries];
+        assert.deepEqual(sortRemoteThreats(entries).map(e => e.room), ["W3", "W1", "W2"]);
+        assert.deepEqual(entries, before);
+    });
+});
+
+describe("hasThreatDetail", () => {
+    test("true when any room still carries thr", () => {
+        assert.equal(hasThreatDetail({ rooms: { W1: {}, W2: { thr: { h: 0 } } } }), true);
+    });
+    test("false for a fully degraded snapshot, an empty rooms map, and no rooms at all", () => {
+        assert.equal(hasThreatDetail({ rooms: { W1: {}, W2: {} } }), false);
+        assert.equal(hasThreatDetail({ rooms: {} }), false);
+        assert.equal(hasThreatDetail({}), false);
+    });
+});
+
+describe("remoteEpisodes", () => {
+    // thr on a throwaway room is what marks a row as carrying first-step
+    // detail (see hasThreatDetail) — `covered: false` degrades the whole row,
+    // which is how DEGRADATION_STEPS[0] actually behaves.
+    function row(tick, ms, rt, covered = true) {
+        return {
+            tick, date: new Date(ms),
+            rooms: { W1N1: covered ? { thr: { h: 0 } } : {} },
+            ...(rt ? { rt } : {}),
+        };
+    }
+    const raid = (extra = {}) => ({ room: "W2N1", home: "W1N1", h: 2, age: 0, owners: ["Invader"], melee: 60, ranged: 30, heal: 10, ...extra });
+
+    test("empty history yields no episodes and zero coverage", () => {
+        assert.deepEqual(remoteEpisodes([]), { episodes: [], covered: 0, total: 0 });
+    });
+
+    test("merges consecutive appearances into one episode, tracking peaks and owners", () => {
+        const history = [
+            row(0, 0, [raid({ h: 2, melee: 60, ranged: 30, heal: 10 })]),
+            row(100, 1000, [raid({ h: 5, melee: 120, ranged: 40, heal: 90, owners: ["Invader", "Kasami"] })]),
+            row(200, 2000, null),
+        ];
+        const { episodes, covered, total } = remoteEpisodes(history);
+        assert.equal(episodes.length, 1);
+        const [ep] = episodes;
+        assert.equal(ep.room, "W2N1");
+        assert.equal(ep.home, "W1N1");
+        assert.equal(ep.peakH, 5);
+        assert.equal(ep.peakDmg, 160);
+        assert.equal(ep.peakHeal, 90);
+        assert.deepEqual(ep.owners.sort(), ["Invader", "Kasami"]);
+        assert.equal(ep.toTick, 100);
+        assert.equal(covered, 3);
+        assert.equal(total, 3);
+    });
+
+    test("closes an episode on a covered row that no longer lists the room", () => {
+        const history = [
+            row(0, 0, [raid()]),
+            row(100, 1000, null),
+            row(200, 2000, [raid()]),
+        ];
+        const { episodes } = remoteEpisodes(history);
+        assert.equal(episodes.length, 2);
+        assert.equal(episodes[0].fromTick, 200); // newest first
+        assert.equal(episodes[1].fromTick, 0);
+    });
+
+    test("a degraded row mid-incursion neither splits the episode nor ends it early", () => {
+        const history = [
+            row(0, 0, [raid()]),
+            row(100, 1000, null, false), // rt AND thr dropped together — no information
+            row(200, 2000, [raid({ h: 4 })]),
+        ];
+        const { episodes, covered, total } = remoteEpisodes(history);
+        assert.equal(episodes.length, 1);
+        assert.equal(episodes[0].toTick, 200);
+        assert.equal(episodes[0].peakH, 4);
+        assert.equal(covered, 2);
+        assert.equal(total, 3);
+    });
+
+    test("reports zero coverage when nothing in range kept its first-step detail", () => {
+        const { episodes, covered, total } = remoteEpisodes([row(0, 0, null, false), row(100, 1000, null, false)]);
+        assert.deepEqual(episodes, []);
+        assert.equal(covered, 0);
+        assert.equal(total, 2);
+    });
+
+    // An SK remote permanently caches its three standing guards, so logging
+    // them would give every SK room one endless episode in every range.
+    test("excludes Source Keeper-only entries entirely", () => {
+        const keepers = { room: "W9N9", home: "W1N1", h: 3, age: 1, owners: ["Source Keeper"], melee: 360 };
+        const { episodes, covered } = remoteEpisodes([row(0, 0, [keepers]), row(100, 1000, [keepers])]);
+        assert.deepEqual(episodes, []);
+        assert.equal(covered, 2); // the rows still carried detail — they just held nothing worth logging
+    });
+
+    test("logs a level-0 core, and tracks the worst core level seen", () => {
+        const history = [
+            row(0, 0, [{ room: "W3N1", home: "W1N1", h: 0, age: 2, core: 1e5, coreLvl: 0 }]),
+            row(100, 1000, [{ room: "W3N1", home: "W1N1", h: 0, age: 2, core: 5e6, coreLvl: 4 }]),
+        ];
+        const { episodes } = remoteEpisodes(history);
+        assert.equal(episodes.length, 1);
+        assert.equal(episodes[0].peakCoreLvl, 4);
+        assert.deepEqual(episodes[0].owners, []);
+    });
+
+    test("peakCoreLvl stays undefined when no core was ever seen", () => {
+        const { episodes } = remoteEpisodes([row(0, 0, [raid()])]);
+        assert.equal(episodes[0].peakCoreLvl, undefined);
+    });
+
+    // `age` is the sighting's own lookback, so it recovers arrival ticks the
+    // LOD sampling threw away — the replay link should land there, not on
+    // whichever snapshot happened to be that bucket's leader.
+    test("back-dates both ends by the sighting's age, keeping the extremes", () => {
+        const history = [
+            row(1000, 0, [raid({ age: 40 })]),
+            row(1100, 1000, [raid({ age: 300 })]), // 800 — earlier than 960
+            row(1200, 2000, [raid({ age: 5 })]),
+        ];
+        const { episodes } = remoteEpisodes(history);
+        assert.equal(episodes[0].fromTick, 800);
+        assert.equal(episodes[0].toTick, 1195); // last SEEN, not the 1200 snapshot that listed it
+        assert.equal(episodes[0].staleTicks, 5);
+    });
+
+    // The bot's hostileCache holds an entry for REMOTE_STALE_AGE_TICKS after
+    // the room goes dark, so every snapshot in that tail still lists the same
+    // sighting at a growing `age`. Taking toTick from the snapshot would drag
+    // the episode ~300 ticks past its actual end and let renderRemoteLog call
+    // a finished raid "just now".
+    test("a raid that ended does not keep extending through its cached tail", () => {
+        const history = [
+            row(1000, 0, [raid({ age: 0 })]),
+            row(1100, 1000, [raid({ age: 100 })]), // same sighting, aging in cache
+            row(1300, 2000, [raid({ age: 300 })]),
+        ];
+        const { episodes } = remoteEpisodes(history);
+        assert.equal(episodes.length, 1);
+        assert.equal(episodes[0].fromTick, 1000);
+        assert.equal(episodes[0].toTick, 1000);   // never seen after tick 1000
+        assert.equal(episodes[0].staleTicks, 300); // ...and the last snapshot was 300 ticks later
+        assert.equal(episodes[0].toMs.getTime(), 2000); // toMs stays the observing row's clock
+    });
+
+    // Back-dating only fromTick used to let a re-sighting open an episode that
+    // began before the previous one's (snapshot-derived) end.
+    test("consecutive episodes in one room never overlap", () => {
+        const history = [
+            row(1000, 0, [raid({ age: 0 })]),
+            row(1200, 1000, [raid({ age: 200 })]), // still the tick-1000 sighting
+            row(1400, 2000, null),                 // cache expired — episode closes
+            row(1600, 3000, [raid({ age: 100 })]), // genuinely new arrival at 1500
+        ];
+        const { episodes } = remoteEpisodes(history);
+        assert.equal(episodes.length, 2);
+        const [newer, older] = episodes; // newest first
+        assert.deepEqual([older.fromTick, older.toTick], [1000, 1000]);
+        assert.deepEqual([newer.fromTick, newer.toTick], [1500, 1500]);
+        assert.ok(newer.fromTick > older.toTick);
+    });
+
+    // The log's When column shows the last SIGHTING, so the rows have to be
+    // ordered by that too: ordering on toMs would rank a raid that ended hours
+    // ago above a live one purely because a later snapshot still carried its
+    // cached entry.
+    test("orders episodes by when the hostiles were last seen, not last listed", () => {
+        const history = [
+            row(1000, 0, [raid({ room: "W7N7", age: 0 })]),
+            // both still listed at the final row, but W7N7's sighting is long dead
+            row(2000, 1000, [raid({ room: "W7N7", age: 1000 }), raid({ room: "W8N8", age: 5 })]),
+        ];
+        const { episodes } = remoteEpisodes(history);
+        assert.deepEqual(episodes.map(e => e.room), ["W8N8", "W7N7"]);
+        assert.deepEqual(episodes.map(e => e.toTick), [1995, 1000]);
+    });
+
+    test("keeps a corridor sighting's missing home, and adopts one if it appears later", () => {
+        const history = [
+            row(0, 0, [{ room: "W4N4", h: 1, age: 1, owners: ["Tigga"] }]),
+            row(100, 1000, [{ room: "W4N4", home: "W1N1", h: 1, age: 1, owners: ["Tigga"] }]),
+        ];
+        const { episodes } = remoteEpisodes(history);
+        assert.equal(episodes[0].home, "W1N1");
+        const { episodes: corridorOnly } = remoteEpisodes([row(0, 0, [{ room: "W4N4", h: 1, age: 1, owners: ["Tigga"] }])]);
+        assert.equal(corridorOnly[0].home, undefined);
+    });
+
+    test("tracks concurrent incursions in different rooms independently", () => {
+        const history = [
+            row(1000, 0, [raid(), { room: "W5N1", h: 1, age: 1, owners: ["Kasami"] }]),
+            row(1100, 1000, [raid()]), // W5N1 gone — closes, W2N1 continues
+        ];
+        const { episodes } = remoteEpisodes(history);
+        assert.equal(episodes.length, 2);
+        assert.deepEqual(episodes.map(e => e.room).sort(), ["W2N1", "W5N1"]);
+        assert.equal(episodes.find(e => e.room === "W5N1").toTick, 999); // age 1 at its only row
+        assert.equal(episodes.find(e => e.room === "W2N1").toTick, 1100);
     });
 });
 

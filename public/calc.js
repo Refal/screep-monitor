@@ -401,3 +401,149 @@ export function hostileEpisodes(history) {
 function finishEpisode(ep) {
     return { ...ep, owners: [...ep.owners] };
 }
+
+// ---------------------------------------------------------------------------
+// Remote threats (rt) — hostiles cached in NON-owned rooms (remotes, SK rooms,
+// corridors). screeps2/src/manager/StatsManager.ts (buildRemoteThreats,
+// remoteThreatRank), src/utils/console/healthSnapshot.ts
+// (collectRemoteThreats) and docs/stats-history-ring.md are the source of
+// truth these mirror.
+//
+// `rt` is snapshot-level, not per-room: the bot's hostile cache is keyed by
+// room, and a corridor sighting belongs to no home at all. It rides
+// DEGRADATION_STEPS[0], the same step that drops `roles`/`thr`, so it is
+// always complete on meta/latest but only best-effort in stored history.
+
+// HOSTILE_CACHE_TTL — screeps2 src/manager/hostileCache.ts:6. `age` is
+// Game.time - lastSeenTick, so past this the entry is a cached memory of a
+// room that has gone dark, not a live reading, and must not render as one.
+export const REMOTE_STALE_AGE_TICKS = 300;
+
+// STATS_CONFIG.maxRemoteThreats — screeps2 src/config/config.stats.ts. The bot
+// ranks before it slices, so a list at exactly this length has had its least
+// actionable rooms cut and the reader should know the view is truncated.
+export const MAX_REMOTE_THREATS = 30;
+
+// Reproduces remoteThreatRank (StatsManager.ts) term for term, so the
+// dashboard and the bot never disagree about how alarming a remote is. Core
+// presence alone is the wrong key: a level-0 reserving core is harmless (the
+// bot keeps farming next to it) and an SK room permanently caches its three
+// standing guards, so neither may outrank a room holding real hostiles.
+export function remoteThreatClass(entry) {
+    if (entry.coreLvl !== undefined && entry.coreLvl > 0) return "stronghold";
+    if (entry.owners?.some(owner => owner !== "Source Keeper")) return "hostiles";
+    if (entry.coreLvl !== undefined) return "core";
+    return "keepers";
+}
+
+const REMOTE_CLASS_RANK = { stronghold: 0, hostiles: 1, core: 2, keepers: 3 };
+
+// The bot already sorts and then slices to maxRemoteThreats, so the stored
+// order is right — but the slice can cut mid-class and a hand-written doc need
+// not be sorted at all. Sorting here makes the table's order self-evident
+// rather than inherited. Ties break on hostile count then freshness, as the
+// bot's own comparator does.
+export function sortRemoteThreats(entries) {
+    return [...entries].sort((a, b) =>
+        REMOTE_CLASS_RANK[remoteThreatClass(a)] - REMOTE_CLASS_RANK[remoteThreatClass(b)]
+        || b.h - a.h
+        || a.age - b.age
+        || a.room.localeCompare(b.room));
+}
+
+// Whether a snapshot still carries first-step detail — the probe that makes an
+// absent `rt` readable.
+//
+// buildRemoteThreats returns undefined for an empty list, so a missing `rt`
+// means EITHER "no remote hostiles cached" OR "degraded away" — unlike `thr`,
+// which says h: 0 when clear. DEGRADATION_STEPS[0].drop deletes per-room
+// roles/thr and top-level rt in one pass over the whole snapshot, and
+// buildRoomStats sets `thr` unconditionally. So if any room here has `thr`,
+// step 0 was not applied, and this snapshot's missing `rt` genuinely means
+// "nothing cached". Without this, every quiet snapshot would count as a
+// coverage gap and the log's note would cry wolf.
+export function hasThreatDetail(row) {
+    return Object.values(row.rooms ?? {}).some(r => r.thr);
+}
+
+// Collapses consecutive rt appearances per room into episodes for the remote
+// activity log — the rt analogue of hostileEpisodes, and deliberately the same
+// shape so the two logs read alike.
+//
+// Two differences from hostileEpisodes, both load-bearing:
+//
+//  - Keeper-only entries are excluded. An SK remote permanently caches its
+//    three standing guards, so logging them would give every SK room one
+//    endless episode in every range and bury the actual raids. A level-0 core
+//    still logs: a core landing in a remote is an event, even a harmless one.
+//  - BOTH ends of the tick range are the sighting's own, not the observing
+//    snapshot's: fromTick is min(row.tick - entry.age) and toTick is
+//    max(row.tick - entry.age). `age` recovers lookback the LOD sampling
+//    throws away, so the replay link lands on the hostiles' actual arrival
+//    rather than on whichever snapshot happened to be that bucket's leader.
+//    Back-dating toTick as well is what keeps a finished raid from reading as
+//    current: the bot's hostileCache holds an entry for REMOTE_STALE_AGE_TICKS
+//    after the room went dark, so every snapshot in that tail still lists it,
+//    and taking toTick from the snapshot would stretch the episode ~300 ticks
+//    past its actual end (and let a later re-sighting open a second episode
+//    overlapping the first). `staleTicks` carries how far behind the last
+//    observing snapshot that final sighting already was, so the caller can
+//    convert it to wall clock; fromMs/toMs stay the observing rows' own clocks
+//    (there's no ms-per-tick ratio in scope here), so both ticks can predate
+//    what their ms counterpart suggests.
+//
+// Rows that carry no first-step detail are skipped without closing an open
+// episode, as in hostileEpisodes: one degraded row mid-raid must not split one
+// incursion into two log entries.
+export function remoteEpisodes(history) {
+    const open = new Map(); // room -> in-progress episode
+    const episodes = [];
+    let covered = 0;
+    for (const row of history) {
+        if (!hasThreatDetail(row)) continue;
+        covered++;
+        const seen = new Set();
+        for (const entry of row.rt ?? []) {
+            const cls = remoteThreatClass(entry);
+            if (cls === "keepers") continue;
+            seen.add(entry.room);
+            let ep = open.get(entry.room);
+            if (!ep) {
+                ep = {
+                    room: entry.room, home: entry.home,
+                    fromMs: row.date, toMs: row.date,
+                    fromTick: row.tick - entry.age, toTick: row.tick - entry.age,
+                    staleTicks: entry.age,
+                    peakH: 0, peakDmg: 0, peakHeal: 0, owners: new Set(),
+                    peakCoreLvl: undefined,
+                };
+                open.set(entry.room, ep);
+            }
+            if (entry.home) ep.home = entry.home;
+            ep.toMs = row.date;
+            ep.fromTick = Math.min(ep.fromTick, row.tick - entry.age);
+            ep.toTick = Math.max(ep.toTick, row.tick - entry.age);
+            // assigned after toTick so it always describes the LAST observing row
+            ep.staleTicks = row.tick - ep.toTick;
+            ep.peakH = Math.max(ep.peakH, entry.h);
+            ep.peakDmg = Math.max(ep.peakDmg, (entry.melee ?? 0) + (entry.ranged ?? 0));
+            ep.peakHeal = Math.max(ep.peakHeal, entry.heal ?? 0);
+            for (const o of entry.owners ?? []) ep.owners.add(o);
+            if (entry.coreLvl !== undefined) ep.peakCoreLvl = Math.max(ep.peakCoreLvl ?? 0, entry.coreLvl);
+        }
+        for (const room of [...open.keys()]) {
+            if (seen.has(room)) continue;
+            episodes.push(finishEpisode(open.get(room)));
+            open.delete(room);
+        }
+    }
+    for (const ep of open.values()) episodes.push(finishEpisode(ep));
+    // Newest-first on the tick the hostiles were last SEEN, which is what the
+    // log's When column shows — sorting on toMs instead would order the rows by
+    // which snapshot happened to still carry the cached sighting, so a raid
+    // that ended hours ago could sort above a live one. Ticks need no
+    // ms-per-tick ratio and are monotone across one history, so they're the
+    // right key here; toMs only breaks ties.
+    episodes.sort((a, b) => b.toTick - a.toTick || b.toMs - a.toMs);
+    return { episodes, covered, total: history.length };
+}

@@ -103,17 +103,28 @@ describe("buildSnapshotDoc", () => {
         assert.deepEqual(doc.gpl, { l: 3, p: 200, pt: 2000 });
     });
 
-    test("omits gpl/bmax/b5/b30/b120 when absent, includes them when present", () => {
+    test("omits gpl/bmax/rt/b5/b30/b120 when absent, includes them when present", () => {
         const noGpl = { ...entry(100), tsMs: 0 };
         delete noGpl.gpl; // e.g. a ring entry rehydrated from a pre-gpl segment after a global reset
         const bare = buildSnapshotDoc(noGpl);
         assert.equal("gpl" in bare, false);
         assert.equal("bmax" in bare, false);
+        // The bot omits `rt` on an empty list, and drops it entirely under
+        // payload degradation — both must persist as an absent field rather
+        // than an empty array, or the dashboard can't tell "quiet" from
+        // "degraded away" (see hasThreatDetail in public/calc.js).
+        assert.equal("rt" in bare, false);
+        // ...and an EMPTY rt must be omitted too: an array is truthy, so a
+        // truthiness test would store `rt: []`, which reads as neither
+        // "quiet" nor "degraded" and renders a table with no rows at all.
+        assert.equal("rt" in buildSnapshotDoc({ ...entry(100), tsMs: 0, rt: [] }), false);
         assert.equal("b5" in bare, false);
         assert.equal("b120" in bare, false);
 
-        const full = buildSnapshotDoc({ ...entry(100), tsMs: 0, bmax: { XGHO2: 3000 }, b5: true, b30: true, b120: true });
+        const rt = [{ room: "W2N1", home: "W1N1", h: 1, owners: ["Invader"], melee: 30, ranged: 0, heal: 12, age: 30 }];
+        const full = buildSnapshotDoc({ ...entry(100), tsMs: 0, bmax: { XGHO2: 3000 }, rt, b5: true, b30: true, b120: true });
         assert.deepEqual(full.bmax, { XGHO2: 3000 });
+        assert.deepEqual(full.rt, rt);
         assert.equal(full.b5, true);
         assert.equal(full.b30, true);
         assert.equal(full.b120, true);

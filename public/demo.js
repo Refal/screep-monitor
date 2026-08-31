@@ -170,6 +170,76 @@ function demoRoles(k) {
     return base;
 }
 
+// Snapshot-level remote threats (rt) at row i — hostiles cached in NON-owned
+// rooms. One pinned case per entry, chosen to cover every branch the renderers
+// and remoteEpisodes() have:
+//
+//   - an armed stronghold, present the whole window (never logs as an episode
+//     that closes, so the "still open at the end" path gets walked);
+//   - a raid that both starts AND ends mid-window, the only case that
+//     exercises the episode-close path;
+//   - a level-0 reserving core with h: 0 — the hostiles cell must print "0",
+//     not an em dash, since "a core and no creeps" is real information;
+//   - a Source Keeper room, permanently cached, which must appear in the
+//     latest-snapshot table but never in the activity log;
+//   - a corridor sighting with no `home` at all;
+//   - an entry whose `age` runs past REMOTE_STALE_AGE_TICKS, which must render
+//     de-emphasised rather than as a live reading.
+//
+// Returns null for "no remote hostiles cached this row", which the caller
+// drops from the payload rather than storing — the bot omits `rt` on an empty
+// list, which is exactly what makes hasThreatDetail() necessary.
+function demoRt(i, n, f) {
+    const entries = [];
+    // Armed stronghold, core slowly chewed down over the window.
+    entries.push({
+        room: "E16S57", home: "E15S57", h: 4, owners: ["Invader"],
+        melee: 420, ranged: 240, heal: 180,
+        core: Math.round(2_000_000 * (1 - 0.35 * f)), coreLvl: 3,
+        age: 2 + (i % 5),
+    });
+    // A raid with a beginning and an end — the episode-close path.
+    const raidFrom = Math.floor(n * 0.3), raidTo = Math.floor(n * 0.65);
+    if (i >= raidFrom && i < raidTo) {
+        entries.push({
+            room: "E19S59", home: "E18S59", h: 3, owners: ["Kasami"],
+            melee: 240, ranged: 180, heal: 90, age: 1 + (i % 3),
+        });
+    }
+    // Level-0 reserving core: harmless, and no creeps with it.
+    if (i >= Math.floor(n * 0.5)) {
+        entries.push({ room: "E22S41", home: "E21S41", h: 0, core: 100_000, coreLvl: 0, age: 4 });
+    }
+    // SK room's standing guards — routine, and must stay out of the log.
+    entries.push({
+        room: "E24S44", home: "E23S44", h: 3, owners: ["Source Keeper"],
+        melee: 360, ranged: 0, heal: 0, age: 1,
+    });
+    // Incidental corridor sighting: no home room farms this one.
+    if (f > 0.8) {
+        entries.push({ room: "E20S50", h: 1, owners: ["Tigga"], melee: 0, ranged: 60, heal: 30, age: 6 });
+    }
+    // Cached memory of a room that has gone dark — age past the cache TTL.
+    entries.push({
+        room: "E28S41", home: "E27S41", h: 2, owners: ["Invader"],
+        melee: 120, ranged: 0, heal: 0, age: 260 + Math.round(900 * f),
+    });
+    return entries.length ? entries : null;
+}
+
+// One contiguous stretch mid-window where the published payload outgrew its
+// budget and DEGRADATION_STEPS[0] fired, dropping roles/thr/rt together
+// across the WHOLE snapshot — which is how the bot actually degrades, and the
+// only thing that makes either activity log report coverage below 100%. Kept
+// away from both ends: the first row feeds renderTiles' creep delta and the
+// last row is `latest`, which every latest-snapshot section reads.
+//
+// Two renderer branches are deliberately NOT reachable from demo data, since
+// both need `latest` itself to lack `rt`: the "no remote hostiles cached" and
+// "no remote detail in this snapshot" rows of the remote table. To check those,
+// drop `rt` from the last row here locally and reload.
+const degradedRow = (i, n) => i >= Math.floor(n * 0.45) && i < Math.floor(n * 0.52);
+
 export function synthDemo(rangeHours, maxPoints) {
     const roomNames = ["E15S57", "E18S59", "E21S41", "E21S55", "E23S44", "E27S41"];
     // Per-room fill band for the boosts matrix — spans empty/low/mid/high/full,
@@ -197,14 +267,15 @@ export function synthDemo(rangeHours, maxPoints) {
     const rows = [];
     for (let i = 0; i < n; i++) {
         const f = i / n;
+        const degraded = degradedRow(i, n);
         const date = new Date(now - (n - i) * (rangeHours / n) * 3600e3);
         const rooms = {};
         roomNames.forEach((name, k) => {
             const frac = fillFrac[k];
             const spec = rclSpecs[k];
             const nuk = demoNuk(k, i, n, f);
-            const roles = demoRoles(k);
-            const thr = demoThr(k, i, n, f);
+            const roles = degraded ? null : demoRoles(k);
+            const thr = degraded ? undefined : demoThr(k, i, n, f);
             const gained = spec.totalGain * f + spec.oscAmp * Math.sin(i / spec.oscPeriod + k);
             rooms[name] = {
                 rcl: advanceRcl(spec.level, spec.progress, Math.max(0, gained)),
@@ -239,6 +310,7 @@ export function synthDemo(rangeHours, maxPoints) {
             };
         });
         const gpl = demoGpl(i, n);
+        const rt = degraded ? null : demoRt(i, n, f);
         rows.push({
             ts: { toDate: () => date }, date, tick: 76680000 + i * 120,
             // mild oscillation on top of the upward trend so the GCL/tick chart
@@ -252,6 +324,7 @@ export function synthDemo(rangeHours, maxPoints) {
             cpu: { u: 20 + 8 * Math.sin(i / 7), l: 110, b: Math.min(10000, 6000 + i * 40) },
             cr: 323000000 + i * 9000,
             rooms,
+            ...(rt ? { rt } : {}),
             bmax: {
                 UH: 3000, UH2O: 1000, XUH2O: 500,
                 KO: 3000, KHO2: 1000,

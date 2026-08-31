@@ -6,20 +6,57 @@ GitHub Actions (collector, every 5 min) → Firestore (Firebase Spark) → Fireb
 The bot publishes a compact stats JSON to **RawMemory segment 90** on shard2 every 20 ticks
 (`StatsManager` in the screeps2 repo, ~82s at today's shard speed) — well under the segment's
 95 KB budget, so it also keeps a ring of recent snapshots in its own heap and publishes those
-alongside the latest one (wire version `v: 2`). Without the ring, a 5-minute collector poll only ever saw
-the newest of several snapshots published since the last poll — most were silently overwritten
+alongside the latest one. (The payload carries a wire version in `v`, but the collector no
+longer reads it — the `v: 1` path was removed in `1846ecd` and nothing gates on the field
+now; the rollout note at the bottom of this file is the only remaining guard.) Without the
+ring, a 5-minute collector poll only ever saw the newest of several snapshots published
+since the last poll — most were silently overwritten
 before being read. `scripts/collect.mjs` fetches the segment from the Screeps Web API, walks
 the ring for anything not yet stored, and stores it in Firestore; `public/` is a static
 Chart.js dashboard reading Firestore directly under read-only security rules.
 
-The **Defense** section is deliberately built from `meta/latest` rather than a time series.
-`StatsManager`'s payload-size degradation drops `roles`/`thr` first (`DEGRADATION_STEPS`,
-~35% of the history budget), so historical `thr` coverage in stored `snapshots` docs is
-size-dependent and not guaranteed — the head snapshot on `meta/latest` is the one place it's
-always complete. The attack log (`hostileEpisodes` in `public/calc.js`) reports its own
+The **Defense** and **Remote threats** sections are deliberately built from `meta/latest`
+rather than a time series. `StatsManager`'s payload-size degradation drops `roles`/`thr` and
+the snapshot-level `rt` together, in its first step (`DEGRADATION_STEPS`, ~35% of the history
+budget), so historical coverage of all three in stored `snapshots` docs is size-dependent and
+not guaranteed — the head snapshot on `meta/latest` is the one place they're always complete.
+Both activity logs (`hostileEpisodes` / `remoteEpisodes` in `public/calc.js`) report their own
 coverage (`N of M snapshots in range carried threat detail`) rather than ever implying an
 uncovered stretch was quiet. Before adding a "hostiles over time" chart, check that coverage
 number for the range you care about.
+
+`rt` (hostiles cached in **non-owned** rooms — remotes, SK rooms, corridors) has one extra
+trap the owned-room `thr` doesn't. `thr` says `h: 0` when a room is clear, so its absence
+always means "degraded". But the bot omits `rt` entirely on an empty list, so a missing `rt`
+means *either* "nothing cached" *or* "degraded away". `hasThreatDetail` in `public/calc.js`
+resolves it without a bot change: the first degradation step deletes per-room `roles`/`thr`
+and top-level `rt` in one pass over the whole snapshot, and `buildRoomStats` sets `thr`
+unconditionally — so **if any room in a snapshot still has `thr`, that snapshot's missing
+`rt` genuinely means "no remote hostiles cached"**. Without that predicate every quiet
+snapshot would count as a coverage gap and the log's note would cry wolf.
+
+Three further notes, all downstream of one fact: each `rt` entry's `age` is the bot's own
+cached lookback (300-tick `hostileCache` TTL), not the snapshot's, so a fresh snapshot can
+carry a stale sighting. First, the latest-snapshot table de-emphasises rows past
+`REMOTE_STALE_AGE_TICKS`. Second, `remoteEpisodes` back-dates **both** ends of an episode by
+`age` — `fromTick` is `min(tick - age)` and `toTick` is `max(tick - age)`. Reading `toTick`
+off the snapshot instead would drag every episode through the cache's ~300-tick tail after
+the room went dark: a finished raid would read as current, and a genuine re-sighting could
+open a second episode starting before the first one's reported end. The episode also carries
+`staleTicks` (how far behind the last observing snapshot that final sighting was), because
+converting it to wall clock needs the ms-per-tick ratio, which only exists in `public/app.js`
+— so `fromMs`/`toMs` stay the observing rows' own clocks and `remoteWhenCell` applies the
+lag. Third, `remoteEpisodes` and the `remote-tiles` headline counts both exclude
+Source-Keeper-only entries, since an SK remote permanently caches its standing guards: in the
+log they would produce one endless episode in every range, and in the tiles they would pin
+"Remote hostiles" at a non-zero count that never returns to 0 on a quiet empire. They still
+appear in the table, classed `keepers`, and are counted on the tiles' sub line.
+
+One caveat with a shelf life: `snapshots` docs written **before** the collector started
+persisting `rt` carry `thr` but no `rt`, so `hasThreatDetail` reads them as "no remote
+hostiles cached" when the truth is "never collected". Like `gpl`, `rt` can't be backfilled,
+so the remote activity log under-reports incursions in any range still reaching back past
+that deploy, and ages out of the problem on its own after `RETENTION_DAYS`.
 
 `gpl` (power level) is the opposite case: it's not in any `DEGRADATION_STEPS` step, so its
 history coverage in `snapshots` is always complete going forward. The only gap is time-based,
@@ -161,7 +198,9 @@ gh workflow run collect                # first manual run
   selectable range — the 21d button — always matches the prune window; asserted in
   `test/calc.test.js`). Lowered from 60 days when the ring buffer raised
   full-resolution storage from ~200 to ~1,050 snapshots/day (~9 MB/day, ~190 MB steady state
-  at 21 days — well under Spark's 1 GB). A Firestore TTL policy was evaluated and rejected:
+  at 21 days — well under Spark's 1 GB; `rt` adds at most ~3.3 KB/doc at the 30-entry
+  payload cap, ~+73 MB steady state worst case, and near zero on a quiet empire). A
+  Firestore TTL policy was evaluated and rejected:
   TTL deletes have no free allowance (billing required, so not Spark-compatible), and TTL
   expires on the field's own value, so it would also need a dedicated `expireAt` field.
 - Quotas (Spark free tier): ~1,050 snapshot writes/day + ~288 `meta/latest` updates ≈ 1,340

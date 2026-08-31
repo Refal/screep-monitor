@@ -15,6 +15,8 @@ import {
     PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, bucketId, LOD_BY_RANGE,
     fmtHits, roomPosture, defenderSummary, barrierTarget, barrierLevel, isCriticalBarrier,
     netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, TOWER_DPS_PER_ARMED,
+    remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes,
+    REMOTE_STALE_AGE_TICKS, MAX_REMOTE_THREATS,
     MANIFEST_GUARD_ROLE, SHARD, roomUrl, roomHistoryUrl,
     NUKER_GHODIUM_CAPACITY, NUKER_ENERGY_CAPACITY, NUKER_COOLDOWN,
 } from "./calc.js";
@@ -416,25 +418,27 @@ function renderDefenseTable() {
 
 const ATTACK_LOG_MAX_ROWS = 20;
 
+// Single full-width "nothing to show" row. Both activity logs distinguish
+// several empty states from each other (degraded vs genuinely quiet), so the
+// text and its explanation are the caller's, not this helper's.
+function naRow(colSpan, text, title) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = colSpan;
+    td.className = "na";
+    td.textContent = text;
+    if (title) td.title = title;
+    tr.append(td);
+    return tr;
+}
+
 function renderAttackLog() {
     const { episodes, covered, total } = hostileEpisodes(history);
     const tbody = $("attack-log").querySelector("tbody");
     if (covered === 0) {
-        const tr = document.createElement("tr");
-        const td = document.createElement("td");
-        td.colSpan = 6;
-        td.className = "na";
-        td.textContent = "no threat detail in this range";
-        tr.append(td);
-        tbody.replaceChildren(tr);
+        tbody.replaceChildren(naRow(6, "no threat detail in this range", DEGRADED_TITLE));
     } else if (episodes.length === 0) {
-        const tr = document.createElement("tr");
-        const td = document.createElement("td");
-        td.colSpan = 6;
-        td.className = "na";
-        td.textContent = "no hostiles observed in this range";
-        tr.append(td);
-        tbody.replaceChildren(tr);
+        tbody.replaceChildren(naRow(6, "no hostiles observed in this range"));
     } else {
         tbody.replaceChildren(...episodes.slice(0, ATTACK_LOG_MAX_ROWS).map(ep => {
             const tr = document.createElement("tr");
@@ -470,6 +474,228 @@ function renderAttackLog() {
         ? `${covered} of ${total} snapshots in range carried threat detail — gaps are payload degradation, not quiet periods`
         : `${covered} of ${total} snapshots in range carried threat detail`;
     $("attack-log-note").textContent = note;
+}
+
+// ---------- remote threats (rt) ----------
+// `rt` lists hostiles cached in NON-owned rooms, so none of the owned-room
+// defense cells above apply: there are no towers, no ramparts and no safe
+// mode to report. It rides the same first degradation step as `thr`, so the
+// same doctrine holds — but with one extra wrinkle the owned-room cells don't
+// have: the bot OMITS `rt` when the list is empty, so absence alone is
+// ambiguous. hasThreatDetail() is what separates "nothing cached" from
+// "degraded away"; see its comment in calc.js.
+
+// Same visual ordering as REMOTE_CLASS_RANK, and honest about magnitude: a
+// level-0 reserving core is real information but not an alarm, so it gets ink
+// rather than a status colour.
+const REMOTE_CLASS_COLOR = {
+    stronghold: "--status-critical",
+    hostiles: "--status-warning",
+    core: "--text-secondary",
+    keepers: "--text-muted",
+};
+const REMOTE_CLASS_TITLE = {
+    stronghold: "armed stronghold — never send an unescorted melee creep at it",
+    hostiles: "non-Keeper hostiles cached in this room",
+    core: "level-0 reserving core — harmless, the bot keeps farming next to it",
+    keepers: "Source Keeper guards only — routine for an SK room",
+};
+const REMOTE_DEGRADED_TITLE = "remote detail dropped from this snapshot";
+const REMOTE_NONE_TITLE = "this snapshot kept its threat detail and listed no remote hostiles";
+
+function renderRemoteTiles() {
+    const rt = latest.rt;
+    if (!rt) {
+        const known = hasThreatDetail(latest);
+        const value = known ? "0" : "unknown";
+        const delta = known ? "none cached" : REMOTE_DEGRADED_TITLE;
+        renderTileRow("remote-tiles", [
+            { label: "Rooms flagged", value, delta },
+            { label: "Strongholds", value, delta },
+            { label: "Remote hostiles", value, delta },
+        ]);
+        return;
+    }
+    // Keeper-only entries are excluded from the headline counts for the same
+    // reason remoteEpisodes() excludes them: an SK remote permanently caches
+    // its standing guards, so counting them would pin these tiles at a
+    // non-zero "threat" the Class column and the activity log both call
+    // routine, and a quiet empire would never read 0. They stay in the table
+    // and get their own count on the sub line.
+    const flagged = rt.filter(e => remoteThreatClass(e) !== "keepers");
+    const keeperRooms = rt.length - flagged.length;
+    const strongholds = flagged.filter(e => remoteThreatClass(e) === "stronghold").length;
+    const hostiles = flagged.reduce((sum, e) => sum + e.h, 0);
+    const stale = flagged.filter(e => e.age > REMOTE_STALE_AGE_TICKS).length;
+    const holding = flagged.filter(e => e.h > 0).length;
+    renderTileRow("remote-tiles", [
+        {
+            label: "Rooms flagged",
+            value: String(flagged.length),
+            delta: stale ? `${stale} stale` : "all fresh",
+            // the cap applies to the whole published list, keepers included
+            sub: [
+                rt.length === MAX_REMOTE_THREATS ? "at the payload cap" : null,
+                keeperRooms ? `plus ${keeperRooms} SK room${keeperRooms === 1 ? "" : "s"}` : null,
+            ].filter(Boolean).join(" · ") || undefined,
+        },
+        { label: "Strongholds", value: String(strongholds), delta: strongholds ? "armed cores" : "none armed" },
+        {
+            label: "Remote hostiles", value: fmtInt.format(hostiles),
+            delta: `${holding} room${holding === 1 ? "" : "s"} holding creeps`,
+        },
+    ]);
+}
+
+function remoteClassCell(entry) {
+    const td = document.createElement("td");
+    const cls = remoteThreatClass(entry);
+    td.append(makeBadge(cssVar(REMOTE_CLASS_COLOR[cls]), cls));
+    td.title = REMOTE_CLASS_TITLE[cls];
+    return td;
+}
+
+// A corridor sighting has no `home` by design (the hostile cache is keyed by
+// room, and an incidental sighting belongs to no colony) — that's an absence
+// with a meaning, not a missing value, so it gets a word rather than an em dash.
+function remoteHomeCell(home) {
+    if (home) return roomLinkCell(home);
+    const td = document.createElement("td");
+    td.textContent = "corridor";
+    td.className = "na";
+    td.title = "incidental sighting, not a configured remote";
+    return td;
+}
+
+function remoteDmgCell(entry) {
+    const td = document.createElement("td");
+    if (entry.h === 0) { td.textContent = "—"; td.className = "na"; td.title = "no hostile creeps cached"; return td; }
+    td.textContent = fmtInt.format((entry.melee ?? 0) + (entry.ranged ?? 0));
+    td.title = `melee ${fmtInt.format(entry.melee ?? 0)}/t · ranged ${fmtInt.format(entry.ranged ?? 0)}/t`
+        + ` · heal ${fmtInt.format(entry.heal ?? 0)}/t`;
+    return td;
+}
+
+function remoteCoreCell(entry) {
+    const td = document.createElement("td");
+    if (entry.coreLvl === undefined) { td.textContent = "—"; td.className = "na"; td.title = "no invader core seen"; return td; }
+    td.textContent = `L${entry.coreLvl} · ${fmtHits(entry.core)}`;
+    if (entry.coreLvl > 0) td.className = "critical";
+    td.title = entry.coreLvl > 0
+        ? `armed stronghold, ${fmtInt.format(entry.core ?? 0)} hits`
+        : `reserving core, ${fmtInt.format(entry.core ?? 0)} hits — harmless`;
+    return td;
+}
+
+// `age` is the bot's own cached age for the sighting, independent of how old
+// the snapshot itself is: a fresh snapshot can carry a 2,000-tick-old memory.
+// Rendered in wall clock (which is what "is this happening now?" wants) with
+// the raw tick count always in the title, since ticks are what the replay
+// links speak.
+function remoteAgeCell(age, msPerTick) {
+    const td = document.createElement("td");
+    const ms = msPerTick != null ? age * msPerTick : null;
+    td.textContent = ms == null ? `${fmtInt.format(age)} ticks`
+        : ms < 60000 ? "just now"
+        : `~${fmtDuration(ms)} ago`;
+    const parts = [`age ${fmtInt.format(age)} ticks`];
+    if (age > REMOTE_STALE_AGE_TICKS) {
+        td.className = "na";
+        parts.push(`past the bot's ${REMOTE_STALE_AGE_TICKS}-tick hostile cache — a memory of a room that has gone dark, not a live reading`);
+    }
+    td.title = parts.join(" · ");
+    return td;
+}
+
+function renderRemoteTable() {
+    const tbody = $("remote-table").querySelector("tbody");
+    if (!latest.rt) {
+        tbody.replaceChildren(hasThreatDetail(latest)
+            ? naRow(8, "no remote hostiles cached", REMOTE_NONE_TITLE)
+            : naRow(8, "no remote detail in this snapshot (payload degradation)", REMOTE_DEGRADED_TITLE));
+        return;
+    }
+    const msPerTick = observedMsPerTick(history);
+    tbody.replaceChildren(...sortRemoteThreats(latest.rt).map(entry => {
+        const tr = document.createElement("tr");
+        tr.append(roomLinkCell(entry.room), remoteClassCell(entry), remoteHomeCell(entry.home));
+        const hTd = document.createElement("td");
+        hTd.textContent = String(entry.h);
+        if (entry.h === 0) hTd.className = "na";
+        else if (entry.owners?.length) hTd.title = entry.owners.join(", ");
+        tr.append(hTd, remoteDmgCell(entry));
+        const healTd = document.createElement("td");
+        healTd.textContent = entry.h === 0 ? "—" : fmtInt.format(entry.heal ?? 0);
+        if (entry.h === 0) healTd.className = "na";
+        tr.append(healTd, remoteCoreCell(entry), remoteAgeCell(entry.age, msPerTick));
+        return tr;
+    }));
+}
+
+// "When" is the last tick the hostiles were actually SEEN, not the last
+// snapshot that carried the sighting — the bot's hostileCache keeps an entry
+// for REMOTE_STALE_AGE_TICKS after a room goes dark, so reading toMs straight
+// off the observing row would report a raid that ended ~300 ticks ago as
+// happening now. remoteEpisodes() hands us that lag as `staleTicks`; converting
+// it needs the ms-per-tick ratio, which only exists here, so with no ratio
+// available we fall back to the observation clock and say so in the title.
+function remoteWhenCell(ep, msPerTick) {
+    const td = document.createElement("td");
+    const lagMs = msPerTick != null ? ep.staleTicks * msPerTick : 0;
+    const ago = Date.now() - ep.toMs.getTime() + lagMs;
+    td.textContent = ago < 60000 ? "just now" : `${fmtDuration(ago)} ago`;
+    const parts = [`${ep.fromMs.toLocaleString()} – ${ep.toMs.toLocaleString()} observed`];
+    if (ep.staleTicks > 0) {
+        parts.push(msPerTick != null
+            ? `last seen ${fmtInt.format(ep.staleTicks)} ticks before that final snapshot`
+            : `last seen ${fmtInt.format(ep.staleTicks)} ticks earlier — no tick rate in range to date it`);
+    }
+    if (ep.staleTicks > REMOTE_STALE_AGE_TICKS) td.className = "na";
+    td.title = parts.join(" · ");
+    return td;
+}
+
+function renderRemoteLog() {
+    const { episodes, covered, total } = remoteEpisodes(history);
+    const msPerTick = observedMsPerTick(history);
+    const tbody = $("remote-log").querySelector("tbody");
+    if (covered === 0) {
+        tbody.replaceChildren(naRow(7, "no remote detail in this range", REMOTE_DEGRADED_TITLE));
+    } else if (episodes.length === 0) {
+        tbody.replaceChildren(naRow(7, "no remote incursions observed in this range"));
+    } else {
+        tbody.replaceChildren(...episodes.slice(0, ATTACK_LOG_MAX_ROWS).map(ep => {
+            const tr = document.createElement("tr");
+            tr.append(roomLinkCell(ep.room), remoteHomeCell(ep.home), remoteWhenCell(ep, msPerTick));
+            const ticksTd = document.createElement("td");
+            ticksTd.append(
+                roomLink({
+                    href: roomHistoryUrl(ep.room, ep.fromTick),
+                    text: String(ep.fromTick),
+                    title: "replay from the first tick the hostiles were seen, back-dated by the sighting's own age",
+                }),
+                ` – ${ep.toTick}`,   // last tick SEEN, likewise back-dated — not the last snapshot that listed it
+            );
+            tr.append(ticksTd);
+            const peakTd = document.createElement("td");
+            peakTd.textContent = String(ep.peakH);
+            peakTd.title = ep.owners.length ? ep.owners.join(", ") : "no hostile creeps — core only";
+            const dmgTd = document.createElement("td");
+            dmgTd.textContent = fmtInt.format(ep.peakDmg);
+            dmgTd.title = `peak heal ${fmtInt.format(ep.peakHeal)}/t`;
+            const coreTd = document.createElement("td");
+            if (ep.peakCoreLvl === undefined) { coreTd.textContent = "—"; coreTd.className = "na"; }
+            else {
+                coreTd.textContent = `L${ep.peakCoreLvl}`;
+                if (ep.peakCoreLvl > 0) coreTd.className = "critical";
+            }
+            tr.append(peakTd, dmgTd, coreTd);
+            return tr;
+        }));
+    }
+    $("remote-log-note").textContent = covered < total
+        ? `${covered} of ${total} snapshots in range carried remote detail — gaps are payload degradation, not quiet periods`
+        : `${covered} of ${total} snapshots in range carried remote detail`;
 }
 
 // Stat strip for the selected room's controller: level, progress, upgrade
@@ -1165,6 +1391,9 @@ function renderAll() {
     renderDefenseTiles();
     renderDefenseTable();
     renderAttackLog();
+    renderRemoteTiles();
+    renderRemoteTable();
+    renderRemoteLog();
     renderRoomCharts();
     renderBoostMatrix();
     renderLabsTable();
