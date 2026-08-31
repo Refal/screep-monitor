@@ -573,6 +573,11 @@ describe("remoteThreatClass", () => {
     test("no owners and no core at all is keepers, not hostiles", () => {
         assert.equal(remoteThreatClass({ room: "W1", h: 0, age: 1 }), "keepers");
     });
+    // coreLvl is the load-bearing field, not core: a Memory-carried row has no
+    // vision and so no hit count, and must still rank as an armed stronghold.
+    test("a carried row with a level but no core hits is still a stronghold", () => {
+        assert.equal(remoteThreatClass({ room: "W1", h: 0, age: 800, coreLvl: 5, mem: 1 }), "stronghold");
+    });
 });
 
 describe("sortRemoteThreats", () => {
@@ -656,6 +661,35 @@ describe("remoteEpisodes", () => {
         assert.equal(episodes.length, 2);
         assert.equal(episodes[0].fromTick, 200); // newest first
         assert.equal(episodes[1].fromTick, 0);
+    });
+
+    // The bot carries a stronghold it has lost vision on out of Memory, so the
+    // room never leaves rt. Before that, every scout pass logged its own episode.
+    const carriedCore = (age) => ({ room: "W3N1", home: "W1N1", h: 0, age, coreLvl: 5, mem: 1 });
+
+    test("a continuously carried stronghold is one episode, not one per scout pass", () => {
+        const history = [row(0, 0, [carriedCore(0)]), row(300, 1000, [carriedCore(300)]), row(600, 2000, [carriedCore(600)])];
+        const { episodes } = remoteEpisodes(history);
+        assert.equal(episodes.length, 1);
+        assert.equal(episodes[0].room, "W3N1");
+        assert.equal(episodes[0].peakCoreLvl, 5);
+        assert.equal(episodes[0].peakH, 0);
+    });
+
+    test("a carried episode's toTick tracks the last real sighting, not the carrying snapshot", () => {
+        // age grows while the room is dark, then a scout pass at tick 600 resets it.
+        const history = [row(0, 0, [carriedCore(0)]), row(300, 1000, [carriedCore(300)]), row(600, 2000, [carriedCore(0)])];
+        const [ep] = remoteEpisodes(history).episodes;
+        assert.equal(ep.fromTick, 0);
+        assert.equal(ep.toTick, 600);   // the pass, not tick 300's back-dated 0
+        assert.equal(ep.staleTicks, 0);
+    });
+
+    test("a carried episode with no re-sighting freezes at the last pass and reads stale", () => {
+        const history = [row(0, 0, [carriedCore(0)]), row(300, 1000, [carriedCore(300)]), row(900, 2000, [carriedCore(900)])];
+        const [ep] = remoteEpisodes(history).episodes;
+        assert.equal(ep.toTick, 0);
+        assert.equal(ep.staleTicks, 900); // so it sorts below anything seen more recently
     });
 
     test("a degraded row mid-incursion neither splits the episode nor ends it early", () => {

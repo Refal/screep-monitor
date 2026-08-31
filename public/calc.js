@@ -417,6 +417,9 @@ function finishEpisode(ep) {
 // HOSTILE_CACHE_TTL — screeps2 src/manager/hostileCache.ts:6. `age` is
 // Game.time - lastSeenTick, so past this the entry is a cached memory of a
 // room that has gone dark, not a live reading, and must not render as one.
+// A `mem: 1` row is the other way to land here: carried from the bot's
+// Memory.roomIntel rather than its cache, it runs to the stronghold's decay
+// deadline (~5000 ticks) by design, since the bot stops mining and loses vision.
 export const REMOTE_STALE_AGE_TICKS = 300;
 
 // STATS_CONFIG.maxRemoteThreats — screeps2 src/config/config.stats.ts. The bot

@@ -184,7 +184,11 @@ function demoRoles(k) {
 //     latest-snapshot table but never in the activity log;
 //   - a corridor sighting with no `home` at all;
 //   - an entry whose `age` runs past REMOTE_STALE_AGE_TICKS, which must render
-//     de-emphasised rather than as a live reading.
+//     de-emphasised rather than as a live reading;
+//   - a dark carried stronghold (`mem: 1`, h: 0, coreLvl but NO core hits),
+//     re-scouted once mid-window. Covers the "no vision" copy, fmtHits(undefined)
+//     rendering as an em dash, and — since it is present every row — an episode
+//     that never closes whose toTick freezes between passes and jumps on one.
 //
 // Returns null for "no remote hostiles cached this row", which the caller
 // drops from the payload rather than storing — the bot omits `rt` on an empty
@@ -223,6 +227,14 @@ function demoRt(i, n, f) {
     entries.push({
         room: "E28S41", home: "E27S41", h: 2, owners: ["Invader"],
         melee: 120, ranged: 0, heal: 0, age: 260 + Math.round(900 * f),
+    });
+    // Dark stronghold carried from the bot's Memory: no vision, so no hostile
+    // detail and no core hits. One scout pass at the window's midpoint resets
+    // `age`, which is what makes its episode's toTick jump exactly once.
+    const lastPass = i < Math.floor(n * 0.5) ? 0 : Math.floor(n * 0.5);
+    entries.push({
+        room: "E31S38", home: "E30S38", h: 0, coreLvl: 5,
+        age: 120 + (i - lastPass) * 40, mem: 1,
     });
     return entries.length ? entries : null;
 }

@@ -567,9 +567,18 @@ function remoteHomeCell(home) {
     return td;
 }
 
+// A `mem: 1` row was carried from the bot's persisted Memory, not read from
+// its hostile cache, so nobody has looked: h: 0 there means UNKNOWN, and the
+// cells must not report it as an observation. See screeps2 docs/stats-history-ring.md.
+const NO_VISION_TITLE = "no vision — hostiles unknown, this row is carried from the bot's persisted memory";
+
+function noHostilesTitle(entry) {
+    return entry.mem ? NO_VISION_TITLE : "no hostile creeps cached";
+}
+
 function remoteDmgCell(entry) {
     const td = document.createElement("td");
-    if (entry.h === 0) { td.textContent = "—"; td.className = "na"; td.title = "no hostile creeps cached"; return td; }
+    if (entry.h === 0) { td.textContent = "—"; td.className = "na"; td.title = noHostilesTitle(entry); return td; }
     td.textContent = fmtInt.format((entry.melee ?? 0) + (entry.ranged ?? 0));
     td.title = `melee ${fmtInt.format(entry.melee ?? 0)}/t · ranged ${fmtInt.format(entry.ranged ?? 0)}/t`
         + ` · heal ${fmtInt.format(entry.heal ?? 0)}/t`;
@@ -581,9 +590,12 @@ function remoteCoreCell(entry) {
     if (entry.coreLvl === undefined) { td.textContent = "—"; td.className = "na"; td.title = "no invader core seen"; return td; }
     td.textContent = `L${entry.coreLvl} · ${fmtHits(entry.core)}`;
     if (entry.coreLvl > 0) td.className = "critical";
+    // Hits come from live vision; a dark room has a level but no hit count, and
+    // `entry.core ?? 0` would report that unknown as a core sitting at zero.
+    const hits = entry.core === undefined ? "hits unknown (no vision)" : `${fmtInt.format(entry.core)} hits`;
     td.title = entry.coreLvl > 0
-        ? `armed stronghold, ${fmtInt.format(entry.core ?? 0)} hits`
-        : `reserving core, ${fmtInt.format(entry.core ?? 0)} hits — harmless`;
+        ? `armed stronghold, ${hits}`
+        : `reserving core, ${hits} — harmless`;
     return td;
 }
 
@@ -592,7 +604,8 @@ function remoteCoreCell(entry) {
 // Rendered in wall clock (which is what "is this happening now?" wants) with
 // the raw tick count always in the title, since ticks are what the replay
 // links speak.
-function remoteAgeCell(age, msPerTick) {
+function remoteAgeCell(entry, msPerTick) {
+    const age = entry.age;
     const td = document.createElement("td");
     const ms = msPerTick != null ? age * msPerTick : null;
     td.textContent = ms == null ? `${fmtInt.format(age)} ticks`
@@ -601,7 +614,11 @@ function remoteAgeCell(age, msPerTick) {
     const parts = [`age ${fmtInt.format(age)} ticks`];
     if (age > REMOTE_STALE_AGE_TICKS) {
         td.className = "na";
-        parts.push(`past the bot's ${REMOTE_STALE_AGE_TICKS}-tick hostile cache — a memory of a room that has gone dark, not a live reading`);
+        // A mem row outliving the cache is by design, not neglect: the bot stands
+        // mining down next to a stronghold, so nobody is there to refresh it.
+        parts.push(entry.mem
+            ? `carried from the bot's persisted memory, so it outlives the ${REMOTE_STALE_AGE_TICKS}-tick hostile cache — the stronghold is still believed to be there, but nobody has eyes on it`
+            : `past the bot's ${REMOTE_STALE_AGE_TICKS}-tick hostile cache — a memory of a room that has gone dark, not a live reading`);
     }
     td.title = parts.join(" · ");
     return td;
@@ -621,13 +638,13 @@ function renderRemoteTable() {
         tr.append(roomLinkCell(entry.room), remoteClassCell(entry), remoteHomeCell(entry.home));
         const hTd = document.createElement("td");
         hTd.textContent = String(entry.h);
-        if (entry.h === 0) hTd.className = "na";
+        if (entry.h === 0) { hTd.className = "na"; hTd.title = noHostilesTitle(entry); }
         else if (entry.owners?.length) hTd.title = entry.owners.join(", ");
         tr.append(hTd, remoteDmgCell(entry));
         const healTd = document.createElement("td");
         healTd.textContent = entry.h === 0 ? "—" : fmtInt.format(entry.heal ?? 0);
-        if (entry.h === 0) healTd.className = "na";
-        tr.append(healTd, remoteCoreCell(entry), remoteAgeCell(entry.age, msPerTick));
+        if (entry.h === 0) { healTd.className = "na"; healTd.title = noHostilesTitle(entry); }
+        tr.append(healTd, remoteCoreCell(entry), remoteAgeCell(entry, msPerTick));
         return tr;
     }));
 }
