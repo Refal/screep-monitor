@@ -157,6 +157,10 @@
 
         <div id="view-room" hidden>
         <div class="section-head">
+            <!-- The room view's only way out. href is a live route, kept in sync
+                 by applyRoute so it carries the current range; "#/" here is the
+                 no-JS fallback, same idea as the hardcoded #shard-label text. -->
+            <a id="back-to-overview" class="back-link" href="#/">← Overview</a>
             <h2 id="room-title">Room</h2>
             <select id="room-select" aria-label="Room"></select>
         </div>

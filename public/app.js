@@ -1917,6 +1917,9 @@ function renderAll() {
 function applyRoute() {
     $("view-overview").hidden = route.view !== OVERVIEW;
     $("view-room").hidden = route.view !== ROOM;
+    // Carries the range across, so leaving a room at 7d doesn't silently snap
+    // the overview back to DEFAULT_RANGE and refetch.
+    $("back-to-overview").href = buildHash({ view: OVERVIEW, range: route.range }, DEFAULT_RANGE);
     for (const b of $("range-group").querySelectorAll("button")) {
         b.setAttribute("aria-pressed", String(Number(b.dataset.range) === route.range));
     }

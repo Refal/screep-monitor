@@ -311,6 +311,19 @@ td.na       { color: var(--text-muted); }
 #room-title .room-link { text-decoration: none; }
 #room-title .room-link:hover, #room-title .room-link:focus-visible { text-decoration: underline; }
 
+/* The room view's only way back. A real link, so it inherits nothing from
+   .filters button; sized to the same 44px thumb target as #refresh. */
+.back-link {
+    display: inline-flex; align-items: center;
+    min-height: 44px; padding: 0 4px 0 0;
+    color: var(--text-secondary); font-size: 13px; text-decoration: none;
+}
+@media (hover: hover) { .back-link:hover { color: var(--series-1); } }
+.back-link:focus-visible {
+    color: var(--series-1);
+    outline: 2px solid var(--series-1); outline-offset: 2px; border-radius: 4px;
+}
+
 .notice {
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
     padding: 24px; color: var(--text-secondary); margin-top: 24px;
