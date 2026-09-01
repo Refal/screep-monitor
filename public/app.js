@@ -14,12 +14,15 @@ import {
     levelEta, fmtDuration, downsample, rampLevel, boostFillLevel, boostFloor,
     PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, bucketId, LOD_BY_RANGE,
     fmtHits, roomPosture, defenderSummary, barrierTarget, barrierLevel, isCriticalBarrier,
+    RANGES, DEFAULT_RANGE,
+    empireVerdict, threatItems, clearRooms, isOutgunned,
     netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, TOWER_DPS_PER_ARMED,
     remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes,
     REMOTE_STALE_AGE_TICKS, MAX_REMOTE_THREATS,
     MANIFEST_GUARD_ROLE, SHARD, roomUrl, roomHistoryUrl,
     NUKER_GHODIUM_CAPACITY, NUKER_ENERGY_CAPACITY, NUKER_COOLDOWN,
 } from "./calc.js";
+import { parseHash, buildHash, OVERVIEW, ROOM } from "./route.js";
 const MAX_POINTS = 500;
 // firestore.rules caps snapshots list() queries at request.query.limit <= 9000
 // (anonymous-scan quota defense — see README "On the web apiKey"). Both
@@ -53,7 +56,11 @@ const RAW_INPUTS = [["hydroxide", "OH"], ["catalyst", "X"], ["ghodium", "G"]];
 const MATRIX_LADDERS = BOOST_LADDERS.filter(([purpose]) => purpose !== "harvest" && purpose !== "carry");
 
 let db;
-let rangeHours = 24;
+let rangeHours = DEFAULT_RANGE;
+// The view, mirrored from location.hash. Every control writes the hash and
+// lets onHashChange drive the state, so a bookmark, the Back button and a
+// click all take exactly the same path.
+let route = { view: OVERVIEW, room: null, range: DEFAULT_RANGE };
 let selectedRoom = null;
 let latest = null;
 let history = [];        // downsampled [{date, tick, gcl, gpl?, cpu, cr, rooms}]
@@ -84,13 +91,17 @@ $("shard-label").textContent = SHARD;
 
 // demo.js is excluded from deploy (see firebase.json hosting.ignore), so this
 // must stay a dynamic import reached only when ?demo=1 is set — a static one
-// would 404 in production. Memoized per range: bindControls clears demoRows
+// would 404 in production. Memoized per range: onHashChange clears demoRows
 // on a range switch, since the generated series depends on rangeHours.
 let demoRows = null;
 async function demoHistory() {
     if (!demoRows) {
-        const { synthDemo } = await import("./demo.js");
+        const { synthDemo, degradeLatest } = await import("./demo.js");
         demoRows = synthDemo(rangeHours, MAX_POINTS);
+        // ?demo=degraded — see degradeLatest. The threat board's most dangerous
+        // failure mode is reading calm on a payload that dropped its threat
+        // detail, and this is the only way to see that branch in a browser.
+        if (params.get("demo") === "degraded") demoRows = degradeLatest(demoRows);
     }
     return demoRows;
 }
@@ -267,16 +278,178 @@ function renderTileRow(containerId, tiles) {
     }));
 }
 
+// ---------- threat board ----------
+// The page's answer to "is anything on fire?", above everything else so a
+// phone glance never has to scroll for it. Only non-clear rooms and armed
+// strongholds get a card, worst first (see threatItems); the clear rooms
+// collapse to one line. calc.js owns the judgment, this owns the wording.
+
+const VERDICT_TONE = {
+    // Above every posture: if the towers cannot break the heal, the room is
+    // losing regardless of what else is in order. Same red as `exposed`, since
+    // both are "act now" and a second red would only dilute it.
+    outgunned:  { color: "--status-critical", headline: "OUTGUNNED" },
+    exposed:    { color: "--status-critical", headline: "EXPOSED" },
+    engaged:    { color: "--status-warning",  headline: "ENGAGED" },
+    stronghold: { color: "--status-serious",  headline: "STRONGHOLD NEARBY" },
+    unknown:    { color: "--text-muted",      headline: "UNKNOWN" },
+    clear:      { color: "--status-good",     headline: "ALL CLEAR" },
+};
+
+const THREAT_KIND_LABEL = {
+    outgunned: "outgunned",
+    exposed: "exposed",
+    engaged: "engaged",
+    stronghold: "armed stronghold",
+    unknown: "unknown",
+};
+
+function verdictSubtitle(v) {
+    const parts = [];
+    if (v.counts.outgunned) parts.push(`${v.counts.outgunned} outgunned`);
+    if (v.counts.exposed) parts.push(`${v.counts.exposed} exposed`);
+    if (v.counts.engaged) parts.push(`${v.counts.engaged} engaged`);
+    if (v.strongholds) parts.push(pluralCount(v.strongholds, "armed stronghold"));
+    if (v.counts.unknown) parts.push(`${pluralCount(v.counts.unknown, "room")} unknown`);
+    if (!parts.length) return `${pluralCount(v.counts.clear, "room")} clear`;
+    if (v.counts.clear) parts.push(`${v.counts.clear} clear`);
+    return parts.join(" · ");
+}
+
+// One label/value line inside a threat card.
+function boardRow(label, value, cls) {
+    const row = document.createElement("div");
+    row.className = "board-row";
+    const k = document.createElement("span");
+    k.className = "board-key";
+    k.textContent = label;
+    const val = document.createElement("span");
+    if (cls) val.className = cls;
+    val.append(value);
+    row.append(k, val);
+    return row;
+}
+
+function threatCardHead(item) {
+    const head = document.createElement("div");
+    head.className = "board-head";
+    head.append(roomNameLink(item.room));
+    const tone = item.kind === "engaged" ? "--status-warning"
+        : item.kind === "unknown" ? "--text-muted"
+        : item.kind === "stronghold" ? "--status-serious"
+        : "--status-critical";
+    head.append(makeBadge(cssVar(tone), THREAT_KIND_LABEL[item.kind]));
+    return head;
+}
+
+function roomThreatCard(item) {
+    const card = document.createElement("article");
+    card.className = "board-card";
+    card.append(threatCardHead(item));
+
+    const thr = item.thr;
+    if (!thr) {
+        // The distinction the whole payload doctrine exists to protect: this is
+        // silence, not safety.
+        card.append(boardRow("Why", "threat detail was dropped from this snapshot — not an all-clear", "na"));
+        return card;
+    }
+
+    const who = [thr.owners?.join(", "), (thr.boosted ?? 0) > 0 ? "⚡ boosted parts" : null].filter(Boolean).join(" · ");
+    card.append(boardRow("Hostiles", `${thr.h}${who ? ` · ${who}` : ""}`));
+    card.append(boardRow("Damage",
+        `${fmtInt.format((thr.melee ?? 0) + (thr.ranged ?? 0))}/t in · towers net ${fmtInt.format(item.net)}/t`,
+        item.net < 0 ? "critical" : undefined));
+    if (item.net < 0) {
+        card.append(boardRow("Warning", "hostile healing beats your tower dps — towers alone cannot break this", "critical"));
+    }
+    if (item.posture.reasons.length) {
+        card.append(boardRow("Exposed by", item.posture.reasons.join(" · "), "serious"));
+    }
+    card.append(boardRow("Safe mode",
+        thr.sm !== undefined ? `active, ${compact(thr.sm)} ticks left`
+            : thr.smAvail > 0 ? `${pluralCount(thr.smAvail, "charge")} ready`
+            : "no charge available",
+        thr.sm === undefined && thr.smAvail === 0 ? "critical" : undefined));
+    card.append(boardRow("Zone rampart",
+        thr.defRmp != null
+            ? `${fmtHits(thr.defRmp)} of ${fmtHits(barrierTarget("zoneRampart", item.rcl.l))} target at RCL ${item.rcl.l}`
+            : "no rampart inside the configured defender zone",
+        thr.defRmp == null ? "na" : isCriticalBarrier(thr.defRmp, "zoneRampart") ? "critical" : undefined));
+    const def = defenderSummary(thr, item.roles);
+    card.append(boardRow("Defenders",
+        def.des ? `${def.cur} of ${def.des} fielded` : DEF_STATE_EXPLAIN[def.state] ?? def.state,
+        def.des && def.cur < def.des ? shortfallClass(def.cur, def.des) : undefined));
+    return card;
+}
+
+function strongholdCard(item) {
+    const { entry } = item;
+    const card = document.createElement("article");
+    card.className = "board-card";
+    card.append(threatCardHead(item));
+    card.append(boardRow("Core", `level ${entry.coreLvl}${entry.core != null ? ` · ${fmtHits(entry.core)} hits` : ""}`,
+        "critical"));
+    if (entry.home) card.append(boardRow("Threatens", `${entry.home}'s remote mining`));
+    card.append(boardRow("Hostiles",
+        entry.mem ? "unknown — no vision" : `${entry.h}${entry.owners?.length ? ` · ${entry.owners.join(", ")}` : ""}`,
+        entry.mem ? "na" : undefined));
+    // Promoted out of a tooltip: past the cache TTL, or carried from the bot's
+    // persisted memory, this row is a belief rather than a reading.
+    const stale = entry.mem || entry.age > REMOTE_STALE_AGE_TICKS;
+    card.append(boardRow("Last seen",
+        stale ? `believed present — no vision for ~${fmtInt.format(entry.age)} ticks` : `${fmtInt.format(entry.age)} ticks ago`,
+        stale ? "na" : undefined));
+    card.append(boardRow("Care", "never send an unescorted melee creep at an armed stronghold"));
+    return card;
+}
+
+function renderThreatBoard() {
+    const v = empireVerdict(latest);
+    // When the whole payload was degraded, every room is `unknown` for the same
+    // single reason and the banner has already given it — one card per room
+    // would just be the same sentence N times. Name the rooms on one line
+    // instead. A PARTIALLY covered snapshot is different: there, an uncovered
+    // room really is its own finding and keeps its card.
+    const items = v.degraded
+        ? threatItems(latest).filter(i => i.scope === "remote")
+        : threatItems(latest);
+
+    // A degraded payload leads with that, never with a colour that reads calm.
+    const tone = v.degraded ? { color: "--status-warning", headline: "NO THREAT DATA" } : VERDICT_TONE[v.level];
+    const head = $("verdict");
+    head.style.setProperty("--verdict-color", cssVar(tone.color));
+    const title = document.createElement("strong");
+    title.className = "verdict-title";
+    title.textContent = tone.headline;
+    const sub = document.createElement("span");
+    sub.className = "verdict-sub";
+    sub.textContent = v.degraded
+        ? "this snapshot had its threat detail dropped (payload degradation) — the board below is not an all-clear"
+        : verdictSubtitle(v);
+    head.replaceChildren(title, sub);
+
+    $("threat-list").replaceChildren(
+        ...items.map(item => item.scope === "remote" ? strongholdCard(item) : roomThreatCard(item)));
+
+    if (v.degraded) {
+        $("clear-line").textContent =
+            `${pluralCount(v.rooms, "room")} owned, none covered by this snapshot · `
+            + Object.keys(latest.rooms).sort().join(" ");
+        return;
+    }
+    const clear = clearRooms(latest);
+    $("clear-line").textContent = clear.length
+        ? `${pluralCount(clear.length, "room")} clear · ${clear.join(" ")}`
+        : "";
+}
+
 function renderTiles() {
     const first = history[0];
     const creepCount = s => Object.values(s.rooms).reduce(
         (sum, r) => sum + (r.roles ?? []).reduce((a, x) => a + x.c, 0), 0);
     const gclPct = pct(latest.gcl.p, latest.gcl.pt);
     const eta = levelEta(r => r.gcl, latest.gcl, history);
-    const postureCounts = { exposed: 0, engaged: 0, unknown: 0, clear: 0 };
-    for (const r of Object.values(latest.rooms)) postureCounts[roomPosture(r.thr).level]++;
-    const { exposed, engaged, unknown } = postureCounts;
-    const worstLabel = exposed ? "exposed" : engaged ? "engaged" : unknown ? "unknown" : "clear";
     const tiles = [
         { label: "GCL", value: latest.gcl.l, delta: `${gclPct.toFixed(1)}% to ${latest.gcl.l + 1}`, sub: etaText(eta) },
     ];
@@ -290,7 +463,8 @@ function renderTiles() {
         { label: "Credits", value: compact(latest.cr), delta: first ? `${latest.cr - first.cr >= 0 ? "+" : ""}${compact(latest.cr - first.cr)} over range` : "" },
         { label: "Rooms", value: Object.keys(latest.rooms).length, delta: "owned" },
         { label: "Creeps", value: creepCount(latest), delta: "alive (tracked roles)" },
-        { label: "Defense", value: worstLabel, delta: `${exposed} exposed · ${engaged} engaged`, sub: unknown ? `${unknown} unknown` : "all clear" },
+        // No Defense tile: the threat board directly above this row is the same
+        // judgment, named per room and impossible to miss.
     );
     renderTileRow("tiles", tiles);
 }
@@ -350,9 +524,11 @@ function renderDefenseTiles() {
     const dpsSum = withThr.reduce((a, [, r]) => a + r.thr.dps, 0);
     const noArmedTower = withThr.filter(([, r]) => r.thr.twrArmed === 0 && r.thr.twrTotal > 0).length;
 
+    // Same predicate the threat board ranks on (calc.js), so this tile can't
+    // count a room the board above it never names.
     const outgunned = withThr
         .map(entry => [entry, netTowerDps(entry[1].thr)])
-        .filter(([[, r], net]) => r.thr.h > 0 && net < 0)
+        .filter(([[, r]]) => isOutgunned(r.thr))
         .sort((a, b) => a[1] - b[1]);
     const worstOutgunned = outgunned[0]?.[0];
     const worstOutgunnedNet = outgunned[0]?.[1];
@@ -396,24 +572,36 @@ function renderDefenseTiles() {
     renderTileRow("defense-tiles", tiles);
 }
 
+function defenseColumns() {
+    return [
+        { key: "room", label: "Room", primary: true, cell: ([n]) => roomLinkCell(n) },
+        { key: "posture", label: "Posture", cell: ([, r]) => postureBadge(r.thr) },
+        { key: "hostiles", label: "Hostiles", cell: ([, r]) => hostilesCell(r.thr) },
+        { key: "dmgIn", label: "In dmg/t", hint: "hostile melee + ranged damage per tick, boosts folded in",
+          cell: ([, r]) => dmgInCell(r.thr) },
+        { key: "towers", label: "Towers", hint: "towers with energy / built", cell: ([, r]) => towersCell(r.thr) },
+        { key: "netDps", label: "Net dps",
+          hint: "worst-case tower dps minus hostile heal/tick — negative means towers alone cannot break the heal",
+          cell: ([, r]) => netDpsCell(r.thr) },
+        { key: "safeMode", label: "Safe mode", cell: ([, r]) => safeModeCell(r.thr) },
+        { key: "rampart", label: "Rampart", hint: "weakest own rampart",
+          cell: ([, r]) => barrierCell(r.thr?.rmp, "rampart", r.rcl.l) },
+        { key: "zoneRampart", label: "Zone rampart",
+          hint: "weakest rampart inside the configured defender zone — the one you actually fight behind",
+          cell: ([, r]) => barrierCell(r.thr?.defRmp, "zoneRampart", r.rcl.l) },
+        // Was smuggled into the Rampart cell's tooltip; it is a distinct
+        // measurement against its own RCL ladder, so it gets its own column.
+        { key: "wall", label: "Weakest wall", tier: 3,
+          hint: "weakest own wall, ramped against the wall repair target for this RCL",
+          cell: ([, r]) => barrierCell(r.thr?.wall, "wall", r.rcl.l) },
+        { key: "defenders", label: "Defenders",
+          hint: "home defense fleet from the live spawn manifest; on-demand squads are not included",
+          cell: ([, r]) => defCell(r.thr, r.roles) },
+    ];
+}
+
 function renderDefenseTable() {
-    const tbody = $("defense-table").querySelector("tbody");
-    const rows = sortByPosture(Object.entries(latest.rooms));
-    tbody.replaceChildren(...rows.map(([name, r]) => {
-        const tr = document.createElement("tr");
-        tr.append(roomLinkCell(name));
-        tr.append(postureBadge(r.thr));
-        tr.append(hostilesCell(r.thr));
-        tr.append(dmgInCell(r.thr));
-        tr.append(towersCell(r.thr));
-        tr.append(netDpsCell(r.thr));
-        tr.append(safeModeCell(r.thr));
-        const wallTitle = r.thr?.wall != null ? `weakest wall ${fmtHits(r.thr.wall)}` : "";
-        tr.append(barrierCell(r.thr?.rmp, "rampart", r.rcl.l, wallTitle));
-        tr.append(barrierCell(r.thr?.defRmp, "zoneRampart", r.rcl.l));
-        tr.append(defCell(r.thr, r.roles));
-        return tr;
-    }));
+    renderTable("defense-table", defenseColumns(), sortByPosture(Object.entries(latest.rooms)));
 }
 
 const ATTACK_LOG_MAX_ROWS = 20;
@@ -432,44 +620,187 @@ function naRow(colSpan, text, title) {
     return tr;
 }
 
+// ---------- shared table renderer ----------
+// Every table on this page has the same shape: a sorted row list and one cell
+// builder per column. Declaring the columns instead of appending them lets one
+// renderer serve all seven — and, more to the point, lets each cell carry the
+// metadata the mobile card layout needs (`data-label` for the ::before label,
+// `data-tier` for what folds away, `data-primary` for the room name) without
+// any of the 26 cell builders having to know a card layout exists. The two
+// modes live in styles.css; nothing below is aware of which one is active.
+//
+// A column spec entry:
+//   key      stable id, also the key in the section's hints list
+//   label    the <th> text AND the card's data-label
+//   sym      optional muted symbol after the label (boost matrix headers)
+//   hint     what the column means — was a <th title=…>, and step 7 surfaces
+//            it as visible text; kept on the <th> as desktop redundancy only
+//   cell     (row) => HTMLTableCellElement, i.e. the existing builders as-is
+//   tier     1 (default) always shown; 3 = desktop table only, and in card
+//            mode folded behind the row's own expand toggle
+//   primary  exactly one column: sticky on desktop, card title on mobile
+//   group    first column of a visual group (left border)
+function applyColMeta(cell, col) {
+    cell.dataset.label = col.sym ? `${col.label} ${col.sym}` : col.label;
+    if (col.tier && col.tier !== 1) cell.dataset.tier = String(col.tier);
+    if (col.primary) cell.dataset.primary = "";
+    if (col.group) cell.classList.add("raw-group");
+}
+
+function buildHead(spec) {
+    const tr = document.createElement("tr");
+    for (const col of spec) {
+        const th = document.createElement("th");
+        th.textContent = col.label;
+        if (col.sym) {
+            const sym = document.createElement("span");
+            sym.className = "th-sym";
+            sym.textContent = col.sym;
+            th.append(" ", sym);
+        }
+        // Desktop-only redundancy: the same string is rendered as visible text
+        // by the section's hints disclosure, which is what touch actually gets.
+        if (col.hint) th.title = col.hint;
+        applyColMeta(th, col);
+        tr.append(th);
+    }
+    return tr;
+}
+
+// The column definitions, as visible (tappable) text rather than <th title>
+// alone. A tooltip is fine as a second channel; it is not fine as the only
+// one, and on a phone it is no channel at all. Rendered into a <details> right
+// after the table, from the same spec the headers come from.
+function renderColumnHints(table, spec) {
+    const hinted = spec.filter(c => c.hint);
+    const wrap = table.parentElement;
+    let host = wrap.nextElementSibling;
+    if (!host?.classList.contains("col-hints")) {
+        if (!hinted.length) return;             // nothing to explain, nothing to insert
+        host = document.createElement("details");
+        host.className = "col-hints";
+        wrap.insertAdjacentElement("afterend", host);
+    }
+    host.hidden = !hinted.length;
+    if (!hinted.length) return;
+    const summary = document.createElement("summary");
+    summary.textContent = "What these columns mean";
+    const dl = document.createElement("dl");
+    for (const col of hinted) {
+        const dt = document.createElement("dt");
+        dt.textContent = col.sym ? `${col.label} (${col.sym})` : col.label;
+        const dd = document.createElement("dd");
+        dd.textContent = col.hint;
+        dl.append(dt, dd);
+    }
+    host.replaceChildren(summary, dl);
+}
+
+// `empty` is {text, why} — the callers distinguish several empty states from
+// each other (degraded vs genuinely quiet), so the wording stays theirs.
+function renderTable(tableId, spec, rows, empty) {
+    const table = $(tableId);
+    table.querySelector("thead").replaceChildren(buildHead(spec));
+    renderColumnHints(table, spec);
+    const tbody = table.querySelector("tbody");
+    if (!rows.length) {
+        const tr = naRow(spec.length, empty?.text ?? "nothing to show", empty?.why);
+        tr.firstChild.dataset.primary = "";      // full card width in card mode
+        tbody.replaceChildren(tr);
+        return;
+    }
+    const expandable = spec.some(c => c.tier === 3);
+    tbody.replaceChildren(...rows.map(row => {
+        const tr = document.createElement("tr");
+        if (expandable) tr.dataset.expandable = "";
+        for (const col of spec) {
+            const td = col.cell(row);
+            applyColMeta(td, col);
+            tr.append(td);
+        }
+        return tr;
+    }));
+}
+
+// One delegated listener covers the row expand for every table: card mode
+// hides tier-3 cells, and tapping the row reveals them. Anything with its own
+// click behaviour (the room links) is left alone.
+document.addEventListener("click", e => {
+    const tr = e.target.closest?.("tr[data-expandable]");
+    if (!tr || e.target.closest("a, select, button, summary")) return;
+    tr.toggleAttribute("data-expanded");
+});
+
+// An absence with a meaning is not a missing value, so it gets a word rather
+// than an em dash — remoteHomeCell has always done this ("corridor"), and this
+// generalises it. The `why` is the long form: still a tooltip on the desktop
+// table, but the word alone has to carry the meaning on a phone, where there
+// is no hover at all.
+function naCell(word, why) {
+    const td = document.createElement("td");
+    td.className = "na";
+    td.textContent = word;
+    if (why) td.title = why;
+    return td;
+}
+
+// Plain text cell — the default shape for anything carrying no badge, chip or
+// link. Keeps the seven column specs below declarative.
+function textCell(text, cls) {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (cls) td.className = cls;
+    return td;
+}
+
+// The three all-rooms tables (labs, boosts, rooms) all list every owned room
+// alphabetically; the defense table is the one that sorts by severity instead.
+function byRoomName(rooms) {
+    return Object.entries(rooms).sort(([a], [b]) => a.localeCompare(b));
+}
+
+// Shared by both activity logs: a replay link on the first tick the hostiles
+// were seen, plus the closing tick as plain text.
+function episodeTicksCell(ep, linkTitle) {
+    const td = document.createElement("td");
+    td.append(
+        roomLink({ href: roomHistoryUrl(ep.room, ep.fromTick), text: String(ep.fromTick), title: linkTitle }),
+        ` – ${ep.toTick}`,
+    );
+    return td;
+}
+
+function attackWhenCell(ep) {
+    const td = document.createElement("td");
+    const ago = Date.now() - ep.toMs.getTime();
+    td.textContent = ago < 60000 ? "just now" : `${fmtDuration(ago)} ago`;
+    td.title = `${ep.fromMs.toLocaleString()} – ${ep.toMs.toLocaleString()}`;
+    return td;
+}
+
+function attackLogColumns() {
+    return [
+        { key: "room", label: "Room", primary: true, cell: ep => roomLinkCell(ep.room) },
+        { key: "when", label: "When", cell: attackWhenCell },
+        { key: "ticks", label: "Ticks", tier: 3,
+          hint: "first through last tick hostiles were observed — the link replays from the first",
+          cell: ep => episodeTicksCell(ep, "replay from the first tick hostiles were observed") },
+        { key: "peakH", label: "Peak hostiles",
+          cell: ep => textCell(`${ep.peakH}${ep.boosted ? " ⚡" : ""}`) },
+        { key: "peakDmg", label: "Peak dmg/t", cell: ep => textCell(fmtInt.format(ep.peakDmg)) },
+        { key: "owners", label: "Aggressors",
+          cell: ep => ep.owners.length ? textCell(ep.owners.join(", "))
+              : naCell("unnamed", "no owner was recorded for these hostiles — usually Invader NPCs") },
+    ];
+}
+
 function renderAttackLog() {
     const { episodes, covered, total } = hostileEpisodes(history);
-    const tbody = $("attack-log").querySelector("tbody");
-    if (covered === 0) {
-        tbody.replaceChildren(naRow(6, "no threat detail in this range", DEGRADED_TITLE));
-    } else if (episodes.length === 0) {
-        tbody.replaceChildren(naRow(6, "no hostiles observed in this range"));
-    } else {
-        tbody.replaceChildren(...episodes.slice(0, ATTACK_LOG_MAX_ROWS).map(ep => {
-            const tr = document.createElement("tr");
-            const ago = Date.now() - ep.toMs.getTime();
-            const whenTd = document.createElement("td");
-            whenTd.textContent = ago < 60000 ? "just now" : `${fmtDuration(ago)} ago`;
-            whenTd.title = `${ep.fromMs.toLocaleString()} – ${ep.toMs.toLocaleString()}`;
-            tr.append(roomLinkCell(ep.room), whenTd);
-            const ticksTd = document.createElement("td");
-            ticksTd.append(
-                roomLink({
-                    href: roomHistoryUrl(ep.room, ep.fromTick),
-                    text: String(ep.fromTick),
-                    title: "replay from the first tick hostiles were observed",
-                }),
-                ` – ${ep.toTick}`,
-            );
-            tr.append(ticksTd);
-            const cells = [
-                `${ep.peakH}${ep.boosted ? " ⚡" : ""}`,
-                fmtInt.format(ep.peakDmg),
-                ep.owners.join(", ") || "—",
-            ];
-            for (const text of cells) {
-                const td = document.createElement("td");
-                td.textContent = text;
-                tr.append(td);
-            }
-            return tr;
-        }));
-    }
+    renderTable("attack-log", attackLogColumns(),
+        covered === 0 ? [] : episodes.slice(0, ATTACK_LOG_MAX_ROWS),
+        covered === 0
+            ? { text: "no threat detail in this range", why: DEGRADED_TITLE }
+            : { text: "no hostiles observed in this range" });
     const note = covered < total
         ? `${covered} of ${total} snapshots in range carried threat detail — gaps are payload degradation, not quiet periods`
         : `${covered} of ${total} snapshots in range carried threat detail`;
@@ -577,8 +908,8 @@ function noHostilesTitle(entry) {
 }
 
 function remoteDmgCell(entry) {
+    if (entry.h === 0) return naCell(entry.mem ? "no vision" : "none", noHostilesTitle(entry));
     const td = document.createElement("td");
-    if (entry.h === 0) { td.textContent = "—"; td.className = "na"; td.title = noHostilesTitle(entry); return td; }
     td.textContent = fmtInt.format((entry.melee ?? 0) + (entry.ranged ?? 0));
     td.title = `melee ${fmtInt.format(entry.melee ?? 0)}/t · ranged ${fmtInt.format(entry.ranged ?? 0)}/t`
         + ` · heal ${fmtInt.format(entry.heal ?? 0)}/t`;
@@ -586,8 +917,8 @@ function remoteDmgCell(entry) {
 }
 
 function remoteCoreCell(entry) {
+    if (entry.coreLvl === undefined) return naCell("no core", "no invader core seen in this room");
     const td = document.createElement("td");
-    if (entry.coreLvl === undefined) { td.textContent = "—"; td.className = "na"; td.title = "no invader core seen"; return td; }
     td.textContent = `L${entry.coreLvl} · ${fmtHits(entry.core)}`;
     if (entry.coreLvl > 0) td.className = "critical";
     // Hits come from live vision; a dark room has a level but no hit count, and
@@ -624,29 +955,49 @@ function remoteAgeCell(entry, msPerTick) {
     return td;
 }
 
+function remoteHostilesCell(entry) {
+    // h: 0 on a row carried from persisted memory means UNKNOWN, not empty —
+    // nobody has eyes on the room. That has to read as a word, not as a zero.
+    if (entry.h === 0) return naCell(entry.mem ? "no vision" : "none cached", noHostilesTitle(entry));
+    const td = document.createElement("td");
+    td.textContent = String(entry.h);
+    if (entry.owners?.length) td.title = entry.owners.join(", ");
+    return td;
+}
+
+function remoteHealCell(entry) {
+    if (entry.h === 0) return naCell(entry.mem ? "no vision" : "none", noHostilesTitle(entry));
+    return textCell(fmtInt.format(entry.heal ?? 0));
+}
+
+function remoteColumns(msPerTick) {
+    return [
+        { key: "room", label: "Room", primary: true, cell: e => roomLinkCell(e.room) },
+        { key: "class", label: "Class",
+          hint: "how actionable this is, using the bot's own ranking: armed stronghold, then any non-Keeper hostile, then a level-0 core, then Keepers only",
+          cell: remoteClassCell },
+        { key: "home", label: "Home",
+          hint: "home room farming this remote; “corridor” means an incidental sighting that belongs to no home",
+          cell: e => remoteHomeCell(e.home) },
+        { key: "hostiles", label: "Hostiles", cell: remoteHostilesCell },
+        { key: "dmgIn", label: "In dmg/t", hint: "hostile melee + ranged damage per tick, boosts folded in",
+          cell: remoteDmgCell },
+        { key: "heal", label: "Heal/t", hint: "hostile healing per tick, boosts folded in", cell: remoteHealCell },
+        { key: "core", label: "Core",
+          hint: "invader core hits and level — L0 is a harmless reserving core, L1-5 an armed stronghold",
+          cell: remoteCoreCell },
+        { key: "age", label: "Last seen",
+          hint: "the bot's own cached age for this sighting, not the snapshot's age",
+          cell: e => remoteAgeCell(e, msPerTick) },
+    ];
+}
+
 function renderRemoteTable() {
-    const tbody = $("remote-table").querySelector("tbody");
-    if (!latest.rt) {
-        tbody.replaceChildren(hasThreatDetail(latest)
-            ? naRow(8, "no remote hostiles cached", REMOTE_NONE_TITLE)
-            : naRow(8, "no remote detail in this snapshot (payload degradation)", REMOTE_DEGRADED_TITLE));
-        return;
-    }
-    const msPerTick = observedMsPerTick(history);
-    tbody.replaceChildren(...sortRemoteThreats(latest.rt).map(entry => {
-        const tr = document.createElement("tr");
-        tr.append(roomLinkCell(entry.room), remoteClassCell(entry), remoteHomeCell(entry.home));
-        const hTd = document.createElement("td");
-        hTd.textContent = String(entry.h);
-        if (entry.h === 0) { hTd.className = "na"; hTd.title = noHostilesTitle(entry); }
-        else if (entry.owners?.length) hTd.title = entry.owners.join(", ");
-        tr.append(hTd, remoteDmgCell(entry));
-        const healTd = document.createElement("td");
-        healTd.textContent = entry.h === 0 ? "—" : fmtInt.format(entry.heal ?? 0);
-        if (entry.h === 0) { healTd.className = "na"; healTd.title = noHostilesTitle(entry); }
-        tr.append(healTd, remoteCoreCell(entry), remoteAgeCell(entry, msPerTick));
-        return tr;
-    }));
+    renderTable("remote-table", remoteColumns(observedMsPerTick(history)),
+        latest.rt ? sortRemoteThreats(latest.rt) : [],
+        hasThreatDetail(latest)
+            ? { text: "no remote hostiles cached", why: REMOTE_NONE_TITLE }
+            : { text: "no remote detail in this snapshot (payload degradation)", why: REMOTE_DEGRADED_TITLE });
 }
 
 // "When" is the last tick the hostiles were actually SEEN, not the last
@@ -672,44 +1023,51 @@ function remoteWhenCell(ep, msPerTick) {
     return td;
 }
 
+function remotePeakCell(ep) {
+    const td = document.createElement("td");
+    td.textContent = String(ep.peakH);
+    td.title = ep.owners.length ? ep.owners.join(", ") : "no hostile creeps — core only";
+    return td;
+}
+
+function remoteLogDmgCell(ep) {
+    const td = document.createElement("td");
+    td.textContent = fmtInt.format(ep.peakDmg);
+    td.title = `peak heal ${fmtInt.format(ep.peakHeal)}/t`;
+    return td;
+}
+
+function remoteLogCoreCell(ep) {
+    if (ep.peakCoreLvl === undefined) return naCell("no core", "no invader core was seen during this episode");
+    const td = document.createElement("td");
+    td.textContent = `L${ep.peakCoreLvl}`;
+    if (ep.peakCoreLvl > 0) td.className = "critical";
+    return td;
+}
+
+function remoteLogColumns(msPerTick) {
+    return [
+        { key: "room", label: "Room", primary: true, cell: ep => roomLinkCell(ep.room) },
+        { key: "home", label: "Home", cell: ep => remoteHomeCell(ep.home) },
+        { key: "when", label: "When", cell: ep => remoteWhenCell(ep, msPerTick) },
+        { key: "ticks", label: "Ticks", tier: 3,
+          hint: "first through last tick the hostiles were actually seen — both ends come from the sighting's own age, not from the snapshots that carried it",
+          // toTick is likewise back-dated: the last tick SEEN, not the last
+          // snapshot that listed the sighting.
+          cell: ep => episodeTicksCell(ep, "replay from the first tick the hostiles were seen, back-dated by the sighting's own age") },
+        { key: "peakH", label: "Peak hostiles", cell: remotePeakCell },
+        { key: "peakDmg", label: "Peak dmg/t", cell: remoteLogDmgCell },
+        { key: "core", label: "Core", cell: remoteLogCoreCell },
+    ];
+}
+
 function renderRemoteLog() {
     const { episodes, covered, total } = remoteEpisodes(history);
-    const msPerTick = observedMsPerTick(history);
-    const tbody = $("remote-log").querySelector("tbody");
-    if (covered === 0) {
-        tbody.replaceChildren(naRow(7, "no remote detail in this range", REMOTE_DEGRADED_TITLE));
-    } else if (episodes.length === 0) {
-        tbody.replaceChildren(naRow(7, "no remote incursions observed in this range"));
-    } else {
-        tbody.replaceChildren(...episodes.slice(0, ATTACK_LOG_MAX_ROWS).map(ep => {
-            const tr = document.createElement("tr");
-            tr.append(roomLinkCell(ep.room), remoteHomeCell(ep.home), remoteWhenCell(ep, msPerTick));
-            const ticksTd = document.createElement("td");
-            ticksTd.append(
-                roomLink({
-                    href: roomHistoryUrl(ep.room, ep.fromTick),
-                    text: String(ep.fromTick),
-                    title: "replay from the first tick the hostiles were seen, back-dated by the sighting's own age",
-                }),
-                ` – ${ep.toTick}`,   // last tick SEEN, likewise back-dated — not the last snapshot that listed it
-            );
-            tr.append(ticksTd);
-            const peakTd = document.createElement("td");
-            peakTd.textContent = String(ep.peakH);
-            peakTd.title = ep.owners.length ? ep.owners.join(", ") : "no hostile creeps — core only";
-            const dmgTd = document.createElement("td");
-            dmgTd.textContent = fmtInt.format(ep.peakDmg);
-            dmgTd.title = `peak heal ${fmtInt.format(ep.peakHeal)}/t`;
-            const coreTd = document.createElement("td");
-            if (ep.peakCoreLvl === undefined) { coreTd.textContent = "—"; coreTd.className = "na"; }
-            else {
-                coreTd.textContent = `L${ep.peakCoreLvl}`;
-                if (ep.peakCoreLvl > 0) coreTd.className = "critical";
-            }
-            tr.append(peakTd, dmgTd, coreTd);
-            return tr;
-        }));
-    }
+    renderTable("remote-log", remoteLogColumns(observedMsPerTick(history)),
+        covered === 0 ? [] : episodes.slice(0, ATTACK_LOG_MAX_ROWS),
+        covered === 0
+            ? { text: "no remote detail in this range", why: REMOTE_DEGRADED_TITLE }
+            : { text: "no remote incursions observed in this range" });
     $("remote-log-note").textContent = covered < total
         ? `${covered} of ${total} snapshots in range carried remote detail — gaps are payload degradation, not quiet periods`
         : `${covered} of ${total} snapshots in range carried remote detail`;
@@ -820,7 +1178,7 @@ function renderRoomDefense(room) {
     const r = latest.rooms[room];
     const thr = r?.thr;
     const owners = thr?.owners;
-    $("defense-title").replaceChildren("Defense · ", roomNameLink(room),
+    $("defense-title").replaceChildren(`Defense · ${room}`,
         owners?.length ? ` · ${owners.join(", ")}` : "");
 
     if (!thr) {
@@ -896,7 +1254,7 @@ function renderRoomDefense(room) {
 
 function renderRoomCharts() {
     const room = selectedRoom;
-    $("room-title").replaceChildren("Room ", roomNameLink(room));
+    $("room-title").replaceChildren(`Room ${room} `, screepsRoomLink(room));
     const of = fn => history.map(r => (r.rooms[room] ? fn(r.rooms[room]) : null));
     renderRoomTiles(room);
     renderLine("rcl", "c-rcl",
@@ -961,22 +1319,50 @@ function renderRolesChart(room) {
     ]);
 }
 
-// Room names deep-link to screeps.com. A real <a href> rather than a click
-// handler so middle-click, copy-link and open-in-new-tab all work; target
-// _blank keeps this tab's poll loop (scheduleNextPoll) running underneath.
-function roomLink({ href, text, title } = {}) {
+// Always a real <a href> rather than a click handler, so middle-click,
+// copy-link and open-in-new-tab all work. External links (screeps.com room
+// views and tick replays) get target=_blank, which also keeps this tab's poll
+// loop (scheduleNextPoll) running underneath; internal ones are hash routes
+// and must stay in this tab.
+function roomLink({ href, text, title, external = true } = {}) {
     const a = document.createElement("a");
     a.className = "room-link";
     a.href = href;
-    a.target = "_blank";
-    a.rel = "noopener";
+    if (external) { a.target = "_blank"; a.rel = "noopener"; }
     a.textContent = text;
     if (title) a.title = title;
     return a;
 }
 
+// Only an owned room has a per-room view to navigate to. `rt` names remotes,
+// SK rooms and corridor sightings — a disjoint set from `latest.rooms`, since
+// the hostile cache is keyed by the room next door, not by the colony (an rt
+// row's `home` is the colony). Those rooms carry no rcl/roles/thr/bst/nuk at
+// all, so an internal route would resolve straight back to the overview and
+// strand a dead `#/room/…` in the address bar. Send them to the game instead,
+// which is where they pointed before the room view existed.
+//
+// Still a plain href either way, so nothing about it needs preventDefault.
+const isOwnedRoom = room => !!latest?.rooms?.[room];
+
 function roomNameLink(room) {
-    return roomLink({ href: roomUrl(room), text: room });
+    return isOwnedRoom(room)
+        ? roomLink({
+            href: buildHash({ view: ROOM, room, range: route.range }, DEFAULT_RANGE),
+            text: room,
+            external: false,
+        })
+        : roomLink({
+            href: roomUrl(room),
+            text: room,
+            title: `${room} is not an owned room — open it on screeps.com`,
+        });
+}
+
+// The escape hatch to the game itself, offered explicitly in the room view
+// header rather than by hijacking every room name.
+function screepsRoomLink(room) {
+    return roomLink({ href: roomUrl(room), text: "↗ Screeps", title: `open ${room} on screeps.com` });
 }
 
 function roomLinkCell(room) {
@@ -1014,9 +1400,8 @@ function nukerChip(label, amount, cap) {
 // never a truncated payload (contrast creepsCell, where a missing `roles` is
 // ambiguous with degradation).
 function nukerCell(nuk) {
+    if (!nuk) return naCell("not built", "this room has no nuker");
     const td = document.createElement("td");
-    td.className = "nuker-cell";
-    if (!nuk) { td.textContent = "—"; td.classList.add("na"); return td; }
     const [g, e, cd] = nuk;
     const wrap = document.createElement("span");
     wrap.className = "nuker-fill";
@@ -1056,8 +1441,8 @@ function postureBadge(thr) {
 }
 
 function hostilesCell(thr) {
+    if (!thr) return naCell("unknown", DEGRADED_TITLE);
     const td = document.createElement("td");
-    if (!thr) { td.textContent = "—"; td.className = "na"; td.title = DEGRADED_TITLE; return td; }
     if (thr.h === 0) { td.textContent = "0"; td.className = "na"; return td; }
     td.textContent = String(thr.h);
     td.className = thr.boosted > 0 ? "critical" : "serious";
@@ -1072,8 +1457,9 @@ function hostilesCell(thr) {
 // One column for melee+ranged rather than two — the sum is what's compared
 // against tower dps; splitting it adds width without adding a decision.
 function dmgInCell(thr) {
+    if (!thr) return naCell("unknown", DEGRADED_TITLE);
+    if (thr.h === 0) return naCell("none", "no hostiles in this room");
     const td = document.createElement("td");
-    if (!thr || thr.h === 0) { td.textContent = "—"; td.className = "na"; return td; }
     const dmg = (thr.melee ?? 0) + (thr.ranged ?? 0);
     td.textContent = fmtInt.format(dmg);
     td.title = `melee ${fmtInt.format(thr.melee ?? 0)}/t · ranged ${fmtInt.format(thr.ranged ?? 0)}/t `
@@ -1082,9 +1468,9 @@ function dmgInCell(thr) {
 }
 
 function towersCell(thr) {
+    if (!thr) return naCell("unknown", DEGRADED_TITLE);
+    if (thr.twrTotal === 0) return naCell("no tower", "no tower built in this room (RCL < 3?)");
     const td = document.createElement("td");
-    if (!thr) { td.textContent = "—"; td.className = "na"; td.title = DEGRADED_TITLE; return td; }
-    if (thr.twrTotal === 0) { td.textContent = "—"; td.className = "na"; td.title = "no tower built (RCL < 3?)"; return td; }
     td.textContent = `${thr.twrArmed}/${thr.twrTotal}`;
     if (thr.twrArmed === 0) td.className = "critical";
     else if (thr.twrArmed < thr.twrTotal) td.className = "short";
@@ -1095,8 +1481,8 @@ function towersCell(thr) {
 // The single most decision-relevant number on the page: negative means
 // towers alone cannot out-damage what the hostiles are healing back.
 function netDpsCell(thr) {
+    if (!thr) return naCell("unknown", DEGRADED_TITLE);
     const td = document.createElement("td");
-    if (!thr) { td.textContent = "—"; td.className = "na"; td.title = DEGRADED_TITLE; return td; }
     if (thr.h === 0) { td.textContent = fmtInt.format(thr.dps); td.className = "na"; return td; }
     const net = netTowerDps(thr);
     td.textContent = `${net >= 0 ? "+" : ""}${fmtInt.format(net)}`;
@@ -1107,8 +1493,8 @@ function netDpsCell(thr) {
 }
 
 function safeModeCell(thr) {
+    if (!thr) return naCell("unknown", DEGRADED_TITLE);
     const td = document.createElement("td");
-    if (!thr) { td.textContent = "—"; td.className = "na"; td.title = DEGRADED_TITLE; return td; }
     if (thr.sm !== undefined) {
         td.append(makeBadge(cssVar("--series-1"), `active ${compact(thr.sm)}t`));
     } else {
@@ -1123,18 +1509,19 @@ function safeModeCell(thr) {
 // "wall"); `rcl` resolves the RCL-scaled repair target the hits are ramped
 // against, so a healthy low-RCL rampart and a neglected high-RCL one never
 // read the same color.
-function barrierCell(hits, kind, rcl, extraTitle) {
+const BARRIER_ABSENT = {
+    rampart:     { word: "no rampart", why: "this room has no own rampart" },
+    zoneRampart: { word: "no zone",    why: "no rampart inside the configured defender zone" },
+    wall:        { word: "no wall",    why: "this room has no own wall" },
+};
+
+function barrierCell(hits, kind, rcl) {
     const td = document.createElement("td");
-    if (hits == null) {
-        td.textContent = "—";
-        td.className = "na";
-        td.title = kind === "zoneRampart" ? "no rampart inside the configured defender zone" : "no own rampart";
-        return td;
-    }
+    if (hits == null) return naCell(BARRIER_ABSENT[kind].word, BARRIER_ABSENT[kind].why);
     const level = barrierLevel(hits, kind, rcl);
     const critical = isCriticalBarrier(hits, kind);
     td.append(makeBadge(cssVar(critical ? "--status-critical" : `--fill-${level}`), fmtHits(hits)));
-    td.title = `${fmtHits(hits)} / target ${fmtHits(barrierTarget(kind, rcl))} at RCL ${rcl}${extraTitle ? ` · ${extraTitle}` : ""}`;
+    td.title = `${fmtHits(hits)} / target ${fmtHits(barrierTarget(kind, rcl))} at RCL ${rcl}`;
     return td;
 }
 
@@ -1144,6 +1531,17 @@ function barrierCell(hits, kind, rcl, extraTitle) {
 const fmtSlot = (role, room, cur, des) => `${role}${room ? ` → ${room}` : ""} ${cur}/${des}`;
 const slotLabel = s => fmtSlot(s.role, s.room, s.cur, s.des);
 const guardLabel = g => fmtSlot(g.r, g.rm, g.c, g.d);
+
+// The short form shown in the cell. Each is a statement about why no fleet is
+// planned, which is the thing a reader needs; DEF_STATE_EXPLAIN below is the
+// long form, and the column-hints list carries it where hover cannot.
+const DEF_STATE_WORD = {
+    unknown: "unknown",
+    "none-needed": "not needed",
+    "safe-mode": "safe mode",
+    unarmed: "unarmed foe",
+    "no-plan": "none",
+};
 
 const DEF_STATE_EXPLAIN = {
     unknown: DEGRADED_TITLE,
@@ -1165,7 +1563,7 @@ function defCell(thr, roles) {
         : (s.guards.length ? `guards: ${s.guards.map(guardLabel).join(", ")}` : "");
 
     if (s.state in DEF_STATE_EXPLAIN) {
-        td.textContent = s.state === "no-plan" ? "none" : "—";
+        td.textContent = DEF_STATE_WORD[s.state];
         td.className = s.state === "no-plan" ? "critical" : "na";
         td.title = [DEF_STATE_EXPLAIN[s.state], suppressedNote].filter(Boolean).join(" · ");
         return td;
@@ -1206,30 +1604,52 @@ function labStatusBadge(s) {
     return makeBadge(colors[s] ?? cssVar("--text-muted"), labels[s] ?? s);
 }
 
+function labStatusCell(lab) {
+    if (!lab) return naCell("no labs", "this room has no labs built");
+    const td = document.createElement("td");
+    td.append(labStatusBadge(lab.s));
+    return td;
+}
+
+// Every lab field is absent in two different ways — the room has no labs at
+// all, or it has labs and simply isn't running a reaction right now — and the
+// reader needs to tell them apart.
+function labCell(lab, value) {
+    if (!lab) return naCell("no labs", "this room has no labs built");
+    if (value == null) return naCell("idle", "labs are built but no reaction is running in this room");
+    return textCell(value);
+}
+
+function labsColumns() {
+    return [
+        { key: "room", label: "Room", primary: true, cell: ([n]) => roomLinkCell(n) },
+        { key: "status", label: "Status", cell: ([, r]) => labStatusCell(r.lab) },
+        { key: "reaction", label: "Reaction",
+          cell: ([, r]) => labCell(r.lab, r.lab?.o ? `${r.lab.i1?.[0] ?? "?"} + ${r.lab.i2?.[0] ?? "?"} → ${r.lab.o}` : null) },
+        { key: "in1", label: "In 1", tier: 3, hint: "contents of the first input lab",
+          cell: ([, r]) => labCell(r.lab, r.lab?.i1 ? `${r.lab.i1[0]} ${fmtInt.format(r.lab.i1[1])}` : null) },
+        { key: "in2", label: "In 2", tier: 3, hint: "contents of the second input lab",
+          cell: ([, r]) => labCell(r.lab, r.lab?.i2 ? `${r.lab.i2[0]} ${fmtInt.format(r.lab.i2[1])}` : null) },
+        { key: "out", label: "Output", hint: "output compound held across the output labs",
+          cell: ([, r]) => labCell(r.lab, r.lab?.ot != null ? fmtInt.format(r.lab.ot) : null) },
+        { key: "cd", label: "Cooldown", tier: 3, hint: "longest remaining cooldown among the output labs",
+          cell: ([, r]) => labCell(r.lab, r.lab?.cd != null ? String(r.lab.cd) : null) },
+        { key: "lc", label: "Labs i/o/b", tier: 3, hint: "lab counts: input / output / boost",
+          cell: ([, r]) => labCell(r.lab, r.lab ? r.lab.lc.join("/") : null) },
+    ];
+}
+
 function renderLabsTable() {
-    const tbody = $("labs-table").querySelector("tbody");
-    const rows = Object.entries(latest.rooms).sort(([a], [b]) => a.localeCompare(b));
-    tbody.replaceChildren(...rows.map(([name, r]) => {
-        const tr = document.createElement("tr");
-        const lab = r.lab;
-        const statusTd = document.createElement("td");
-        statusTd.append(lab ? labStatusBadge(lab.s) : document.createTextNode("—"));
-        tr.append(roomLinkCell(name), statusTd);
-        const cells = lab ? [
-            lab.o ? `${lab.i1?.[0] ?? "?"} + ${lab.i2?.[0] ?? "?"} → ${lab.o}` : "—",
-            lab.i1 ? `${lab.i1[0]} ${fmtInt.format(lab.i1[1])}` : "—",
-            lab.i2 ? `${lab.i2[0]} ${fmtInt.format(lab.i2[1])}` : "—",
-            lab.ot != null ? fmtInt.format(lab.ot) : "—",
-            lab.cd != null ? String(lab.cd) : "—",
-            lab.lc.join("/"),
-        ] : ["—", "—", "—", "—", "—", "—"];
-        for (const text of cells) {
-            const td = document.createElement("td");
-            td.textContent = text;
-            tr.append(td);
-        }
-        return tr;
-    }));
+    renderTable("labs-table", labsColumns(), byRoomName(latest.rooms));
+}
+
+// A chip is a colour and nothing else, so on its own it says only "roughly
+// this full". The number lives in `title`, which touch never sees — chipText()
+// below is what the card layout prints instead.
+function boostChipText(amount, max, raw) {
+    const value = raw ? (amount ?? 0) : Math.floor((amount ?? 0) / PARTS_PER_BOOST);
+    if (!value) return "0";
+    return max ? `${compact(value)}/${compact(raw ? max : Math.floor(max / PARTS_PER_BOOST))}` : compact(value);
 }
 
 function boostChip(label, amount, max, raw) {
@@ -1255,14 +1675,12 @@ function boostChip(label, amount, max, raw) {
 }
 
 function boostCell(amount, max, raw) {
-    const td = document.createElement("td");
     const floor = boostFloor(raw);
-    if (!amount || amount < floor.amount) {
-        td.textContent = "—";
-        td.className = "na";
-        if (amount) td.title = `${fmtInt.format(amount)} · ${floor.reason}`;
-        return td;
-    }
+    // Below the floor is not "nothing in stock": it is stock too small to be
+    // worth anything, which is a different thing to know.
+    if (!amount) return naCell("none", raw ? "no stock of this compound" : "no stock of this boost");
+    if (amount < floor.amount) return naCell("trace", `${fmtInt.format(amount)} · ${floor.reason}`);
+    const td = document.createElement("td");
     const value = raw ? amount : Math.floor(amount / PARTS_PER_BOOST);
     if (!max) {
         td.textContent = compact(value);
@@ -1302,44 +1720,60 @@ function renderBoostGrid(room) {
     tbody.replaceChildren(...ladderRows, ...rawRows);
 }
 
-function renderBoostMatrix() {
-    const tbody = $("boost-matrix").querySelector("tbody");
-    const bmax = latest.bmax ?? {};
-    const rows = Object.entries(latest.rooms).sort(([a], [b]) => a.localeCompare(b));
-    tbody.replaceChildren(...rows.map(([name, r]) => {
-        const bst = r.bst ?? {};
-        const tr = document.createElement("tr");
-        tr.append(roomLinkCell(name));
-        for (const [purpose, tiers] of MATRIX_LADDERS) {
-            const td = document.createElement("td");
-            const wrap = document.createElement("div");
-            wrap.className = "chips";
-            tiers.forEach((sym, i) => {
-                wrap.append(boostChip(`${name} · ${purpose} T${i + 1} · ${sym}`, bst[sym] ?? 0, bmax[sym], false));
-            });
-            td.append(wrap);
-            tr.append(td);
-        }
-        RAW_INPUTS.forEach(([label, sym], i) => {
-            const td = document.createElement("td");
-            if (i === 0) td.classList.add("raw-group");
-            const wrap = document.createElement("div");
-            wrap.className = "chips";
-            wrap.append(boostChip(`${name} · ${label}`, bst[sym] ?? 0, bmax[sym], true));
-            td.append(wrap);
-            tr.append(td);
-        });
-        return tr;
+function chipsCell(chips, text) {
+    const td = document.createElement("td");
+    const wrap = document.createElement("div");
+    wrap.className = "chips";
+    wrap.append(...chips);
+    td.append(wrap);
+    if (text) {
+        // Only rendered in card mode (see styles.css): at table density the
+        // chips plus a tooltip are enough, and 12 columns of numbers would not
+        // fit anyway.
+        const values = document.createElement("span");
+        values.className = "chip-values";
+        values.textContent = text;
+        td.append(values);
+    }
+    return td;
+}
+
+// Built from MATRIX_LADDERS rather than hand-listed, so the header labels can
+// no longer drift from the symbols the cells actually read (they used to be
+// duplicated in index.html).
+function boostMatrixColumns(bmax) {
+    const ladders = MATRIX_LADDERS.map(([purpose, tiers]) => ({
+        key: `b-${purpose}`,
+        label: purpose === "build/repair" ? "build" : purpose,
+        sym: tiers[0],
+        hint: `${purpose} boosts, T1 · T2 · T3 — ${tiers.join(" · ")}`,
+        cell: ([name, r]) => chipsCell(
+            tiers.map((sym, i) => boostChip(`${name} · ${purpose} T${i + 1} · ${sym}`, (r.bst ?? {})[sym] ?? 0, bmax[sym], false)),
+            tiers.map(sym => boostChipText((r.bst ?? {})[sym] ?? 0, bmax[sym], false)).join(" · ")),
     }));
+    const raw = RAW_INPUTS.map(([label, sym], i) => ({
+        key: `raw-${sym}`,
+        label: sym,
+        group: i === 0,
+        hint: `${label} — raw reaction input, shown as stock rather than boostable parts`,
+        cell: ([name, r]) => chipsCell(
+            [boostChip(`${name} · ${label}`, (r.bst ?? {})[sym] ?? 0, bmax[sym], true)],
+            boostChipText((r.bst ?? {})[sym] ?? 0, bmax[sym], true)),
+    }));
+    return [
+        { key: "room", label: "Room", primary: true, cell: ([n]) => roomLinkCell(n) },
+        ...ladders,
+        ...raw,
+    ];
+}
+
+function renderBoostMatrix() {
+    renderTable("boost-matrix", boostMatrixColumns(latest.bmax ?? {}), byRoomName(latest.rooms));
 }
 
 function creepsCell(roles) {
     const td = document.createElement("td");
-    if (!roles) {                      // payload degraded — roles/thr are dropped first, see StatsManager
-        td.textContent = "—";
-        td.className = "na";
-        return td;
-    }
+    if (!roles) return naCell("unknown", DEGRADED_TITLE);   // roles/thr are dropped first, see StatsManager
     const cur = roles.reduce((a, x) => a + x.c, 0);
     const des = roles.reduce((a, x) => a + x.d, 0);
     td.textContent = `${cur} / ${des}`;
@@ -1359,39 +1793,38 @@ function etaCellText(eta, maxed) {
     return eta.etaMs != null ? `~${fmtDuration(eta.etaMs)}` : `~${compact(eta.etaTicks)} ticks`;
 }
 
+function roomsColumns() {
+    // The ETA cell is the one that needs history, not just the snapshot — it
+    // reads the room's own RCL series to get an observed points-per-tick.
+    const etaFor = (name, rcl) => etaCellText(levelEta(row => row.rooms[name]?.rcl ?? null, rcl, history), !rcl.pt);
+    return [
+        { key: "room", label: "Room", primary: true, cell: ([n]) => roomLinkCell(n) },
+        { key: "rcl", label: "RCL", cell: ([, r]) => textCell(String(r.rcl.l)) },
+        { key: "progress", label: "Progress",
+          cell: ([, r]) => textCell(!r.rcl.pt ? "max" : `${pct(r.rcl.p, r.rcl.pt).toFixed(1)}%`) },
+        { key: "eta", label: "ETA → next", cell: ([n, r]) => textCell(etaFor(n, r.rcl)) },
+        { key: "spawnEnergy", label: "Spawn energy", cell: ([, r]) => textCell(`${r.e} / ${r.ec}`) },
+        { key: "storage", label: "Storage", cell: ([, r]) => textCell(compact(r.se)) },
+        { key: "terminal", label: "Terminal", tier: 3, cell: ([, r]) => textCell(compact(r.te)) },
+        { key: "creeps", label: "Creeps", cell: ([, r]) => creepsCell(r.roles) },
+        { key: "queue", label: "Queue", hint: "spawn queue length", cell: ([, r]) => textCell(String(r.q)) },
+        { key: "nuker", label: "Nuker", tier: 3,
+          hint: "ghodium \u00b7 energy fill vs capacity; ready = both full and off cooldown",
+          cell: ([, r]) => nukerCell(r.nuk) },
+    ];
+}
+
 function renderRoomsTable() {
-    const tbody = $("rooms-table").querySelector("tbody");
-    const rows = Object.entries(latest.rooms).sort(([a], [b]) => a.localeCompare(b));
-    tbody.replaceChildren(...rows.map(([name, r]) => {
-        const tr = document.createElement("tr");
-        tr.append(roomLinkCell(name));
-        const maxed = !r.rcl.pt;
-        const eta = levelEta(row => row.rooms[name]?.rcl ?? null, r.rcl, history);
-        const cells = [
-            String(r.rcl.l),
-            maxed ? "max" : `${pct(r.rcl.p, r.rcl.pt).toFixed(1)}%`,
-            etaCellText(eta, maxed),
-            `${r.e} / ${r.ec}`,
-            compact(r.se),
-            compact(r.te),
-        ];
-        for (const text of cells) {
-            const td = document.createElement("td");
-            td.textContent = text;
-            tr.append(td);
-        }
-        tr.append(creepsCell(r.roles));
-        const queueTd = document.createElement("td");
-        queueTd.textContent = String(r.q);
-        tr.append(queueTd);
-        tr.append(nukerCell(r.nuk));
-        return tr;
-    }));
+    renderTable("rooms-table", roomsColumns(), byRoomName(latest.rooms));
 }
 
 function renderRoomSelect() {
     const names = Object.keys(latest.rooms).sort();
-    if (!selectedRoom || !names.includes(selectedRoom)) selectedRoom = names[0];
+    // The hash decides which room is shown when it names one (reconcileRoute
+    // has already dropped a room that no longer exists). Otherwise the select
+    // just needs a valid default for whenever the room view is next opened.
+    if (route.room) selectedRoom = route.room;
+    else if (!selectedRoom || !names.includes(selectedRoom)) selectedRoom = names[0];
     const sel = $("room-select");
     sel.replaceChildren(...names.map(n => {
         const o = document.createElement("option");
@@ -1401,21 +1834,138 @@ function renderRoomSelect() {
     }));
 }
 
+// ---------- sections ----------
+// Each overview section is a <details> (see index.html). A collapsed one is
+// display:none, and a Chart.js chart built inside a zero-sized container bakes
+// a wrong devicePixelRatio it does not recover from — renderBarRows also sizes
+// its .plot against a box that measures nothing. So render lazily: new data
+// marks every section dirty, only the open ones render now, and the rest
+// render when they are opened. On a phone with one section open that is 2-3
+// charts instead of 16.
+const SECTIONS = [
+    { id: "defense",    render: () => { renderDefenseTiles(); renderDefenseTable(); } },
+    { id: "empire",     render: renderEmpireCharts },
+    { id: "attacks",    render: renderAttackLog },
+    { id: "remote",     render: () => { renderRemoteTiles(); renderRemoteTable(); } },
+    { id: "remote-log", render: renderRemoteLog },
+    { id: "rooms",      render: renderRoomsTable },
+    { id: "boosts",     render: renderBoostMatrix },
+    { id: "labs",       render: renderLabsTable },
+];
+const dirtySections = new Set();
+const sectionEl = id => document.querySelector(`details[data-section="${id}"]`);
+
+function resizeChartsIn(root) {
+    if (!root) return;
+    for (const canvas of root.querySelectorAll("canvas")) Chart.getChart(canvas)?.resize();
+}
+
+function renderSection(section) {
+    dirtySections.delete(section.id);
+    section.render();
+    resizeChartsIn(sectionEl(section.id));
+}
+
+// `toggle` does not bubble, so this has to run in the capture phase.
+document.addEventListener("toggle", e => {
+    const el = e.target;
+    if (!(el instanceof HTMLDetailsElement) || !el.open) return;
+    const section = SECTIONS.find(s => s.id === el.dataset.section);
+    // No data yet (the boot-time open policy fires before the first fetch) or
+    // already current: there is nothing to build, but a chart that was last
+    // drawn while hidden still needs to re-measure.
+    if (section && latest && dirtySections.has(section.id)) renderSection(section);
+    else resizeChartsIn(el);
+}, true);
+
+// A wide screen shows the whole document at once, so nothing is worth hiding
+// there. Narrower than that, the one section index.html ships `open` (Defense,
+// the per-room board the threat board points at) stands on its own — which is
+// what keeps the default phone view short.
+function applySectionDefaults() {
+    if (!matchMedia("(min-width: 1100px)").matches) return;
+    for (const s of SECTIONS) {
+        const el = sectionEl(s.id);
+        if (el) el.open = true;
+    }
+}
+
+// Renders whichever view the route selects. Skipping the hidden one is not
+// just an economy: Chart.js sizes a canvas from its container, so building the
+// room view's charts while it is display:none produces six 0x0 charts and
+// leaks the ResizeObserver that renderNuker and renderRoomDefense already
+// guard against individually.
 function renderAll() {
+    reconcileRoute();
+    applyRoute();
+    renderThreatBoard();
     renderTiles();
     renderRoomSelect();
-    renderEmpireCharts();
-    renderDefenseTiles();
-    renderDefenseTable();
-    renderAttackLog();
-    renderRemoteTiles();
-    renderRemoteTable();
-    renderRemoteLog();
-    renderRoomCharts();
-    renderBoostMatrix();
-    renderLabsTable();
-    renderRoomsTable();
+    for (const s of SECTIONS) dirtySections.add(s.id);
+    if (route.view === OVERVIEW) {
+        for (const s of SECTIONS) if (sectionEl(s.id)?.open) renderSection(s);
+    } else {
+        renderRoomCharts();
+    }
     renderStatus();
+}
+
+// Everything that depends on the route but not on a re-fetch: which view is
+// visible, and which range button reads as pressed. Called on every render, so
+// a cold load of #/room/E18S59?range=168 paints the right button — which the
+// old click-only handler never did.
+function applyRoute() {
+    $("view-overview").hidden = route.view !== OVERVIEW;
+    $("view-room").hidden = route.view !== ROOM;
+    for (const b of $("range-group").querySelectorAll("button")) {
+        b.setAttribute("aria-pressed", String(Number(b.dataset.range) === route.range));
+    }
+}
+
+// Until a snapshot loads there is no way to know whether the hash's room is
+// real, so parseHash keeps it. Once one has, re-resolve: a bookmark can
+// outlive a room, and the honest answer is the overview. replaceState, not
+// push, so Back doesn't bounce between the two.
+// NB window.history — `history` alone is this module's snapshot array.
+function reconcileRoute() {
+    const resolved = readHash();
+    if (resolved.view === route.view && resolved.room === route.room) return;
+    route = resolved;
+    window.history.replaceState(null, "", buildHash(route, DEFAULT_RANGE));
+}
+
+function currentRooms() {
+    return latest ? Object.keys(latest.rooms) : null;
+}
+
+function readHash() {
+    return parseHash(location.hash, { ranges: RANGES, rooms: currentRooms(), defaultRange: DEFAULT_RANGE });
+}
+
+function go(patch) {
+    const next = buildHash({ ...route, ...patch }, DEFAULT_RANGE);
+    if (next === (location.hash || "#/")) return;
+    location.hash = next;
+}
+
+function onHashChange() {
+    const prev = route;
+    route = readHash();
+    // Eagerly, before any fetch: refresh() is a no-op while a poll is already
+    // in flight, and the pressed button and the visible view must still follow
+    // the click. renderAll calls applyRoute again; it is idempotent.
+    applyRoute();
+    if (route.range !== prev.range) {
+        // Same reset the range buttons used to do inline: a new window needs a
+        // full fetch at the new LOD, not an append to the old one.
+        rangeHours = route.range;
+        historyRaw = [];
+        demoRows = null;
+        refresh({ force: true });
+        return;
+    }
+    selectedRoom = route.room ?? selectedRoom;
+    if (latest) renderAll();
 }
 
 // Ms since latest's snapshot was taken, shared by renderStatus (the "(N min
@@ -1494,21 +2044,30 @@ function scheduleNextPoll() {
     pollTimer = setTimeout(refresh, delayMs);
 }
 
+// Label a window the way you'd say it: hours up to and including a day,
+// then days — 6h, 24h, 7d, 21d.
+function rangeLabel(hours) {
+    return hours <= 24 ? `${hours}h` : `${hours / 24}d`;
+}
+
+function renderRangeButtons() {
+    $("range-group").replaceChildren(...RANGES.map(hours => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.dataset.range = String(hours);
+        b.textContent = rangeLabel(hours);
+        return b;
+    }));
+}
+
 function bindControls() {
     $("range-group").addEventListener("click", e => {
         const btn = e.target.closest("button[data-range]");
-        if (!btn) return;
-        for (const b of $("range-group").querySelectorAll("button")) b.setAttribute("aria-pressed", String(b === btn));
-        rangeHours = Number(btn.dataset.range);
-        historyRaw = [];
-        demoRows = null;
-        refresh({ force: true });
+        if (btn) go({ range: Number(btn.dataset.range) });
     });
     $("refresh")?.addEventListener("click", () => refresh({ force: true }));
-    $("room-select").addEventListener("change", e => {
-        selectedRoom = e.target.value;
-        renderRoomCharts();
-    });
+    $("room-select").addEventListener("change", e => go({ view: ROOM, room: e.target.value }));
+    window.addEventListener("hashchange", onHashChange);
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => latest && renderAll());
     if (!DEMO) {
         // Skip the periodic tick while backgrounded — nothing to redraw for
@@ -1546,6 +2105,11 @@ if (!DEMO && firebaseConfig.apiKey === "REPLACE_ME") {
         db = getFirestore(app);
     }
     $("app").hidden = false;
+    route = readHash();          // before the first fetch: rangeHours feeds the query
+    rangeHours = route.range;
+    renderRangeButtons();        // applyRoute sets aria-pressed, so build first
+    applyRoute();
+    applySectionDefaults();
     bindControls();
     refresh();
 }

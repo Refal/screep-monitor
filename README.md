@@ -76,6 +76,42 @@ focus/visibility (background tabs get their timers throttled) and skips re-rende
 when a poll finds no new tick. If a truly push-based dashboard is ever wanted, that's a
 separate feature and would mean switching back to the full SDK with `onSnapshot`.
 
+## Dashboard layout
+
+The page is priority-ordered rather than a flat scroll, because the only part of it that is
+ever urgent is "is anything on fire?".
+
+- **Threat board** (top, always visible). Built from `empireVerdict` / `threatItems` /
+  `clearRooms` in `public/calc.js`. Lists *only* the rooms that are not clear plus armed
+  strongholds, worst first; clear rooms collapse to one line. **A snapshot whose threat
+  detail was degraded away must never produce a calm verdict** — `empireVerdict` returns
+  `degraded` for that, and the board headlines it instead of a posture. There is a unit test
+  pinning this, and `?demo=degraded` reaches it in a browser.
+- **Sections** are native `<details data-section="…">` accordions. A collapsed one is
+  `display: none`, and a Chart.js chart built inside a zero-sized container bakes a wrong
+  `devicePixelRatio` it does not recover from, so `SECTIONS` in `public/app.js` renders
+  lazily: new data marks every section dirty, only the open ones render, the rest render on
+  first open. Below 1100px only Defense ships `open` (tiles plus a table, no charts), so a
+  phone builds no charts at all until the reader opens a section, against 16 for the whole
+  page. From 1100px up everything opens by default.
+- **The per-room view is a hash route**, not a tail on the same page — `#/room/E23S45`, with
+  the time range as `?range=`. `public/route.js` owns the grammar (and rejects a range with
+  no `LOD_BY_RANGE` flag behind it, which would otherwise run an unflagged full-resolution
+  query). Every control writes the hash and lets `onHashChange` drive state, so a bookmark,
+  the Back button and a click all take one path. Only *owned* rooms have such a view: `rt` names
+  the remote next door (an entry's `home` is the colony), and those rooms carry no per-room stats
+  at all, so their names link out to screeps.com rather than to a route that resolves to nothing
+  — see `roomNameLink`/`isOwnedRoom` in `public/app.js`.
+- **Tables have two modes**, from one `renderTable` + column spec per table (`public/app.js`).
+  Below 700px each row is a card with its own labels — nothing important can be scrolled out
+  of view. Above it they are real tables with the room column `position: sticky`. The old
+  layout let the room name scroll away on a phone, which left the numbers anonymous.
+- **Nothing load-bearing is hover-only.** A tooltip is a fine second channel and useless as
+  the only one; touch has no hover. Column definitions live in the spec's `hint` and render as
+  a "What these columns mean" disclosure; an absence with a meaning gets a word, not an em
+  dash (`naCell`, and `remoteHomeCell`'s "corridor" is the original of the pattern). Two
+  source-text tests in `test/calc.test.js` stop this drifting back.
+
 ## Local preview (no setup needed)
 
 ```sh
@@ -87,11 +123,20 @@ cd public && python3 -m http.server 8787
 which `firebase.json`'s hosting `ignore` excludes from every deploy, and `app.js` reaches
 it with a dynamic `import()` gated on `?demo=1` so production never requests it.
 
+`?demo=degraded` additionally strips the newest row's `thr`/`roles`/`rt` (`degradeLatest` in
+`demo.js`). `synthDemo` degrades only rows mid-window, so this is the only way to see the
+branches that need `latest` itself to be degraded — the remote table's two empty states, and
+the threat board's "no threat data" verdict.
+
+Note that `python3 -m http.server` sends no cache headers, so a browser will happily serve a
+stale `app.js` or `styles.css` while you edit. Production sets `no-cache` on html/js/css (see
+`firebase.json`); locally, hard-reload or serve from a fresh port.
+
 ## Tests
 
 The rate/ETA/downsampling/boost-threshold logic behind the dashboard lives in
-`public/calc.js`, pure functions with no DOM or Firebase dependency, so they're covered by
-plain `node:test` unit tests in `test/`:
+`public/calc.js`, and the hash grammar in `public/route.js` — pure functions with no DOM or
+Firebase dependency, so they're covered by plain `node:test` unit tests in `test/`:
 
 ```sh
 npm test

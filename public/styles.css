@@ -1,0 +1,336 @@
+:root {
+    color-scheme: light;
+    --page:           #f9f9f7;
+    --surface-1:      #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --axis:           #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1:       #2a78d6;
+    --series-2:       #eb6834;
+    --series-3:       #1baf7a;
+    --status-good:      #0ca30c;
+    --status-warning:   #fab219;
+    --status-serious:   #ec835a;
+    --status-critical:  #d03b3b;
+    --ghost:          rgba(11,11,11,0.05);
+    /* fill ramp (boost stock vs max) — red = short, green = stocked */
+    --fill-1:         #d03b3b;
+    --fill-2:         #e8722e;
+    --fill-3:         #fab219;
+    --fill-4:         #a8c11b;
+    --fill-5:         #0ca30c;
+}
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        color-scheme: dark;
+        --page:           #0d0d0d;
+        --surface-1:      #1a1a19;
+        --text-primary:   #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted:     #898781;
+        --grid:           #2c2c2a;
+        --axis:           #383835;
+        --border:         rgba(255,255,255,0.10);
+        --series-1:       #3987e5;
+        --series-2:       #d95926;
+        --series-3:       #199e70;
+        --ghost:          rgba(255,255,255,0.06);
+        --fill-1:         #e05a5a;
+        --fill-2:         #f08a45;
+        --fill-3:         #fac53f;
+        --fill-4:         #bcd63f;
+        --fill-5:         #2fbe5f;
+    }
+}
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:           #0d0d0d;
+    --surface-1:      #1a1a19;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --grid:           #2c2c2a;
+    --axis:           #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-1:       #3987e5;
+    --series-2:       #d95926;
+    --series-3:       #199e70;
+    --ghost:          rgba(255,255,255,0.06);
+    --fill-1:         #e05a5a;
+    --fill-2:         #f08a45;
+    --fill-3:         #fac53f;
+    --fill-4:         #bcd63f;
+    --fill-5:         #2fbe5f;
+}
+
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.wrap { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; }
+
+header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+header h1 { font-size: 20px; margin: 0; }
+header .sub { color: var(--text-muted); font-size: 13px; }
+
+.filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.filters .group { display: flex; flex-wrap: wrap; gap: 4px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 3px; }
+.filters button {
+    /* >= 44px so these are hittable with a thumb; four of them plus refresh
+       comes to ~220px, which fits a 375px phone. */
+    display: inline-flex; align-items: center; justify-content: center;
+    min-height: 38px; min-width: 44px;
+    border: 0; background: transparent; color: var(--text-secondary);
+    font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+}
+@media (hover: hover) { .filters button:hover { background: var(--ghost); } }
+.filters button[aria-pressed="true"] { background: var(--series-1); color: #fff; }
+.filters select, .section-head select {
+    font: inherit; font-size: 13px; color: var(--text-primary);
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px;
+}
+.filters label { color: var(--text-muted); font-size: 13px; }
+
+.section-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 24px 0 10px; }
+.section-head h2 { margin: 0; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.tile .label { color: var(--text-muted); font-size: 12px; }
+.tile .value { font-size: 26px; font-weight: 600; margin-top: 2px; }
+.tile .delta { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+.tile .sub { font-size: 12px; color: var(--text-muted); margin-top: 1px; }
+
+/* ---------- threat board ----------
+   Above every other section, because it is the only part of this page that is
+   ever urgent. --verdict-color is set from JS so one rule serves all states. */
+#threat-board { margin-bottom: 18px; }
+.verdict {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px;
+    padding: 14px 16px; border-radius: 10px;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--verdict-color, var(--border));
+}
+.verdict-title { font-size: 19px; letter-spacing: .04em; color: var(--verdict-color, var(--text-primary)); }
+.verdict-sub { font-size: 13px; color: var(--text-secondary); }
+
+.board-card {
+    margin-top: 10px; padding: 12px 16px;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+}
+.board-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 16px; }
+.board-row { display: grid; grid-template-columns: 7.5em 1fr; gap: 10px; align-items: baseline; padding: 2px 0; font-size: 13px; }
+.board-key { color: var(--text-muted); font-size: 12px; }
+.board-row .critical { color: var(--status-critical); }
+.board-row .serious  { color: var(--status-serious); }
+.board-row .short    { color: var(--status-warning); }
+.board-row .na       { color: var(--text-muted); }
+.clear-line { margin: 10px 2px 0; font-size: 12px; color: var(--text-muted); }
+
+@media (max-width: 420px) {
+    /* Two columns squeeze the value to nothing at this width. */
+    .board-row { grid-template-columns: 1fr; gap: 0; }
+}
+
+h2 { font-size: 15px; margin: 24px 0 10px; color: var(--text-secondary); font-weight: 600; }
+
+/* Column definitions, as tappable text rather than <th title> alone. */
+.col-hints { margin: 8px 2px 0; font-size: 12px; color: var(--text-muted); }
+.col-hints > summary { cursor: pointer; padding: 6px 0; min-height: 32px; display: flex; align-items: center; }
+.col-hints > summary:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; border-radius: 4px; }
+.col-hints dl { margin: 4px 0 0; display: grid; grid-template-columns: minmax(6em, 10em) 1fr; gap: 4px 12px; }
+.col-hints dt { color: var(--text-secondary); }
+.col-hints dd { margin: 0; }
+@media (max-width: 480px) {
+    .col-hints dl { grid-template-columns: 1fr; gap: 0; }
+    .col-hints dt { margin-top: 6px; }
+}
+
+/* ---------- accordion sections ----------
+   Native <details> so `open` is the state: no ARIA to keep in sync, keyboard
+   and screen-reader behaviour come free, and find-in-page opens a closed
+   section. app.js renders a section's contents lazily on first open. */
+.section { margin: 18px 0; }
+.section > summary {
+    display: flex; align-items: center; gap: 9px; min-height: 44px;
+    padding: 8px 2px; cursor: pointer;
+    font-size: 15px; font-weight: 600; color: var(--text-secondary);
+    list-style: none;                       /* Firefox */
+}
+.section > summary::-webkit-details-marker { display: none; }
+.section > summary::before {
+    content: ""; flex: 0 0 auto; width: 7px; height: 7px; margin-left: 2px;
+    border-right: 2px solid var(--text-muted); border-bottom: 2px solid var(--text-muted);
+    transform: rotate(-45deg); transition: transform .15s ease;
+}
+.section[open] > summary::before { transform: rotate(45deg); }
+.section > summary:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; border-radius: 4px; }
+@media (hover: hover) { .section > summary:hover { color: var(--text-primary); } }
+@media (prefers-reduced-motion: reduce) { .section > summary::before { transition: none; } }
+
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.card h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.card .plot { position: relative; height: 220px; }
+
+/* ---------- tables: two modes ----------
+   Base (phone) is a stacked card per row: the room name is the card title and
+   every other cell prints its own label from data-label, so nothing important
+   can be scrolled out of view. The widest table was 2.2x a 375px viewport with
+   the room column scrolling away, which made the numbers anonymous.
+   From 700px up the same DOM goes back to being a real table.
+   The data-* attributes come from renderTable() in app.js. */
+.table-wrap { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th { color: var(--text-muted); font-weight: 500; }
+tbody td { font-variant-numeric: tabular-nums; }
+
+.table-wrap table, .table-wrap tbody, .table-wrap tr, .table-wrap td { display: block; }
+.table-wrap thead { display: none; }
+.table-wrap tr { padding: 10px 14px; border-top: 1px solid var(--grid); }
+.table-wrap tbody tr:first-child { border-top: 0; }
+.table-wrap td {
+    display: grid; grid-template-columns: 9.5em 1fr; align-items: baseline; gap: 8px;
+    border: 0; padding: 3px 0; text-align: left; white-space: normal;
+}
+.table-wrap td::before {
+    content: attr(data-label); color: var(--text-muted); font-size: 12px;
+}
+/* The row's identity: no label, and it reads as the card's heading. */
+.table-wrap td[data-primary] { grid-template-columns: 1fr; font-size: 15px; margin-bottom: 4px; }
+.table-wrap td[data-primary]::before { content: none; }
+/* Tier 3 is detail: hidden until the row is tapped. */
+.table-wrap td[data-tier="3"] { display: none; }
+.table-wrap tr[data-expanded] td[data-tier="3"] { display: grid; }
+.table-wrap tr[data-expandable] { cursor: pointer; }
+.table-wrap tr[data-expandable]::after {
+    content: "+ more"; display: block; margin-top: 6px; font-size: 12px; color: var(--series-1);
+}
+.table-wrap tr[data-expanded]::after { content: "– less"; }
+/* These three right-align inside a table cell; in a card they start-align
+   with the value they belong to. */
+.table-wrap td .chips, .table-wrap td .nuker-fill, .table-wrap td .def-fill { justify-content: flex-start; }
+/* Chip colours alone can't carry a number, and there is no hover on a phone. */
+.table-wrap td .chip-values { margin-left: 8px; font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.table-wrap td:has(.chip-values) { grid-template-columns: 9.5em auto 1fr; }
+/* A table narrow enough to fit a phone stays a table — cards would only add
+   height. Opted in per wrapper (see index.html). */
+.table-wrap.compact table { display: table; }
+.table-wrap.compact thead { display: table-header-group; }
+.table-wrap.compact tbody { display: table-row-group; }
+.table-wrap.compact tr { display: table-row; padding: 0; border-top: 0; }
+.table-wrap.compact td { display: table-cell; }
+.table-wrap.compact td::before { content: none; }
+/* A compact wrapper is a real table at ANY width, so it needs the density the
+   700px block below gives every other table. Without this its cells keep the
+   card-mode `padding: 3px 0; border: 0` and butt straight into each other on a
+   phone. Values match that block exactly, so the overlap above 700px is a no-op. */
+.table-wrap.compact th, .table-wrap.compact td {
+    padding: 8px 12px; border-top: 1px solid var(--grid);
+    text-align: right; white-space: nowrap;
+}
+.table-wrap.compact th { border-top: 0; }
+.table-wrap.compact th:first-child, .table-wrap.compact td:first-child { text-align: left; }
+/* …and with the density comes the width: four padded columns exceed a 375px
+   viewport, and the `overflow-x` the 700px block relies on is not in scope yet.
+   Without this the table paints outside its own rounded border and drags the
+   whole document sideways instead of scrolling inside its box. */
+.table-wrap.compact { overflow-x: auto; }
+
+@media (min-width: 700px) {
+    .table-wrap { overflow-x: auto; }
+    .table-wrap table { display: table; }
+    .table-wrap thead { display: table-header-group; }
+    .table-wrap tbody { display: table-row-group; }
+    .table-wrap tr, .table-wrap.compact tr { display: table-row; padding: 0; border-top: 0; }
+    .table-wrap th, .table-wrap td { display: table-cell; }
+    .table-wrap td::before { content: none; }
+    .table-wrap tr[data-expandable] { cursor: default; }
+    .table-wrap tr[data-expandable]::after, .table-wrap tr[data-expanded]::after { content: none; }
+    .table-wrap td[data-tier="3"] { display: table-cell; }
+    .table-wrap td .chips, .table-wrap td .nuker-fill, .table-wrap td .def-fill { justify-content: flex-end; }
+    .table-wrap td .chip-values { display: none; }
+    /* Qualified with .table-wrap on purpose: the card-mode `.table-wrap td`
+       rule above is (0,1,1) and a media query adds no specificity, so a bare
+       `th, td` here (0,0,1) would lose to it and every desktop table would keep
+       `padding: 3px 0`, no row rules and wrapping text. */
+    .table-wrap th, .table-wrap td { text-align: right; padding: 8px 12px; border-top: 1px solid var(--grid); white-space: nowrap; }
+    .table-wrap th { border-top: 0; }
+    .table-wrap th:first-child, .table-wrap td:first-child,
+    .table-wrap th[data-primary], .table-wrap td[data-primary] { text-align: left; }
+    /* The fix for the anonymous-numbers problem at table density: the room
+       name stays put while the rest scrolls. Needs an opaque background of its
+       own, or rows slide under it. */
+    th[data-primary], td[data-primary] { position: sticky; left: 0; z-index: 1; background: var(--surface-1); }
+    tbody tr[data-expanded] td[data-tier="3"] { display: table-cell; }
+}
+
+/* Hover states are meaningless on touch and, worse, stick after a tap. */
+@media (hover: hover) {
+    tbody tr:hover { background: var(--ghost); }
+    /* Sticky cells paint over the row highlight unless they match it. */
+    tbody tr:hover td[data-primary] { background: var(--ghost); }
+}
+
+.badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-secondary); }
+.badge .swatch { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+
+.chips { display: flex; gap: 2px; justify-content: flex-end; }
+.chip { width: 13px; height: 13px; border-radius: 3px; flex: 0 0 auto; box-shadow: inset 0 0 0 1px var(--border); }
+.chip.nomax { background: transparent; box-shadow: inset 0 0 0 1px var(--text-muted); opacity: .45; }
+.nuker-fill { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.def-fill { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
+#boost-matrix th { font-size: 11px; }
+#boost-matrix th .th-sym { color: var(--text-muted); font-weight: 400; }
+#boost-matrix td { padding: 6px 8px; }
+@media (min-width: 700px) {
+    #boost-matrix .raw-group { border-left: 1px solid var(--grid); }
+}
+.viz-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 8px 0 0; padding: 0 2px; font-size: 12px; color: var(--text-muted); }
+.viz-legend .swatch { width: 9px; height: 9px; border-radius: 3px; flex: 0 0 auto; box-shadow: inset 0 0 0 1px var(--border); }
+.viz-legend .ramp { display: inline-flex; align-items: center; gap: 3px; }
+
+td.short    { color: var(--status-warning); }
+td.serious  { color: var(--status-serious); }
+td.critical { color: var(--status-critical); }
+td.na       { color: var(--text-muted); }
+
+.room-link {
+    color: inherit; text-decoration: underline dotted var(--text-muted); text-underline-offset: 2px;
+}
+@media (hover: hover) { .room-link:hover { color: var(--series-1); text-decoration-color: var(--series-1); } }
+.room-link:focus-visible { color: var(--series-1); text-decoration-color: var(--series-1); }
+.room-link:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; border-radius: 2px; }
+#room-title .room-link { text-decoration: none; }
+#room-title .room-link:hover, #room-title .room-link:focus-visible { text-decoration: underline; }
+
+.notice {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 24px; color: var(--text-secondary); margin-top: 24px;
+}
+.notice code { background: var(--ghost); padding: 1px 5px; border-radius: 4px; }
+#status { color: var(--text-muted); font-size: 12px; }
+/* If the collector chain breaks, every number below is a lie. Say so loudly
+   enough to catch a glance — GitHub has silently dropped the schedule for
+   hours at a time (see README). */
+#status.stale {
+    color: var(--status-warning); font-weight: 600;
+    padding: 3px 8px; border-radius: 6px;
+    background: color-mix(in srgb, var(--status-warning) 14%, transparent);
+}
+#refresh {
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+    font-size: 16px; line-height: 1; width: 44px; height: 44px; border-radius: 8px; cursor: pointer;
+}
+#refresh:focus-visible, .filters button:focus-visible {
+    outline: 2px solid var(--series-1); outline-offset: 2px;
+}
+#refresh:disabled { opacity: .5; cursor: default; }

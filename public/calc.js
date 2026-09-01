@@ -57,6 +57,12 @@ export const RETENTION_DAYS = 21;
 // match the data-range buttons in index.html (asserted in test/calc.test.js).
 export const LOD_BY_RANGE = { 24: "b5", 168: "b30", [RETENTION_DAYS * 24]: "b120" };
 
+// The dashboard's time-range buttons, in the order they appear. Exported so
+// index.html no longer hardcodes them and route.js can reject a hash range
+// that has no LOD flag behind it — see LOD_BY_RANGE above.
+export const RANGES = [6, 24, 168, RETENTION_DAYS * 24];
+export const DEFAULT_RANGE = 24;
+
 // Which wall-clock bucket a timestamp falls in. The collector's flagging and
 // the dashboard's poll-skip must agree on this alignment, so both call this.
 export const bucketId = (tsMs, widthMs) => Math.floor(tsMs / widthMs);
@@ -304,6 +310,80 @@ export function roomPosture(thr) {
 // actually burning; a payload that's silent about a room is not the same as
 // a payload that says it's fine.
 const POSTURE_RANK = { exposed: 0, engaged: 1, unknown: 2, clear: 3 };
+
+// ---------- the empire verdict ----------
+// One answer to "is anything on fire?", for the board that sits above
+// everything else on the page. Pure so it can be tested; all the wording,
+// colour and DOM stays in app.js, the same split remoteThreatClass already
+// has with REMOTE_CLASS_COLOR.
+//
+// The load-bearing rule: a payload that dropped its threat detail must NEVER
+// produce a calm verdict. thr/roles/rt ride the FIRST degradation step in the
+// bot's StatsManager, so the snapshots most likely to be degraded are exactly
+// the busy ones — a green "all clear" on a degraded snapshot would be worse
+// than the table it replaces. `degraded` says so, and callers must lead with
+// it.
+export function empireVerdict(latest) {
+    const rooms = Object.values(latest?.rooms ?? {});
+    // `outgunned` REPLACES a room's posture here rather than sitting beside it,
+    // so every room is counted exactly once and the subtitle can't report one
+    // room twice. (`strongholds` below is a separate axis — it comes from `rt`,
+    // not from these rooms.)
+    const counts = { outgunned: 0, exposed: 0, engaged: 0, unknown: 0, clear: 0 };
+    for (const r of rooms) counts[isOutgunned(r.thr) ? "outgunned" : roomPosture(r.thr).level]++;
+    const degraded = rooms.length > 0 && !hasThreatDetail(latest);
+    const strongholds = (latest?.rt ?? []).filter(e => remoteThreatClass(e) === "stronghold").length;
+    // Worst first, and `unknown` outranks `clear` for the same reason
+    // POSTURE_RANK puts it there: silence is not safety.
+    const level = counts.outgunned ? "outgunned"
+        : counts.exposed ? "exposed"
+        : counts.engaged ? "engaged"
+        : strongholds ? "stronghold"
+        : counts.unknown ? "unknown"
+        : "clear";
+    return { level, counts, strongholds, degraded, rooms: rooms.length };
+}
+
+// Every actionable item in one worst-first list, across two domains that the
+// page used to keep in separate tables: owned rooms (from `rooms[].thr`) and
+// non-owned rooms (from `rt`). Rooms that are genuinely clear are dropped;
+// `unknown` ones are NOT — see empireVerdict.
+//
+// Ranking is an extension of POSTURE_RANK rather than a new scheme. An armed
+// stronghold sorts below an engaged owned room on purpose: a remote has
+// nothing to lose, an owned room has everything.
+const THREAT_RANK = { outgunned: 0, exposed: 1, engaged: 2, stronghold: 3, unknown: 4 };
+
+export function threatItems(latest) {
+    const items = [];
+    for (const [room, r] of Object.entries(latest?.rooms ?? {})) {
+        const posture = roomPosture(r.thr);
+        if (posture.level === "clear") continue;
+        const net = r.thr ? netTowerDps(r.thr) : null;
+        // "Outgunned" REPLACES the posture rather than qualifying it: a room whose
+        // towers cannot break the heal leads the list whether the bot called it
+        // exposed or merely engaged. See isOutgunned.
+        const kind = isOutgunned(r.thr) ? "outgunned" : posture.level;
+        items.push({ scope: "room", kind, room, thr: r.thr, roles: r.roles, rcl: r.rcl, posture, net });
+    }
+    for (const entry of latest?.rt ?? []) {
+        if (remoteThreatClass(entry) !== "stronghold") continue;
+        items.push({ scope: "remote", kind: "stronghold", room: entry.room, entry });
+    }
+    return items.sort((a, b) =>
+        THREAT_RANK[a.kind] - THREAT_RANK[b.kind]
+        // Within a kind: the hardest hit first, then by name so the order is
+        // stable across polls.
+        || (b.thr?.h ?? b.entry?.h ?? 0) - (a.thr?.h ?? a.entry?.h ?? 0)
+        || a.room.localeCompare(b.room));
+}
+
+export function clearRooms(latest) {
+    return Object.entries(latest?.rooms ?? {})
+        .filter(([, r]) => roomPosture(r.thr).level === "clear")
+        .map(([name]) => name)
+        .sort();
+}
 export function sortByPosture(entries) {
     return [...entries].sort(([nameA, roomA], [nameB, roomB]) => {
         const rankA = POSTURE_RANK[roomPosture(roomA.thr).level];
@@ -318,6 +398,16 @@ export function sortByPosture(entries) {
 // what "net" means.
 export function netTowerDps(thr) {
     return thr.dps - (thr.heal ?? 0);
+}
+
+// Hostiles out-healing the towers. Not a posture the bot reports, and it
+// outranks every posture the bot does report: until the towers can break the
+// heal, nothing else about the room matters yet. Shared by empireVerdict,
+// threatItems and the dashboard's Defense tile, so the banner, the cards and
+// the tile cannot disagree about which rooms count. Callers earlier in this
+// file reach it by hoisting, as they already do for netTowerDps.
+export function isOutgunned(thr) {
+    return !!thr && thr.h > 0 && netTowerDps(thr) < 0;
 }
 
 // Everything the dashboard needs to render the def[] cell/chart correctly,

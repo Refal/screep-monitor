@@ -246,11 +246,23 @@ function demoRt(i, n, f) {
 // away from both ends: the first row feeds renderTiles' creep delta and the
 // last row is `latest`, which every latest-snapshot section reads.
 //
-// Two renderer branches are deliberately NOT reachable from demo data, since
-// both need `latest` itself to lack `rt`: the "no remote hostiles cached" and
-// "no remote detail in this snapshot" rows of the remote table. To check those,
-// drop `rt` from the last row here locally and reload.
 const degradedRow = (i, n) => i >= Math.floor(n * 0.45) && i < Math.floor(n * 0.52);
+
+// ?demo=degraded strips the NEWEST row's threat detail, which the mid-window
+// stretch above deliberately cannot do. That reaches the branches that need
+// `latest` itself to be degraded — the remote table's two empty states, and
+// the one that matters most: the threat board must headline "no threat data"
+// rather than anything that reads like an all-clear (empireVerdict.degraded).
+export function degradeLatest(rows) {
+    if (!rows.length) return rows;
+    const last = { ...rows.at(-1), rooms: {} };
+    for (const [name, room] of Object.entries(rows.at(-1).rooms)) {
+        const { thr, roles, ...rest } = room;
+        last.rooms[name] = rest;
+    }
+    delete last.rt;
+    return [...rows.slice(0, -1), last];
+}
 
 export function synthDemo(rangeHours, maxPoints) {
     const roomNames = ["E15S57", "E18S59", "E21S41", "E21S55", "E23S44", "E27S41"];

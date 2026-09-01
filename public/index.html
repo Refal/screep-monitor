@@ -5,169 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Screeps Monitor</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🛰️</text></svg>">
-<style>
-:root {
-    color-scheme: light;
-    --page:           #f9f9f7;
-    --surface-1:      #fcfcfb;
-    --text-primary:   #0b0b0b;
-    --text-secondary: #52514e;
-    --text-muted:     #898781;
-    --grid:           #e1e0d9;
-    --axis:           #c3c2b7;
-    --border:         rgba(11,11,11,0.10);
-    --series-1:       #2a78d6;
-    --series-2:       #eb6834;
-    --series-3:       #1baf7a;
-    --status-good:      #0ca30c;
-    --status-warning:   #fab219;
-    --status-serious:   #ec835a;
-    --status-critical:  #d03b3b;
-    --ghost:          rgba(11,11,11,0.05);
-    /* fill ramp (boost stock vs max) — red = short, green = stocked */
-    --fill-1:         #d03b3b;
-    --fill-2:         #e8722e;
-    --fill-3:         #fab219;
-    --fill-4:         #a8c11b;
-    --fill-5:         #0ca30c;
-}
-@media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-        color-scheme: dark;
-        --page:           #0d0d0d;
-        --surface-1:      #1a1a19;
-        --text-primary:   #ffffff;
-        --text-secondary: #c3c2b7;
-        --text-muted:     #898781;
-        --grid:           #2c2c2a;
-        --axis:           #383835;
-        --border:         rgba(255,255,255,0.10);
-        --series-1:       #3987e5;
-        --series-2:       #d95926;
-        --series-3:       #199e70;
-        --ghost:          rgba(255,255,255,0.06);
-        --fill-1:         #e05a5a;
-        --fill-2:         #f08a45;
-        --fill-3:         #fac53f;
-        --fill-4:         #bcd63f;
-        --fill-5:         #2fbe5f;
-    }
-}
-:root[data-theme="dark"] {
-    color-scheme: dark;
-    --page:           #0d0d0d;
-    --surface-1:      #1a1a19;
-    --text-primary:   #ffffff;
-    --text-secondary: #c3c2b7;
-    --text-muted:     #898781;
-    --grid:           #2c2c2a;
-    --axis:           #383835;
-    --border:         rgba(255,255,255,0.10);
-    --series-1:       #3987e5;
-    --series-2:       #d95926;
-    --series-3:       #199e70;
-    --ghost:          rgba(255,255,255,0.06);
-    --fill-1:         #e05a5a;
-    --fill-2:         #f08a45;
-    --fill-3:         #fac53f;
-    --fill-4:         #bcd63f;
-    --fill-5:         #2fbe5f;
-}
-
-* { box-sizing: border-box; }
-body {
-    margin: 0;
-    background: var(--page);
-    color: var(--text-primary);
-    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
-}
-.wrap { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; }
-
-header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
-header h1 { font-size: 20px; margin: 0; }
-header .sub { color: var(--text-muted); font-size: 13px; }
-
-.filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
-.filters .group { display: flex; gap: 4px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 3px; }
-.filters button {
-    border: 0; background: transparent; color: var(--text-secondary);
-    font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
-}
-.filters button:hover { background: var(--ghost); }
-.filters button[aria-pressed="true"] { background: var(--series-1); color: #fff; }
-.filters select, .section-head select {
-    font: inherit; font-size: 13px; color: var(--text-primary);
-    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px;
-}
-.filters label { color: var(--text-muted); font-size: 13px; }
-
-.section-head { display: flex; align-items: center; gap: 10px; margin: 24px 0 10px; }
-.section-head h2 { margin: 0; }
-
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
-.tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
-.tile .label { color: var(--text-muted); font-size: 12px; }
-.tile .value { font-size: 26px; font-weight: 600; margin-top: 2px; }
-.tile .delta { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
-.tile .sub { font-size: 12px; color: var(--text-muted); margin-top: 1px; }
-
-h2 { font-size: 15px; margin: 24px 0 10px; color: var(--text-secondary); font-weight: 600; }
-
-.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
-.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; min-width: 0; }
-.card h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--text-secondary); }
-.card .plot { position: relative; height: 220px; }
-
-.table-wrap { overflow-x: auto; background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; }
-table { border-collapse: collapse; width: 100%; font-size: 13px; }
-th, td { text-align: right; padding: 8px 12px; border-top: 1px solid var(--grid); white-space: nowrap; }
-th { color: var(--text-muted); font-weight: 500; border-top: 0; }
-th:first-child, td:first-child { text-align: left; }
-tbody td { font-variant-numeric: tabular-nums; }
-tbody tr:hover { background: var(--ghost); }
-
-.badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-secondary); }
-.badge .swatch { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
-
-.chips { display: flex; gap: 2px; justify-content: flex-end; }
-.chip { width: 13px; height: 13px; border-radius: 3px; flex: 0 0 auto; box-shadow: inset 0 0 0 1px var(--border); }
-.chip.nomax { background: transparent; box-shadow: inset 0 0 0 1px var(--text-muted); opacity: .45; }
-.nuker-fill { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
-.def-fill { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
-#boost-matrix th { font-size: 11px; }
-#boost-matrix th .th-sym { color: var(--text-muted); font-weight: 400; }
-#boost-matrix td { padding: 6px 8px; }
-#boost-matrix .raw-group { border-left: 1px solid var(--grid); }
-.viz-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin: 8px 0 0; padding: 0 2px; font-size: 12px; color: var(--text-muted); }
-.viz-legend .swatch { width: 9px; height: 9px; border-radius: 3px; flex: 0 0 auto; box-shadow: inset 0 0 0 1px var(--border); }
-.viz-legend .ramp { display: inline-flex; align-items: center; gap: 3px; }
-
-td.short    { color: var(--status-warning); }
-td.serious  { color: var(--status-serious); }
-td.critical { color: var(--status-critical); }
-td.na       { color: var(--text-muted); }
-
-.room-link {
-    color: inherit; text-decoration: underline dotted var(--text-muted); text-underline-offset: 2px;
-}
-.room-link:hover, .room-link:focus-visible { color: var(--series-1); text-decoration-color: var(--series-1); }
-.room-link:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; border-radius: 2px; }
-#room-title .room-link { text-decoration: none; }
-#room-title .room-link:hover, #room-title .room-link:focus-visible { text-decoration: underline; }
-
-.notice {
-    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
-    padding: 24px; color: var(--text-secondary); margin-top: 24px;
-}
-.notice code { background: var(--ghost); padding: 1px 5px; border-radius: 4px; }
-#status { color: var(--text-muted); font-size: 12px; }
-#status.stale { color: var(--status-warning); }
-#refresh {
-    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
-    font-size: 14px; line-height: 1; width: 28px; height: 28px; border-radius: 8px; cursor: pointer;
-}
-#refresh:disabled { opacity: .5; cursor: default; }
-</style>
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <div class="wrap">
@@ -179,44 +17,30 @@ td.na       { color: var(--text-muted); }
 
     <div id="app" hidden>
         <div class="filters">
-            <div class="group" id="range-group" role="group" aria-label="Time range">
-                <button data-range="6">6h</button>
-                <button data-range="24" aria-pressed="true">24h</button>
-                <button data-range="168">7d</button>
-                <button data-range="504">21d</button>
-            </div>
+            <!-- Buttons are built from RANGES in calc.js so they cannot drift
+                 from LOD_BY_RANGE and the collector's retention window. -->
+            <div class="group" id="range-group" role="group" aria-label="Time range"></div>
             <button id="refresh" type="button" aria-label="Refresh now" title="Refresh now">↻</button>
         </div>
 
+        <div id="view-overview">
+        <!-- The triage board: the first thing on the page, because it is the
+             only thing that is ever urgent. Only rooms that are NOT clear
+             appear here; the full per-room board is the Defense section. -->
+        <section id="threat-board" aria-live="polite">
+            <div id="verdict" class="verdict"></div>
+            <div id="threat-list"></div>
+            <p id="clear-line" class="clear-line"></p>
+        </section>
+
         <div class="tiles" id="tiles"></div>
 
-        <h2>Empire</h2>
-        <div class="charts">
-            <div class="card"><h3>GCL progress · % to level <span id="gcl-next"></span></h3><div class="plot"><canvas id="c-gcl"></canvas></div></div>
-            <div class="card"><h3>GCL gain · points per tick</h3><div class="plot"><canvas id="c-gcl-rate"></canvas></div></div>
-            <div class="card" id="card-gpl"><h3>GPL progress · % to level <span id="gpl-next"></span></h3><div class="plot"><canvas id="c-gpl"></canvas></div></div>
-            <div class="card" id="card-gpl-rate"><h3>GPL gain · points per tick</h3><div class="plot"><canvas id="c-gpl-rate"></canvas></div></div>
-            <div class="card"><h3>CPU used · limit <span id="cpu-limit"></span></h3><div class="plot"><canvas id="c-cpu"></canvas></div></div>
-            <div class="card"><h3>CPU bucket</h3><div class="plot"><canvas id="c-bucket"></canvas></div></div>
-            <div class="card"><h3>Reaction uptime · % of lab rooms reacting</h3><div class="plot"><canvas id="c-uptime"></canvas></div></div>
-        </div>
-
-        <h2>Defense · all rooms (latest snapshot)</h2>
+        <details class="section" data-section="defense" open>
+            <summary>Defense · all rooms (latest snapshot)</summary>
         <div class="tiles" id="defense-tiles"></div>
         <div class="table-wrap">
             <table id="defense-table">
-                <thead><tr>
-                    <th>Room</th>
-                    <th>Posture</th>
-                    <th>Hostiles</th>
-                    <th title="hostile melee + ranged damage per tick, boosts folded in">In dmg/t</th>
-                    <th title="towers with energy / built">Towers</th>
-                    <th title="worst-case tower dps minus hostile heal/tick — negative means towers alone cannot break the heal">Net dps</th>
-                    <th>Safe mode</th>
-                    <th title="weakest own rampart; hover for the weakest wall">Rampart</th>
-                    <th title="weakest rampart inside the configured defender zone — the one you actually fight behind">Zone rampart</th>
-                    <th title="home defense fleet from the live spawn manifest; on-demand squads are not included">Defenders</th>
-                </tr></thead>
+                <thead></thead>
                 <tbody></tbody>
             </table>
         </div>
@@ -232,32 +56,38 @@ td.na       { color: var(--text-muted); }
             <span>“unknown” = this snapshot had its threat detail dropped (payload degradation), not “clear”</span>
             <span>Defenders covers home_defender / home_melee_defender only — on-demand squads are invisible to this payload</span>
         </div>
+        </details>
 
-        <h2>Recent hostile activity</h2>
+        <details class="section" data-section="empire">
+            <summary>Empire</summary>
+        <div class="charts">
+            <div class="card"><h3>GCL progress · % to level <span id="gcl-next"></span></h3><div class="plot"><canvas id="c-gcl"></canvas></div></div>
+            <div class="card"><h3>GCL gain · points per tick</h3><div class="plot"><canvas id="c-gcl-rate"></canvas></div></div>
+            <div class="card" id="card-gpl"><h3>GPL progress · % to level <span id="gpl-next"></span></h3><div class="plot"><canvas id="c-gpl"></canvas></div></div>
+            <div class="card" id="card-gpl-rate"><h3>GPL gain · points per tick</h3><div class="plot"><canvas id="c-gpl-rate"></canvas></div></div>
+            <div class="card"><h3>CPU used · limit <span id="cpu-limit"></span></h3><div class="plot"><canvas id="c-cpu"></canvas></div></div>
+            <div class="card"><h3>CPU bucket</h3><div class="plot"><canvas id="c-bucket"></canvas></div></div>
+            <div class="card"><h3>Reaction uptime · % of lab rooms reacting</h3><div class="plot"><canvas id="c-uptime"></canvas></div></div>
+        </div>
+        </details>
+
+        <details class="section" data-section="attacks">
+            <summary>Recent hostile activity</summary>
         <div class="table-wrap">
             <table id="attack-log">
-                <thead><tr>
-                    <th>Room</th><th>When</th><th>Ticks</th><th>Peak hostiles</th><th>Peak dmg/t</th><th>Aggressors</th>
-                </tr></thead>
+                <thead></thead>
                 <tbody></tbody>
             </table>
         </div>
         <p id="attack-log-note" class="viz-legend"></p>
+        </details>
 
-        <h2>Remote threats · non-owned rooms (latest snapshot)</h2>
+        <details class="section" data-section="remote">
+            <summary>Remote threats · non-owned rooms (latest snapshot)</summary>
         <div class="tiles" id="remote-tiles"></div>
         <div class="table-wrap">
             <table id="remote-table">
-                <thead><tr>
-                    <th>Room</th>
-                    <th title="how actionable this is, using the bot's own ranking: armed stronghold, then any non-Keeper hostile, then a level-0 core, then Keepers only">Class</th>
-                    <th title="home room farming this remote; “corridor” means an incidental sighting that belongs to no home">Home</th>
-                    <th>Hostiles</th>
-                    <th title="hostile melee + ranged damage per tick, boosts folded in">In dmg/t</th>
-                    <th title="hostile healing per tick, boosts folded in">Heal/t</th>
-                    <th title="invader core hits and level — L0 is a harmless reserving core, L1-5 an armed stronghold">Core</th>
-                    <th title="the bot's own cached age for this sighting, not the snapshot's age">Last seen</th>
-                </tr></thead>
+                <thead></thead>
                 <tbody></tbody>
             </table>
         </div>
@@ -267,37 +97,34 @@ td.na       { color: var(--text-muted); }
             <span>“Last seen” past 300 ticks is a memory of a room that has gone dark, not a live reading</span>
             <span>a row carried from the bot’s persisted memory has no vision — its hostile count is unknown, not zero</span>
         </div>
+        </details>
 
-        <h2>Recent remote activity</h2>
+        <details class="section" data-section="remote-log">
+            <summary>Recent remote activity</summary>
         <div class="table-wrap">
             <table id="remote-log">
-                <thead><tr>
-                    <th>Room</th><th>Home</th><th>When</th>
-                    <th title="first through last tick the hostiles were actually seen — both ends come from the sighting's own age, not from the snapshots that carried it">Ticks</th>
-                    <th>Peak hostiles</th><th>Peak dmg/t</th><th>Core</th>
-                </tr></thead>
+                <thead></thead>
                 <tbody></tbody>
             </table>
         </div>
         <p id="remote-log-note" class="viz-legend"></p>
+        </details>
 
-        <h2 id="boosts-title">Boosts · all rooms (latest)</h2>
+        <details class="section" data-section="rooms">
+            <summary>Rooms (latest snapshot)</summary>
+        <div class="table-wrap">
+            <table id="rooms-table">
+                <thead></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        </details>
+
+        <details class="section" data-section="boosts">
+            <summary id="boosts-title">Boosts · all rooms (latest)</summary>
         <div class="table-wrap">
             <table id="boost-matrix">
-                <thead><tr>
-                    <th>Room</th>
-                    <th title="attack">attack <span class="th-sym">UH</span></th>
-                    <th title="ranged attack">ranged <span class="th-sym">KO</span></th>
-                    <th title="heal">heal <span class="th-sym">LO</span></th>
-                    <th title="tough">tough <span class="th-sym">GO</span></th>
-                    <th title="build / repair">build <span class="th-sym">LH</span></th>
-                    <th title="dismantle">dismantle <span class="th-sym">ZH</span></th>
-                    <th title="upgrade">upgrade <span class="th-sym">GH</span></th>
-                    <th title="move">move <span class="th-sym">ZO</span></th>
-                    <th class="raw-group" title="hydroxide (raw stock)">OH</th>
-                    <th title="catalyst (raw stock)">X</th>
-                    <th title="ghodium (raw stock)">G</th>
-                </tr></thead>
+                <thead></thead>
                 <tbody></tbody>
             </table>
         </div>
@@ -313,32 +140,22 @@ td.na       { color: var(--text-muted); }
             </span>
             <span><span class="swatch" style="background: var(--grid)"></span> no stock / under one boost / raw under 100</span>
             <span><span class="chip nomax" style="width:9px;height:9px"></span> no max configured</span>
-            <span>storage + terminal vs default max; per-room overrides ignored — hover a chip for exact parts</span>
+            <span>storage + terminal vs default max; per-room overrides ignored — exact parts are printed beside each chip on a narrow screen, and in a chip’s tooltip on a wide one</span>
         </div>
+        </details>
 
-        <h2>Labs (latest snapshot)</h2>
+        <details class="section" data-section="labs">
+            <summary>Labs (latest snapshot)</summary>
         <div class="table-wrap">
             <table id="labs-table">
-                <thead><tr>
-                    <th>Room</th><th>Status</th><th>Reaction</th><th>In 1</th><th>In 2</th>
-                    <th>Output</th><th>Cooldown</th><th>Labs i/o/b</th>
-                </tr></thead>
+                <thead></thead>
                 <tbody></tbody>
             </table>
         </div>
-
-        <h2>Rooms (latest snapshot)</h2>
-        <div class="table-wrap">
-            <table id="rooms-table">
-                <thead><tr>
-                    <th>Room</th><th>RCL</th><th>Progress</th><th>ETA → next</th><th>Spawn energy</th>
-                    <th>Storage</th><th>Terminal</th><th>Creeps</th><th>Queue</th>
-                    <th title="ghodium · energy fill vs capacity; ready = both full and off cooldown">Nuker</th>
-                </tr></thead>
-                <tbody></tbody>
-            </table>
+        </details>
         </div>
 
+        <div id="view-room" hidden>
         <div class="section-head">
             <h2 id="room-title">Room</h2>
             <select id="room-select" aria-label="Room"></select>
@@ -354,7 +171,7 @@ td.na       { color: var(--text-muted); }
         </div>
 
         <h2 id="room-boosts-title">Boosts</h2>
-        <div class="table-wrap">
+        <div class="table-wrap compact">
             <table id="boost-grid">
                 <thead><tr>
                     <th>Purpose</th><th>T1</th><th>T2</th><th>T3</th>
@@ -384,6 +201,7 @@ td.na       { color: var(--text-muted); }
             <div class="charts">
                 <div class="card"><h3>Nuker fill · % of capacity</h3><div class="plot"><canvas id="c-nuker"></canvas></div></div>
             </div>
+        </div>
         </div>
     </div>
 

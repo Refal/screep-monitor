@@ -5,10 +5,12 @@ import {
     compact, pct, progressDelta, rateSeries, observedMsPerTick, windowRate, stockRate,
     levelEta, fmtDuration, downsample, rampLevel, boostFillLevel, boostFloor,
     PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, LOD_BY_RANGE, RETENTION_DAYS,
+    RANGES, DEFAULT_RANGE,
     fmtHits, barrierTarget, barrierLevel, isCriticalBarrier, roomPosture, defenderSummary,
     netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, MANIFEST_GUARD_ROLE,
     SHARD, roomUrl, roomHistoryUrl,
     remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes,
+    empireVerdict, threatItems, clearRooms, isOutgunned,
 } from "../public/calc.js";
 
 describe("pct", () => {
@@ -843,6 +845,219 @@ describe("roomUrl / roomHistoryUrl", () => {
     });
 });
 
+
+// ---------------------------------------------------------------------------
+
+const thr = (over = {}) => ({ h: 0, twrArmed: 2, twrTotal: 2, dps: 300, smAvail: 1, def: [], ...over });
+const room = (over = {}) => ({ rcl: { l: 6, p: 1, pt: 2 }, e: 0, ec: 0, se: 0, te: 0, q: 0, ...over });
+
+// An "engaged" room by every posture measure the bot reports — towers armed,
+// safe-mode charge in hand, defender slots staffed — that is nonetheless losing,
+// because the hostiles heal back more than the towers can put out. This is the
+// case the page exists to catch, and the one a posture ladder alone cannot see.
+const outHealed = (over = {}) => thr({ h: 2, dps: 300, heal: 400, ...over });
+
+describe("isOutgunned", () => {
+    test("hostiles healing past the towers is outgunned", () => {
+        assert.equal(isOutgunned(outHealed()), true);
+    });
+
+    test("posture is irrelevant — an otherwise nominal room still counts", () => {
+        // Nothing here trips roomPosture, so the room reads "engaged".
+        assert.equal(roomPosture(outHealed()).level, "engaged");
+        assert.equal(isOutgunned(outHealed()), true);
+    });
+
+    test("a break-even room is not outgunned", () => {
+        // Net 0 holds; only a negative net means the towers cannot finish.
+        assert.equal(isOutgunned(thr({ h: 2, dps: 300, heal: 300 })), false);
+    });
+
+    test("no hostiles is never outgunned, however much heal is reported", () => {
+        assert.equal(isOutgunned(thr({ h: 0, dps: 0, heal: 900 })), false);
+    });
+
+    test("an absent thr is not outgunned — that is unknown, not losing", () => {
+        assert.equal(isOutgunned(undefined), false);
+    });
+});
+
+describe("empireVerdict", () => {
+    test("all rooms clear reads clear", () => {
+        const v = empireVerdict({ rooms: { A: room({ thr: thr() }), B: room({ thr: thr() }) } });
+        assert.equal(v.level, "clear");
+        assert.equal(v.counts.clear, 2);
+        assert.equal(v.degraded, false);
+    });
+
+    test("a degraded snapshot NEVER reads clear", () => {
+        // thr/roles/rt ride the first degradation step, so the busiest
+        // snapshots are the ones most likely to arrive stripped. A calm
+        // verdict here would be actively dangerous.
+        const v = empireVerdict({ rooms: { A: room(), B: room() } });
+        assert.equal(v.degraded, true);
+        assert.notEqual(v.level, "clear");
+        assert.equal(v.level, "unknown");
+        assert.equal(v.counts.unknown, 2);
+    });
+
+    test("one room without thr among rooms that have it is not 'degraded'", () => {
+        // hasThreatDetail is about the payload, not the room: some detail
+        // survived, so the snapshot is trustworthy about the rooms it covers.
+        const v = empireVerdict({ rooms: { A: room({ thr: thr() }), B: room() } });
+        assert.equal(v.degraded, false);
+        assert.equal(v.counts.unknown, 1);
+        assert.equal(v.level, "unknown", "an uncovered room still outranks clear");
+    });
+
+    test("worst posture wins, and unknown outranks clear", () => {
+        const engaged = thr({ h: 3 });
+        const exposed = thr({ h: 3, twrArmed: 0 });
+        assert.equal(empireVerdict({ rooms: { A: room({ thr: engaged }) } }).level, "engaged");
+        assert.equal(empireVerdict({ rooms: { A: room({ thr: exposed }), B: room({ thr: engaged }) } }).level, "exposed");
+        assert.equal(empireVerdict({ rooms: { A: room({ thr: thr() }), B: room() } }).level, "unknown");
+    });
+
+    test("an armed stronghold shows up when every owned room is quiet", () => {
+        const v = empireVerdict({
+            rooms: { A: room({ thr: thr() }) },
+            rt: [{ room: "E1S1", h: 2, coreLvl: 3, age: 4 }],
+        });
+        assert.equal(v.strongholds, 1);
+        assert.equal(v.level, "stronghold");
+    });
+
+    test("a level-0 core is not a stronghold", () => {
+        const v = empireVerdict({ rooms: { A: room({ thr: thr() }) }, rt: [{ room: "E1S1", h: 0, coreLvl: 0, age: 1 }] });
+        assert.equal(v.strongholds, 0);
+        assert.equal(v.level, "clear");
+    });
+
+    test("an empty snapshot is not reported as degraded", () => {
+        assert.equal(empireVerdict({ rooms: {} }).degraded, false);
+        assert.equal(empireVerdict({}).level, "clear");
+    });
+
+    test("an out-healed room outranks every posture", () => {
+        // It reads "engaged" to roomPosture, so a posture-only ladder would
+        // headline the exposed room instead and bury the room that is losing.
+        const v = empireVerdict({
+            rooms: { Losing: room({ thr: outHealed() }), Exposed: room({ thr: thr({ h: 3, twrArmed: 0 }) }) },
+        });
+        assert.equal(v.level, "outgunned");
+    });
+
+    test("each room is counted exactly once", () => {
+        // `outgunned` replaces the posture in `counts` rather than sitting
+        // beside it, or the subtitle would report one room as two.
+        const v = empireVerdict({ rooms: { Losing: room({ thr: outHealed() }), Ok: room({ thr: thr() }) } });
+        assert.equal(v.counts.outgunned, 1);
+        assert.equal(v.counts.engaged, 0);
+        assert.equal(v.counts.exposed, 0);
+        assert.equal(v.counts.clear, 1);
+        const total = Object.values(v.counts).reduce((a, n) => a + n, 0);
+        assert.equal(total, v.rooms, "every room lands in exactly one bucket");
+    });
+
+    test("a degraded snapshot still never reads outgunned", () => {
+        const v = empireVerdict({ rooms: { A: room(), B: room() } });
+        assert.equal(v.counts.outgunned, 0);
+        assert.equal(v.level, "unknown");
+    });
+});
+
+describe("threatItems", () => {
+    test("clear rooms are dropped, unknown ones are kept", () => {
+        const items = threatItems({ rooms: { A: room({ thr: thr() }), B: room() } });
+        assert.deepEqual(items.map(i => i.room), ["B"]);
+        assert.equal(items[0].kind, "unknown");
+    });
+
+    test("outgunned leads, then exposed, engaged, stronghold, unknown", () => {
+        const items = threatItems({
+            rooms: {
+                Unknown: room(),
+                Engaged: room({ thr: thr({ h: 2 }) }),
+                // exposed (no armed tower) and heal beats dps -> outgunned
+                Outgunned: room({ thr: thr({ h: 2, twrArmed: 0, dps: 0, heal: 400 }) }),
+                Exposed: room({ thr: thr({ h: 2, twrArmed: 0 }) }),
+            },
+            rt: [{ room: "Hold", h: 1, coreLvl: 4, age: 2 }],
+        });
+        assert.deepEqual(items.map(i => i.room), ["Outgunned", "Exposed", "Engaged", "Hold", "Unknown"]);
+        assert.deepEqual(items.map(i => i.kind), ["outgunned", "exposed", "engaged", "stronghold", "unknown"]);
+    });
+
+    test("an engaged room that is out-healed still leads the list", () => {
+        // The bug this pins: gating "outgunned" on posture === "exposed" left
+        // the room whose towers cannot break the heal ranked below a room whose
+        // only complaint is a missing safe-mode charge.
+        const items = threatItems({
+            rooms: {
+                Losing: room({ thr: outHealed() }),
+                Exposed: room({ thr: thr({ h: 9, smAvail: 0 }) }),
+            },
+        });
+        assert.deepEqual(items.map(i => i.room), ["Losing", "Exposed"]);
+        assert.deepEqual(items.map(i => i.kind), ["outgunned", "exposed"]);
+        assert.equal(items[0].net, -100, "the card prints the net the ranking used");
+    });
+
+    test("an armed stronghold sorts below an engaged owned room", () => {
+        // A remote has nothing to lose; an owned room has everything.
+        const items = threatItems({
+            rooms: { Owned: room({ thr: thr({ h: 1 }) }) },
+            rt: [{ room: "Hold", h: 9, coreLvl: 5, age: 1 }],
+        });
+        assert.deepEqual(items.map(i => i.room), ["Owned", "Hold"]);
+    });
+
+    test("only strongholds come from rt", () => {
+        const items = threatItems({
+            rooms: {},
+            rt: [
+                { room: "Keep", h: 2, owners: ["Source Keeper"], age: 1 },
+                { room: "Core", h: 0, coreLvl: 0, age: 1 },
+                { room: "Hold", h: 1, coreLvl: 2, age: 1 },
+            ],
+        });
+        assert.deepEqual(items.map(i => i.room), ["Hold"]);
+    });
+
+    test("within a kind, the hardest hit first, then by name", () => {
+        const items = threatItems({
+            rooms: {
+                Bb: room({ thr: thr({ h: 5 }) }),
+                Aa: room({ thr: thr({ h: 5 }) }),
+                Cc: room({ thr: thr({ h: 9 }) }),
+            },
+        });
+        assert.deepEqual(items.map(i => i.room), ["Cc", "Aa", "Bb"]);
+    });
+
+    test("the ordering is stable across repeated calls", () => {
+        const snap = { rooms: { A: room({ thr: thr({ h: 2 }) }), B: room({ thr: thr({ h: 2 }) }) } };
+        assert.deepEqual(threatItems(snap).map(i => i.room), threatItems(snap).map(i => i.room));
+    });
+
+    test("an empty or missing snapshot yields nothing rather than throwing", () => {
+        assert.deepEqual(threatItems({}), []);
+        assert.deepEqual(threatItems(undefined), []);
+    });
+});
+
+describe("clearRooms", () => {
+    test("names the clear rooms, sorted", () => {
+        const snap = { rooms: { Zz: room({ thr: thr() }), Aa: room({ thr: thr() }), Hot: room({ thr: thr({ h: 1 }) }), Dark: room() } };
+        assert.deepEqual(clearRooms(snap), ["Aa", "Zz"]);
+    });
+    test("clearRooms and threatItems together account for every room", () => {
+        const snap = { rooms: { A: room({ thr: thr() }), B: room({ thr: thr({ h: 1 }) }), C: room() } };
+        const named = new Set([...clearRooms(snap), ...threatItems(snap).filter(i => i.scope === "room").map(i => i.room)]);
+        assert.deepEqual([...named].sort(), ["A", "B", "C"]);
+    });
+});
+
 const indexHtml = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 
 describe("header shard label vs SHARD", () => {
@@ -852,22 +1067,50 @@ describe("header shard label vs SHARD", () => {
     // in sync mechanically, same reasoning as the range-vs-retention check
     // below.
     test("the #shard-label fallback text matches SHARD", () => {
-        const m = indexHtml.match(/<span class="sub" id="shard-label">([^<]*)<\/span>/);
+        // Matched loosely so restyling the header can't break a test that
+        // only cares about the text content.
+        const m = indexHtml.match(/id="shard-label"[^>]*>([^<]*)</);
         assert.ok(m, "#shard-label span not found in index.html");
         assert.equal(m[1], SHARD);
     });
 });
 
-describe("time-range buttons vs retention", () => {
-    // The dashboard's range buttons, the LOD_BY_RANGE map, and the collector's
-    // prune window live in three different files; a range outside retention
-    // fails silently (the query just returns the shorter window under the
-    // longer label). Keep them mechanically in sync, like the composite-index
-    // check in collect.test.js.
-    const ranges = [...indexHtml.matchAll(/data-range="(\d+)"/g)].map(m => Number(m[1]));
+const appJs = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 
-    test("index.html defines at least one range button", () => {
+describe("no information is hover-only", () => {
+    // A tooltip is fine as a second channel and useless as the only one: touch
+    // has no hover at all. These two greps are what stops the page drifting
+    // back — column definitions belong in the renderTable column spec (which
+    // renders them as visible text), and a cell whose only content is an em
+    // dash is an absence with its meaning hidden in a title.
+    test("no <th> in index.html carries a title", () => {
+        const offenders = [...indexHtml.matchAll(/<th[^>]*\stitle=/g)].map(m => m[0]);
+        assert.deepEqual(offenders, [], "move the definition to the column spec's `hint`");
+    });
+
+    test("no cell renders a bare em dash as its whole content", () => {
+        // naCell(word, why) exists for this; see its comment in app.js.
+        const offenders = [...appJs.matchAll(/textContent = "\u2014"/g)].map(m => m[0]);
+        assert.deepEqual(offenders, [], "use naCell(word, why) instead of a bare em dash");
+    });
+});
+
+describe("time-range buttons vs retention", () => {
+    // The range buttons, the LOD_BY_RANGE map and the collector's prune window
+    // live in three different files; a range outside retention fails silently
+    // (the query just returns the shorter window under the longer label). Keep
+    // them mechanically in sync, like the composite-index check in
+    // collect.test.js. RANGES is the single source the buttons are built from
+    // (app.js renderRangeButtons), so this checks the constant rather than the
+    // markup it produces.
+    const ranges = RANGES;
+
+    test("RANGES is non-empty and sorted ascending", () => {
         assert.ok(ranges.length > 0);
+        assert.deepEqual([...ranges].sort((a, b) => a - b), ranges);
+    });
+    test("DEFAULT_RANGE is one of the buttons", () => {
+        assert.ok(ranges.includes(DEFAULT_RANGE));
     });
     test("no button offers a window longer than retention", () => {
         for (const hours of ranges) {
@@ -879,7 +1122,7 @@ describe("time-range buttons vs retention", () => {
     });
     test("every LOD_BY_RANGE key has a matching button, and every flag a bucket width", () => {
         for (const [hours, flag] of Object.entries(LOD_BY_RANGE)) {
-            assert.ok(ranges.includes(Number(hours)), `LOD_BY_RANGE has ${hours}h but index.html has no such button`);
+            assert.ok(ranges.includes(Number(hours)), `LOD_BY_RANGE has ${hours}h but RANGES has no such window`);
             assert.ok(flag in LOD_BUCKET_MS, `LOD_BY_RANGE flag ${flag} missing from LOD_BUCKET_MS`);
         }
     });
