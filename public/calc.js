@@ -250,9 +250,9 @@ export const NUKER_COOLDOWN = 100000; // ticks after a launch
 // against these rather than an absolute threshold is the point: a healthy
 // RCL6 rampart and a neglected RCL8 one must not read the same.
 export const BARRIER_TARGETS = {
-    wall: { 1: 1000, 2: 5000, 3: 10_000, 4: 50_000, 5: 100_000, 6: 300_000, 7: 1_000_000, 8: 2_000_000, default: 5000 },
-    rampart: { 1: 2000, 2: 10_000, 3: 20_000, 4: 50_000, 5: 200_000, 6: 500_000, 7: 1_000_000, 8: 2_000_000, default: 10_000 },
-    zoneRampart: { 1: 2_000, 2: 10_000, 3: 20_000, 4: 200_000, 5: 1_000_000, 6: 2_000_000, 7: 5_000_000, 8: 50_000_000, default: 10_000 },
+    wall: { 1: 1000, 2: 5000, 3: 10_000, 4: 50_000, 5: 200_000, 6: 600_000, 7: 1_200_000, 8: 2_000_000, default: 5000 },
+    rampart: { 1: 2000, 2: 10_000, 3: 20_000, 4: 50_000, 5: 200_000, 6: 600_000, 7: 1_200_000, 8: 2_000_000, default: 10_000 },
+    zoneRampart: { 1: 2_000, 2: 10_000, 3: 20_000, 4: 200_000, 5: 1_000_000, 6: 2_200_000, 7: 6_600_000, 8: 300_000_000, default: 10_000 },
 };
 
 // Mirrors the bot's own console formatter — threatReport.ts:99-103 — term for

@@ -315,7 +315,7 @@ describe("barrierTarget", () => {
         assert.equal(barrierTarget("rampart", 8), 2_000_000);
         assert.equal(barrierTarget("wall", 1), 1000);
         assert.equal(barrierTarget("wall", 8), 2_000_000);
-        assert.equal(barrierTarget("zoneRampart", 8), 50_000_000); // not a copy of the plain rampart ladder
+        assert.equal(barrierTarget("zoneRampart", 8), 300_000_000); // not a copy of the plain rampart ladder
     });
     test("falls back to the ladder's default outside RCL 1-8", () => {
         assert.equal(barrierTarget("rampart", 0), 10_000);
