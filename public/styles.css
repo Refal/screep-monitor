@@ -209,11 +209,10 @@ tbody td { font-variant-numeric: tabular-nums; }
 /* Tier 3 is detail: hidden until the row is tapped. */
 .table-wrap td[data-tier="3"] { display: none; }
 .table-wrap tr[data-expanded] td[data-tier="3"] { display: grid; }
-.table-wrap tr[data-expandable] { cursor: pointer; }
-.table-wrap tr[data-expandable]::after {
-    content: "+ more"; display: block; margin-top: 6px; font-size: 12px; color: var(--series-1);
+.table-wrap .row-expand-toggle {
+    display: block; margin-top: 6px; font-size: 12px; color: var(--series-1);
+    background: none; border: 0; padding: 0; text-align: left; cursor: pointer;
 }
-.table-wrap tr[data-expanded]::after { content: "– less"; }
 /* These three right-align inside a table cell; in a card they start-align
    with the value they belong to. */
 .table-wrap td .chips, .table-wrap td .nuker-fill, .table-wrap td .def-fill { justify-content: flex-start; }
@@ -252,8 +251,7 @@ tbody td { font-variant-numeric: tabular-nums; }
     .table-wrap tr, .table-wrap.compact tr { display: table-row; padding: 0; border-top: 0; }
     .table-wrap th, .table-wrap td { display: table-cell; }
     .table-wrap td::before { content: none; }
-    .table-wrap tr[data-expandable] { cursor: default; }
-    .table-wrap tr[data-expandable]::after, .table-wrap tr[data-expanded]::after { content: none; }
+    .table-wrap .row-expand-toggle { display: none; }
     .table-wrap td[data-tier="3"] { display: table-cell; }
     .table-wrap td .chips, .table-wrap td .nuker-fill, .table-wrap td .def-fill { justify-content: flex-end; }
     .table-wrap td .chip-values { display: none; }
@@ -269,7 +267,6 @@ tbody td { font-variant-numeric: tabular-nums; }
        name stays put while the rest scrolls. Needs an opaque background of its
        own, or rows slide under it. */
     th[data-primary], td[data-primary] { position: sticky; left: 0; z-index: 1; background: var(--surface-1); }
-    tbody tr[data-expanded] td[data-tier="3"] { display: table-cell; }
 }
 
 /* Hover states are meaningless on touch and, worse, stick after a tap. */

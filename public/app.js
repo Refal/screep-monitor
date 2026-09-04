@@ -712,24 +712,29 @@ function renderTable(tableId, spec, rows, empty) {
     const expandable = spec.some(c => c.tier === 3);
     tbody.replaceChildren(...rows.map(row => {
         const tr = document.createElement("tr");
-        if (expandable) tr.dataset.expandable = "";
         for (const col of spec) {
             const td = col.cell(row);
             applyColMeta(td, col);
             tr.append(td);
         }
+        // Card mode hides tier-3 cells; this is the only thing that reveals
+        // them, so a stray click elsewhere in the row can't shift the layout.
+        // Hidden by CSS at desktop widths, where tier-3 is always shown.
+        if (expandable) {
+            tr.dataset.expandable = "";
+            const toggle = document.createElement("button");
+            toggle.type = "button";
+            toggle.className = "row-expand-toggle";
+            toggle.textContent = "+ more";
+            toggle.addEventListener("click", () => {
+                const open = tr.toggleAttribute("data-expanded");
+                toggle.textContent = open ? "– less" : "+ more";
+            });
+            tr.append(toggle);
+        }
         return tr;
     }));
 }
-
-// One delegated listener covers the row expand for every table: card mode
-// hides tier-3 cells, and tapping the row reveals them. Anything with its own
-// click behaviour (the room links) is left alone.
-document.addEventListener("click", e => {
-    const tr = e.target.closest?.("tr[data-expandable]");
-    if (!tr || e.target.closest("a, select, button, summary")) return;
-    tr.toggleAttribute("data-expanded");
-});
 
 // An absence with a meaning is not a missing value, so it gets a word rather
 // than an em dash — remoteHomeCell has always done this ("corridor"), and this
