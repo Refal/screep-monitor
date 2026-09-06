@@ -239,8 +239,49 @@ function demoRt(i, n, f) {
     return entries.length ? entries : null;
 }
 
+// Snapshot-level army routes (ar) at row i — squads home rooms have fielded
+// for other rooms, tied to the rt entries above so the Response column and the
+// stronghold card have something to join on. One case per phase the
+// renderers distinguish:
+//
+//   - E15S57 → E16S57 (the armed stronghold): an engaged, boosted squad
+//     deployed in the room with one member lost — the permanent-loss case —
+//     and, late in the window, a second squad forming behind it;
+//   - E18S59 → E19S59 (the mid-window raid): a route that walks forming →
+//     in transit → deployed over the raid's own span, so the log and the
+//     latest table can disagree about its phase exactly as they would live;
+//   - E27S41 → E28S41: a manual (console-spawned) squad still en route,
+//     covering the `kind` field and the "in transit" word;
+//   - E21S41 → E22S41: an engaged squad stuck staging at home under holdHome.
+//
+// Returns null for "no army exists this row", which the caller drops from the
+// payload rather than storing — the bot omits `ar` on an empty list, the
+// same contract as `rt`.
+function demoAr(i, n, f) {
+    const routes = [];
+    const sq = [{ id: 4, st: "engaged", n: [0, 0, 2, 1], at: [0, 2, 0], b: 1 }];
+    if (f > 0.6) sq.push({ id: 5, st: "forming", n: [1, 1, 1, 0], at: [1, 0, 0] });
+    routes.push({ home: "E15S57", target: "E16S57", sq });
+
+    const raidFrom = Math.floor(n * 0.3), raidTo = Math.floor(n * 0.65);
+    if (i >= raidFrom && i < raidTo) {
+        const g = (i - raidFrom) / (raidTo - raidFrom);
+        routes.push({
+            home: "E18S59", target: "E19S59",
+            sq: [g < 0.3 ? { id: 7, st: "forming", n: [1, 1, 1, 0], at: [1, 0, 0] }
+                : g < 0.5 ? { id: 7, st: "engaged", n: [0, 0, 3, 0], at: [0, 0, 3] }
+                : { id: 7, st: "engaged", n: [0, 0, 3, 0], at: [0, 3, 0] }],
+        });
+    }
+    routes.push({ home: "E27S41", target: "E28S41", kind: "manual", sq: [{ id: 9, st: "engaged", n: [0, 0, 1, 0], at: [0, 0, 1] }] });
+    if (i >= Math.floor(n * 0.5)) {
+        routes.push({ home: "E21S41", target: "E22S41", sq: [{ id: 11, st: "engaged", n: [0, 0, 1, 1], at: [1, 0, 0], hold: 1 }] });
+    }
+    return routes.length ? routes : null;
+}
+
 // One contiguous stretch mid-window where the published payload outgrew its
-// budget and DEGRADATION_STEPS[0] fired, dropping roles/thr/rt together
+// budget and DEGRADATION_STEPS[0] fired, dropping roles/thr/rt/ar together
 // across the WHOLE snapshot — which is how the bot actually degrades, and the
 // only thing that makes either activity log report coverage below 100%. Kept
 // away from both ends: the first row feeds renderTiles' creep delta and the
@@ -261,6 +302,7 @@ export function degradeLatest(rows) {
         last.rooms[name] = rest;
     }
     delete last.rt;
+    delete last.ar;
     return [...rows.slice(0, -1), last];
 }
 
@@ -335,6 +377,7 @@ export function synthDemo(rangeHours, maxPoints) {
         });
         const gpl = demoGpl(i, n);
         const rt = degraded ? null : demoRt(i, n, f);
+        const ar = degraded ? null : demoAr(i, n, f);
         rows.push({
             ts: { toDate: () => date }, date, tick: 76680000 + i * 120,
             // mild oscillation on top of the upward trend so the GCL/tick chart
@@ -349,6 +392,7 @@ export function synthDemo(rangeHours, maxPoints) {
             cr: 323000000 + i * 9000,
             rooms,
             ...(rt ? { rt } : {}),
+            ...(ar ? { ar } : {}),
             bmax: {
                 UH: 3000, UH2O: 1000, XUH2O: 500,
                 KO: 3000, KHO2: 1000,

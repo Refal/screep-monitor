@@ -103,7 +103,7 @@ describe("buildSnapshotDoc", () => {
         assert.deepEqual(doc.gpl, { l: 3, p: 200, pt: 2000 });
     });
 
-    test("omits gpl/bmax/rt/b5/b30/b120 when absent, includes them when present", () => {
+    test("omits gpl/bmax/rt/ar/b5/b30/b120 when absent, includes them when present", () => {
         const noGpl = { ...entry(100), tsMs: 0 };
         delete noGpl.gpl; // e.g. a ring entry rehydrated from a pre-gpl segment after a global reset
         const bare = buildSnapshotDoc(noGpl);
@@ -118,13 +118,18 @@ describe("buildSnapshotDoc", () => {
         // truthiness test would store `rt: []`, which reads as neither
         // "quiet" nor "degraded" and renders a table with no rows at all.
         assert.equal("rt" in buildSnapshotDoc({ ...entry(100), tsMs: 0, rt: [] }), false);
+        // `ar` (army routes) follows the same omit-on-empty contract as `rt`.
+        assert.equal("ar" in bare, false);
+        assert.equal("ar" in buildSnapshotDoc({ ...entry(100), tsMs: 0, ar: [] }), false);
         assert.equal("b5" in bare, false);
         assert.equal("b120" in bare, false);
 
         const rt = [{ room: "W2N1", home: "W1N1", h: 1, owners: ["Invader"], melee: 30, ranged: 0, heal: 12, age: 30 }];
-        const full = buildSnapshotDoc({ ...entry(100), tsMs: 0, bmax: { XGHO2: 3000 }, rt, b5: true, b30: true, b120: true });
+        const ar = [{ home: "W1N1", target: "W2N1", sq: [{ id: 1, st: "engaged", n: [0, 0, 2, 1], at: [0, 2, 0], b: 1 }] }];
+        const full = buildSnapshotDoc({ ...entry(100), tsMs: 0, bmax: { XGHO2: 3000 }, rt, ar, b5: true, b30: true, b120: true });
         assert.deepEqual(full.bmax, { XGHO2: 3000 });
         assert.deepEqual(full.rt, rt);
+        assert.deepEqual(full.ar, ar);
         assert.equal(full.b5, true);
         assert.equal(full.b30, true);
         assert.equal(full.b120, true);

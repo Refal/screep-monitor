@@ -52,6 +52,22 @@ log they would produce one endless episode in every range, and in the tiles they
 "Remote hostiles" at a non-zero count that never returns to 0 on a quiet empire. They still
 appear in the table, classed `keepers`, and are counted on the tiles' sub line.
 
+`ar` (army routes) is the third snapshot-level field on the same degradation step, and the
+answer to "who is defending that remote?". It is read straight off the bot's `Memory.armies`
+rather than the spawn manifest, because the manifest (`roles`) only carries an army route while
+a *forming* squad still has a queued slot — the moment `ArmyManager` marks a squad engaged, the
+row disappears, so a manifest-based view loses the army exactly while it marches and fights.
+Each route is `home → target` with per-squad status, member slots by status
+`[queued, spawning, alive, dead]` and alive members by location `[home, target, elsewhere]`.
+`routeSummary`/`routePhase` in `public/calc.js` collapse that to one word (forming, staging,
+in transit, deployed, wiped) and `routeStatusText` to one line, which the remote table's
+Response column, the threat board's stronghold card and the Defense table's Squads out column
+all share. Two rules carried through every renderer: an engaged squad never respawns, so its
+dead count is worded "lost" and never folded into a "short by N"; and like `rt` the bot omits
+`ar` when no army exists, so an absent field reads as "none" only when `hasThreatDetail`
+holds and "unknown" otherwise. The standing remote guard slot (`army_member` in `roles`) is
+unaffected and still reaches the Defenders cell via `defenderSummary`.
+
 One caveat with a shelf life: `snapshots` docs written **before** the collector started
 persisting `rt` carry `thr` but no `rt`, so `hasThreatDetail` reads them as "no remote
 hostiles cached" when the truth is "never collected". Like `gpl`, `rt` can't be backfilled,

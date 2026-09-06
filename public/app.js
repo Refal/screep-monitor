@@ -18,6 +18,7 @@ import {
     empireVerdict, threatItems, clearRooms, isOutgunned,
     netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, TOWER_DPS_PER_ARMED,
     remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes,
+    armyRoutesForHome, routeStatusText, excludeRoutedGuards, routeOrAbsence, routesOrAbsence,
     REMOTE_STALE_AGE_TICKS, MAX_REMOTE_THREATS,
     MANIFEST_GUARD_ROLE, SHARD, roomUrl, roomHistoryUrl,
     NUKER_GHODIUM_CAPACITY, NUKER_ENERGY_CAPACITY, NUKER_COOLDOWN,
@@ -380,7 +381,28 @@ function roomThreatCard(item) {
     card.append(boardRow("Defenders",
         def.des ? `${def.cur} of ${def.des} fielded` : DEF_STATE_EXPLAIN[def.state] ?? def.state,
         def.des && def.cur < def.des ? shortfallClass(def.cur, def.des) : undefined));
+    // Squads this room has out protecting its remotes: spawn capacity and
+    // bodies committed elsewhere while the home itself is under threat.
+    const routes = armyRoutesForHome(latest, item.room);
+    if (routes.length) {
+        card.append(boardRow("Squads out",
+            routes.map(r => `→ ${r.target}: ${routeStatusText(r)}`).join(" · "),
+            routes.some(r => r.dead > 0) ? "critical" : undefined));
+    }
     return card;
+}
+
+// The home room's answer to a remote threat, from `ar`. A missing route is
+// "none" only when the snapshot kept its first-step detail — the same rule
+// the remote table's empty state follows.
+function responseRow(entry) {
+    if (!entry.home) return null;
+    const resolved = routeOrAbsence(latest, entry.home, entry.room);
+    if (resolved.route) {
+        return boardRow("Response", routeStatusText(resolved.route), resolved.route.dead > 0 ? "critical" : undefined);
+    }
+    return boardRow("Response",
+        resolved.absent === "none" ? "no squad planned" : "unknown — army detail dropped from this snapshot", "na");
 }
 
 function strongholdCard(item) {
@@ -391,6 +413,8 @@ function strongholdCard(item) {
     card.append(boardRow("Core", `level ${entry.coreLvl}${entry.core != null ? ` · ${fmtHits(entry.core)} hits` : ""}`,
         "critical"));
     if (entry.home) card.append(boardRow("Threatens", `${entry.home}'s remote mining`));
+    const response = responseRow(entry);
+    if (response) card.append(response);
     card.append(boardRow("Hostiles",
         entry.mem ? "unknown — no vision" : `${entry.h}${entry.owners?.length ? ` · ${entry.owners.join(", ")}` : ""}`,
         entry.mem ? "na" : undefined));
@@ -595,9 +619,37 @@ function defenseColumns() {
           hint: "weakest own wall, ramped against the wall repair target for this RCL",
           cell: ([, r]) => barrierCell(r.thr?.wall, "wall", r.rcl.l) },
         { key: "defenders", label: "Defenders",
-          hint: "home defense fleet from the live spawn manifest; on-demand squads are not included",
+          hint: "home defense fleet from the live spawn manifest, plus this room's standing remote guards; on-demand squads are in Squads out",
           cell: ([, r]) => defCell(r.thr, r.roles) },
+        { key: "squads", label: "Squads out",
+          hint: "on-demand army squads this room has fielded for other rooms, from the bot's army records: forming at home, staging, in transit, or deployed in the target room. Engaged squads never respawn, so “lost” is permanent",
+          cell: ([n]) => squadsOutCell(n) },
     ];
+}
+
+const ARMY_NONE_TITLE = "no army route from this room in the bot's army records";
+const ARMY_DEGRADED_TITLE = "army detail dropped from this snapshot (payload degradation)";
+
+// Per-squad breakdown for a tooltip; the cell text itself carries the phase.
+function routeDetailTitle(r) {
+    return r.squads.map(s => {
+        const counts = [`${s.alive} alive`];
+        if (s.spawning) counts.push(`${s.spawning} spawning`);
+        if (s.queued) counts.push(`${s.queued} queued`);
+        if (s.dead) counts.push(`${s.dead} dead`);
+        return `squad ${s.id} ${s.status}: ${counts.join(", ")} — ${s.atHome} home / ${s.atTarget} target / ${s.inTransit} en route`;
+    }).join("\n");
+}
+
+function squadsOutCell(room) {
+    const resolved = routesOrAbsence(latest, room);
+    if (!resolved.routes) {
+        return resolved.absent === "none" ? naCell("none", ARMY_NONE_TITLE) : naCell("unknown", ARMY_DEGRADED_TITLE);
+    }
+    const td = textCell(resolved.routes.map(r => `${r.target}: ${routeStatusText(r)}`).join("; "),
+        resolved.routes.some(r => r.dead > 0) ? "critical" : undefined);
+    td.title = resolved.routes.map(r => `→ ${r.target}\n${routeDetailTitle(r)}`).join("\n");
+    return td;
 }
 
 function renderDefenseTable() {
@@ -975,6 +1027,21 @@ function remoteHealCell(entry) {
     return textCell(fmtInt.format(entry.heal ?? 0));
 }
 
+// Joined from `ar` by (home, room). A corridor sighting has no home, so no
+// room could answer it — an absence with a meaning, worded as such.
+function remoteResponseCell(entry) {
+    if (!entry.home) return naCell("n/a", "corridor sighting — no home room answers it");
+    const resolved = routeOrAbsence(latest, entry.home, entry.room);
+    if (!resolved.route) {
+        return resolved.absent === "none"
+            ? naCell("none", "no squad planned for this room in the bot's army records")
+            : naCell("unknown", ARMY_DEGRADED_TITLE);
+    }
+    const td = textCell(routeStatusText(resolved.route), resolved.route.dead > 0 ? "critical" : undefined);
+    td.title = routeDetailTitle(resolved.route);
+    return td;
+}
+
 function remoteColumns(msPerTick) {
     return [
         { key: "room", label: "Room", primary: true, cell: e => roomLinkCell(e.room) },
@@ -984,6 +1051,9 @@ function remoteColumns(msPerTick) {
         { key: "home", label: "Home",
           hint: "home room farming this remote; “corridor” means an incidental sighting that belongs to no home",
           cell: e => remoteHomeCell(e.home) },
+        { key: "response", label: "Response",
+          hint: "squads the home room has fielded for this room, from the bot's army records: forming = still spawning at home, deployed = alive members in the room. Engaged squads never respawn, so “lost” is permanent",
+          cell: remoteResponseCell },
         { key: "hostiles", label: "Hostiles", cell: remoteHostilesCell },
         { key: "dmgIn", label: "In dmg/t", hint: "hostile melee + ranged damage per tick, boosts folded in",
           cell: remoteDmgCell },
@@ -1216,16 +1286,26 @@ function renderRoomDefense(room) {
           sub: `wall ${fmtHits(thr.wall)} · targets ${fmtHits(barrierTarget("rampart", r.rcl.l))} / ${fmtHits(barrierTarget("zoneRampart", r.rcl.l))} at RCL ${r.rcl.l}` },
     ]);
 
-    // Defense fleet card: def[] home-defender slots plus army_member guards
-    // (a separate role, found via `roles`, not `thr.def` — see
-    // MANIFEST_GUARD_ROLE in calc.js) merged into one current-vs-desired
-    // chart. An empty roster is usually healthy (see defenderSummary), so
-    // its explanation moves into the Posture tile's sub rather than being
-    // lost along with the hidden card.
+    // Defense fleet card: def[] home-defender slots, standing army_member
+    // guards (a separate role, found via `roles`, not `thr.def` — see
+    // MANIFEST_GUARD_ROLE in calc.js) and this room's on-demand squads (from
+    // `ar`) merged into one current-vs-desired chart. For a squad "desired" is
+    // its full roster, so an engaged squad's losses show as a gap that never
+    // closes — which is the truth, it never respawns. An empty roster is
+    // usually healthy (see defenderSummary), so its explanation moves into the
+    // Posture tile's sub rather than being lost along with the hidden card.
     const defSummary = defenderSummary(thr, r.roles);
+    const routes = armyRoutesForHome(latest, room);
     const rows = [
         ...defSummary.slots.map(s => ({ label: s.role + (s.room ? ` → ${s.room}` : ""), cur: s.cur, des: s.des })),
-        ...defSummary.guards.map(g => ({ label: `guard: ${g.r}${g.rm ? ` → ${g.rm}` : ""}`, cur: g.c, des: g.d })),
+        // A forming on-demand squad still shows up here too (its manifest row
+        // is tagged the same as a standing guard) — excluded so it isn't also
+        // counted below via `ar`, see excludeRoutedGuards in calc.js.
+        ...excludeRoutedGuards(defSummary.guards, routes).map(g => ({ label: `guard: ${g.r}${g.rm ? ` → ${g.rm}` : ""}`, cur: g.c, des: g.d })),
+        ...routes.flatMap(route => route.squads.map(s => ({
+            label: `squad ${s.id} → ${route.target} · ${s.status}${s.dead ? ` · ${s.dead} lost` : ""}`,
+            cur: s.alive, des: s.total,
+        }))),
     ];
     if (rows.length === 0) {
         charts.defenders?.destroy();

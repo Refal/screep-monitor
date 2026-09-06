@@ -230,12 +230,13 @@ export const TOWER_DPS_PER_ARMED = 150;
 // cliff, not a fraction-of-target ramp level.
 export const CRITICAL_RAMPART_HITS = 4000;
 
-// The only role generateSpawnManifest still emits for on-demand squads/guards
-// (screeps2 config/remoteRoles/provider.remoteDefender.ts:56). `thr.def[]`
-// only ever contains home_defender/home_melee_defender (COMBAT_ROLES,
-// threatReport.ts:20-25 — the remote_defender/remote_healer entries there are
-// dead, no provider emits them any more), so army_member guards have to be
-// found by scanning `roles` separately and merged in by the caller.
+// The role the standing remote guard slot spawns as (screeps2
+// config/remoteRoles/provider.remoteDefender.ts). `thr.def[]` only ever
+// contains home_defender/home_melee_defender (COMBAT_ROLES, threatReport.ts),
+// so these guards are found by scanning `roles` separately and merged in by
+// the caller. Only the STANDING guard is reliably visible this way: an
+// on-demand squad has a manifest row solely while it is still spawning — the
+// deployed phase lives in `ar`, see the "Army routes" section below.
 export const MANIFEST_GUARD_ROLE = "army_member";
 
 // Nuker capacities/cooldown — game constants, not in any payload.
@@ -414,8 +415,10 @@ export function isOutgunned(thr) {
 // including both false-alarm traps around an empty def[]:
 //
 //  - def[] only ever contains home_defender/home_melee_defender slots
-//    (COMBAT_ROLES). On-demand army_member guards live in `roles`, not
+//    (COMBAT_ROLES). Standing army_member guards live in `roles`, not
 //    `thr.def`, so they're found separately here and merged in as `guards`.
+//    On-demand squads are NOT here — they come from `ar` (armyRoutesForHome),
+//    which the callers render beside this summary.
 //  - def[] being EMPTY is the normal, healthy state most of the time:
 //    computePlan (homeDefensePlan.ts:118-125) returns undefined — meaning no
 //    requirement is ever generated — when there are no hostiles, when
@@ -443,6 +446,16 @@ export function defenderSummary(thr, roles) {
     const cur = slots.reduce((a, s) => a + s.cur, 0);
     const des = slots.reduce((a, s) => a + s.des, 0);
     return { state: cur < des ? "short" : "staffed", cur, des, slots, guards, suppressed };
+}
+
+// A forming on-demand squad still has a manifest row in `roles` tagged
+// army_member, indistinguishable there from a standing guard — `ar` already
+// has the fuller picture (phase, losses) for these targets, so guards whose
+// target room is already covered by an ar route are dropped here to avoid
+// the same squad rendering twice in a chart that merges both sources.
+export function excludeRoutedGuards(guards, routes) {
+    const routedTargets = new Set(routes.map(r => r.target));
+    return guards.filter(g => !routedTargets.has(g.rm));
 }
 
 // Collapses consecutive thr.h>0 rows per room into episodes for the attack
@@ -639,4 +652,135 @@ export function remoteEpisodes(history) {
     // right key here; toMs only breaks ties.
     episodes.sort((a, b) => b.toTick - a.toTick || b.toMs - a.toMs);
     return { episodes, covered, total: history.length };
+}
+
+// ---------------------------------------------------------------------------
+// Army routes (ar) — the squads a home room fields against a threat in another
+// room. screeps2/src/manager/StatsManager.ts (buildArmyRoutes) reads them
+// straight off Memory.armies; ArmyManager.ts owns the lifecycle they mirror.
+//
+// Why a separate field: the spawn manifest (`roles`) only ever carries a route
+// while a FORMING squad still has a queued slot, so an engaged squad —
+// marching, or fighting in the remote — has no manifest row at all. `ar` is
+// what makes that phase visible. It is snapshot-level like `rt` (a route is
+// home→target, not a room), rides the same first degradation step, and is
+// omitted when no army exists, so an absent `ar` is read through
+// hasThreatDetail exactly as an absent `rt` is: "no armies" when the snapshot
+// still carries `thr`, "unknown" when it does not.
+//
+// Per-squad shape: `st` is 'forming' | 'engaged'; `n` is member slots by
+// status [queued, spawning, alive, dead]; `at` is ALIVE members by location
+// [home, target, elsewhere]. An engaged squad never respawns, so its dead
+// count is a permanent loss, not a pending spawn — the two are kept apart
+// here rather than summed into one "short by N".
+
+export function squadSummary(sq) {
+    const [queued, spawning, alive, dead] = sq.n;
+    const [atHome, atTarget, inTransit] = sq.at;
+    return {
+        id: sq.id, status: sq.st,
+        queued, spawning, alive, dead, total: queued + spawning + alive + dead,
+        atHome, atTarget, inTransit,
+        boosted: sq.b === 1, held: sq.hold === 1,
+    };
+}
+
+const ROUTE_SUM_KEYS = ["queued", "spawning", "alive", "dead", "total", "atHome", "atTarget", "inTransit"];
+
+export function routeSummary(route) {
+    const squads = (route.sq ?? []).map(squadSummary);
+    const out = {
+        home: route.home, target: route.target, kind: route.kind ?? "defense", squads,
+        forming: squads.filter(s => s.status === "forming").length,
+        engaged: squads.filter(s => s.status === "engaged").length,
+        boosted: squads.some(s => s.boosted),
+        held: squads.some(s => s.held),
+    };
+    for (const k of ROUTE_SUM_KEYS) out[k] = squads.reduce((a, s) => a + s[k], 0);
+    out.phase = routePhase(out);
+    return out;
+}
+
+// One word for where a route stands. Checked in the order a reader needs
+// answered: is anything left at all, has anything dispatched, has anyone
+// arrived, is anyone on the way. A route with an engaged squad still wholly at
+// home is "staging" — just engaged, or held there (`held`) because its escort
+// chain was aborted before it spawned.
+export function routePhase(r) {
+    if (r.alive + r.spawning + r.queued === 0) return "wiped";
+    if (r.engaged === 0) return "forming";
+    if (r.atTarget > 0) return "deployed";
+    if (r.inTransit > 0) return "in transit";
+    return "staging";
+}
+
+// The one-line status a cell or board row shows for a route. Losses are named
+// as "lost", never folded into a shortfall — see the section comment.
+export function routeStatusText(r) {
+    const parts = [];
+    switch (r.phase) {
+        case "forming": parts.push(`forming · ${r.alive + r.spawning} of ${r.total - r.dead} spawned`); break;
+        case "staging": parts.push(`staging · ${r.alive} at home${r.held ? " (held)" : ""}`); break;
+        case "in transit": parts.push(`in transit · ${r.inTransit} en route`); break;
+        case "deployed":
+            parts.push(`deployed · ${r.atTarget} in room${r.inTransit ? `, ${r.inTransit} en route` : ""}`);
+            break;
+        case "wiped": parts.push(`wiped · ${r.dead} lost`); break;
+    }
+    if (r.phase !== "forming" && r.forming) parts.push(`+${r.forming} forming`);
+    if (r.phase !== "wiped" && r.dead) parts.push(`${r.dead} lost`);
+    if (r.boosted) parts.push("boosted");
+    return parts.join(" · ");
+}
+
+// Memoized on `latest`'s identity: `latest` is replaced wholesale each
+// snapshot (bot → collector → Firestore → dashboard), so a single-slot
+// reference-keyed cache is safe — a new snapshot always misses and
+// recomputes — and saves every row/card in a render pass from re-summarizing
+// the whole `ar` array on its own.
+let armyRoutesCache = null; // { latest, routes }
+
+export function armyRoutes(latest) {
+    if (armyRoutesCache?.latest === latest) return armyRoutesCache.routes;
+    const routes = (latest?.ar ?? [])
+        // A route with no squads at all isn't a loss, just absent — without
+        // this, routePhase's "nothing alive/spawning/queued" check reads an
+        // empty roster as "wiped" and prints the nonsensical "wiped · 0 lost".
+        .filter(r => (r.sq ?? []).length > 0)
+        .map(routeSummary);
+    armyRoutesCache = { latest, routes };
+    return routes;
+}
+
+const ROUTE_PHASE_RANK = { wiped: 0, deployed: 1, "in transit": 2, staging: 3, forming: 4 };
+
+// The route answering one `rt` entry: its `home` is the colony, its `room` the
+// target. Null when no such route exists — the caller decides between "none"
+// and "unknown" with hasThreatDetail. When more than one route matches the
+// same pair (nothing in this payload rules that out), the most urgent phase
+// wins rather than an arbitrary array-order pick.
+export function armyRouteFor(latest, home, target) {
+    const routes = armyRoutes(latest).filter(r => r.home === home && r.target === target);
+    if (!routes.length) return null;
+    return routes.reduce((worst, r) => ROUTE_PHASE_RANK[r.phase] < ROUTE_PHASE_RANK[worst.phase] ? r : worst);
+}
+
+export function armyRoutesForHome(latest, home) {
+    return armyRoutes(latest)
+        .filter(r => r.home === home)
+        .sort((a, b) => a.target.localeCompare(b.target));
+}
+
+// What a route-status cell should show for one (home,target) pair: an actual
+// route, or which of the two absence states the caller must otherwise derive
+// itself via hasThreatDetail — "none planned" vs. "detail dropped this
+// snapshot". Centralizes the branch every route cell in app.js needs.
+export function routeOrAbsence(latest, home, target) {
+    const route = armyRouteFor(latest, home, target);
+    return route ? { route } : { absent: hasThreatDetail(latest) ? "none" : "unknown" };
+}
+
+export function routesOrAbsence(latest, home) {
+    const routes = armyRoutesForHome(latest, home);
+    return routes.length ? { routes } : { absent: hasThreatDetail(latest) ? "none" : "unknown" };
 }

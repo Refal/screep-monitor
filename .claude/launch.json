@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dashboard-demo",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8787", "--directory", "public"],
+      "port": 8787
+    },
+    {
+      "name": "dashboard-demo-verify",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8788", "--directory", "public"],
+      "port": 8788
+    }
+  ]
+}

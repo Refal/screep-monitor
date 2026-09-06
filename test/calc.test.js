@@ -11,6 +11,8 @@ import {
     SHARD, roomUrl, roomHistoryUrl,
     remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes,
     empireVerdict, threatItems, clearRooms, isOutgunned,
+    squadSummary, routeSummary, routePhase, routeStatusText, armyRoutes, armyRouteFor, armyRoutesForHome,
+    excludeRoutedGuards, routeOrAbsence, routesOrAbsence,
 } from "../public/calc.js";
 
 describe("pct", () => {
@@ -444,6 +446,23 @@ describe("defenderSummary", () => {
     test("guards default to empty when roles is undefined", () => {
         const thr = { h: 0, def: [] };
         assert.deepEqual(defenderSummary(thr, undefined).guards, []);
+    });
+});
+
+describe("excludeRoutedGuards", () => {
+    test("drops a guard whose target room is already covered by an ar route", () => {
+        const guards = [{ r: MANIFEST_GUARD_ROLE, rm: "W2N1", c: 1, d: 1 }];
+        const routes = [{ home: "W1N1", target: "W2N1" }];
+        assert.deepEqual(excludeRoutedGuards(guards, routes), []);
+    });
+    test("keeps a guard whose room has no matching route", () => {
+        const guards = [{ r: MANIFEST_GUARD_ROLE, rm: "W3N1", c: 1, d: 1 }];
+        const routes = [{ home: "W1N1", target: "W2N1" }];
+        assert.deepEqual(excludeRoutedGuards(guards, routes), guards);
+    });
+    test("passes everything through when there are no routes at all", () => {
+        const guards = [{ r: MANIFEST_GUARD_ROLE, rm: "W3N1", c: 1, d: 1 }];
+        assert.deepEqual(excludeRoutedGuards(guards, []), guards);
     });
 });
 
@@ -1125,5 +1144,165 @@ describe("time-range buttons vs retention", () => {
             assert.ok(ranges.includes(Number(hours)), `LOD_BY_RANGE has ${hours}h but RANGES has no such window`);
             assert.ok(flag in LOD_BUCKET_MS, `LOD_BY_RANGE flag ${flag} missing from LOD_BUCKET_MS`);
         }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Army routes (ar)
+
+const sq = (over = {}) => ({ id: 1, st: "engaged", n: [0, 0, 2, 0], at: [0, 2, 0], ...over });
+
+describe("squadSummary", () => {
+    test("unpacks the status and location tuples and derives total", () => {
+        const s = squadSummary(sq({ n: [1, 1, 2, 3], at: [1, 1, 0], b: 1, hold: 1 }));
+        assert.deepEqual(s, {
+            id: 1, status: "engaged",
+            queued: 1, spawning: 1, alive: 2, dead: 3, total: 7,
+            atHome: 1, atTarget: 1, inTransit: 0,
+            boosted: true, held: true,
+        });
+    });
+    test("boosted/held default to false when the flags are absent", () => {
+        const s = squadSummary(sq());
+        assert.equal(s.boosted, false);
+        assert.equal(s.held, false);
+    });
+});
+
+describe("routeSummary / routePhase", () => {
+    test("sums across squads, counts forming/engaged, defaults kind to defense", () => {
+        const r = routeSummary({ home: "W1N1", target: "W2N1", sq: [
+            sq({ id: 1, n: [0, 0, 2, 1], at: [0, 1, 1] }),
+            sq({ id: 2, st: "forming", n: [1, 1, 1, 0], at: [1, 0, 0] }),
+        ] });
+        assert.equal(r.kind, "defense");
+        assert.equal(r.forming, 1);
+        assert.equal(r.engaged, 1);
+        assert.equal(r.alive, 3);
+        assert.equal(r.dead, 1);
+        assert.equal(r.queued, 1);
+        assert.equal(r.atHome, 1);
+        assert.equal(r.atTarget, 1);
+        assert.equal(r.inTransit, 1);
+        assert.equal(r.phase, "deployed");
+    });
+    test("passes kind through when the bot sent one", () => {
+        assert.equal(routeSummary({ home: "a", target: "b", kind: "manual", sq: [sq()] }).kind, "manual");
+    });
+    test("forming: no squad has engaged yet", () => {
+        assert.equal(routePhase(routeSummary({ home: "a", target: "b", sq: [sq({ st: "forming", n: [2, 0, 1, 0], at: [1, 0, 0] })] })), "forming");
+    });
+    test("staging: engaged but every live member is still at home", () => {
+        assert.equal(routePhase(routeSummary({ home: "a", target: "b", sq: [sq({ at: [2, 0, 0] })] })), "staging");
+    });
+    test("in transit: engaged, nobody at the target, someone between rooms", () => {
+        assert.equal(routePhase(routeSummary({ home: "a", target: "b", sq: [sq({ at: [1, 0, 1] })] })), "in transit");
+    });
+    test("deployed outranks in-transit stragglers", () => {
+        assert.equal(routePhase(routeSummary({ home: "a", target: "b", sq: [sq({ n: [0, 0, 3, 0], at: [0, 1, 2] })] })), "deployed");
+    });
+    test("wiped: nothing alive, spawning or queued — dead members only", () => {
+        // An engaged squad never respawns, so this is a loss, not a pending roster.
+        assert.equal(routePhase(routeSummary({ home: "a", target: "b", sq: [sq({ n: [0, 0, 0, 3], at: [0, 0, 0] })] })), "wiped");
+    });
+    test("a forming squad with only queued slots is forming, not wiped", () => {
+        assert.equal(routePhase(routeSummary({ home: "a", target: "b", sq: [sq({ st: "forming", n: [3, 0, 0, 0], at: [0, 0, 0] })] })), "forming");
+    });
+});
+
+describe("routeStatusText", () => {
+    const text = over => routeStatusText(routeSummary({ home: "a", target: "b", ...over }));
+    test("forming counts spawned against the live roster, not tombstones", () => {
+        assert.equal(text({ sq: [sq({ st: "forming", n: [1, 1, 1, 1], at: [1, 0, 0] })] }), "forming · 2 of 3 spawned · 1 lost");
+    });
+    test("deployed names members in the room and any still en route", () => {
+        assert.equal(text({ sq: [sq({ n: [0, 0, 3, 0], at: [0, 2, 1] })] }), "deployed · 2 in room, 1 en route");
+    });
+    test("losses are reported as lost, never as a shortfall", () => {
+        const t = text({ sq: [sq({ n: [0, 0, 2, 1], at: [0, 2, 0] })] });
+        assert.equal(t, "deployed · 2 in room · 1 lost");
+        assert.doesNotMatch(t, /of 3/);
+    });
+    test("a second forming squad behind a deployed one is appended", () => {
+        assert.equal(text({ sq: [sq({ at: [0, 2, 0] }), sq({ id: 2, st: "forming", n: [2, 0, 0, 0], at: [0, 0, 0] })] }),
+            "deployed · 2 in room · +1 forming");
+    });
+    test("staging says so when the squad is held at home", () => {
+        assert.equal(text({ sq: [sq({ at: [2, 0, 0], hold: 1 })] }), "staging · 2 at home (held)");
+    });
+    test("boosted squads are flagged", () => {
+        assert.equal(text({ sq: [sq({ at: [0, 0, 2], b: 1 })] }), "in transit · 2 en route · boosted");
+    });
+    test("wiped leads with the loss", () => {
+        assert.equal(text({ sq: [sq({ n: [0, 0, 0, 2], at: [0, 0, 0] })] }), "wiped · 2 lost");
+    });
+});
+
+describe("armyRoutes / armyRouteFor / armyRoutesForHome", () => {
+    const latest = { rooms: { W1N1: { thr: thr() } }, ar: [
+        { home: "W1N1", target: "W2N1", sq: [sq()] },
+        { home: "W1N1", target: "W0N1", sq: [sq({ st: "forming", n: [1, 0, 0, 0], at: [0, 0, 0] })] },
+        { home: "W5N5", target: "W6N5", sq: [sq()] },
+    ] };
+    test("armyRoutes is empty when ar is absent — the caller reads that through hasThreatDetail", () => {
+        assert.deepEqual(armyRoutes({ rooms: {} }), []);
+        assert.deepEqual(armyRoutes(null), []);
+    });
+    test("armyRouteFor joins an rt entry to its route by (home, room)", () => {
+        assert.equal(armyRouteFor(latest, "W1N1", "W2N1").phase, "deployed");
+        assert.equal(armyRouteFor(latest, "W1N1", "W9N9"), null);
+        assert.equal(armyRouteFor(latest, undefined, "W2N1"), null); // a corridor sighting has no home
+    });
+    test("armyRoutesForHome lists a home's routes sorted by target", () => {
+        assert.deepEqual(armyRoutesForHome(latest, "W1N1").map(r => r.target), ["W0N1", "W2N1"]);
+        assert.deepEqual(armyRoutesForHome(latest, "W7N7"), []);
+    });
+    test("a route with no squads is excluded, not read as wiped", () => {
+        const noSquads = { rooms: {}, ar: [
+            { home: "W1N1", target: "W2N1", sq: [] },
+            { home: "W1N1", target: "W3N1" }, // sq omitted entirely
+        ] };
+        assert.deepEqual(armyRoutes(noSquads), []);
+        assert.deepEqual(armyRoutesForHome(noSquads, "W1N1"), []);
+        assert.equal(armyRouteFor(noSquads, "W1N1", "W2N1"), null);
+        assert.equal(armyRouteFor(noSquads, "W1N1", "W3N1"), null);
+    });
+    test("armyRouteFor picks the most urgent phase when two routes share (home, target)", () => {
+        const dup = { rooms: {}, ar: [
+            { home: "W1N1", target: "W2N1", sq: [sq({ n: [0, 0, 0, 2], at: [0, 0, 0] })] }, // wiped
+            { home: "W1N1", target: "W2N1", kind: "manual", sq: [sq({ n: [0, 0, 3, 0], at: [0, 3, 0] })] }, // deployed
+        ] };
+        assert.equal(armyRouteFor(dup, "W1N1", "W2N1").phase, "wiped");
+    });
+    test("armyRouteFor returns the single match unchanged when there's no duplicate", () => {
+        const single = { rooms: {}, ar: [{ home: "W1N1", target: "W2N1", sq: [sq({ n: [0, 0, 3, 0], at: [0, 3, 0] })] }] };
+        assert.equal(armyRouteFor(single, "W1N1", "W2N1").phase, "deployed");
+    });
+    test("two different snapshots in immediate succession don't share a stale cached result", () => {
+        const a = { rooms: {}, ar: [{ home: "W1N1", target: "W2N1", sq: [sq()] }] };
+        const b = { rooms: {}, ar: [{ home: "W1N1", target: "W3N1", sq: [sq()] }] };
+        assert.deepEqual(armyRoutes(a).map(r => r.target), ["W2N1"]);
+        assert.deepEqual(armyRoutes(b).map(r => r.target), ["W3N1"]);
+        assert.deepEqual(armyRoutes(a).map(r => r.target), ["W2N1"]);
+    });
+});
+
+describe("routeOrAbsence / routesOrAbsence", () => {
+    const withRoutes = { rooms: { W1N1: { thr: thr() } }, ar: [{ home: "W1N1", target: "W2N1", sq: [sq()] }] };
+    const noArButThr = { rooms: { W1N1: { thr: thr() } } };
+    const degraded = { rooms: { W1N1: {} } };
+    test("routeOrAbsence returns the route when one exists", () => {
+        assert.equal(routeOrAbsence(withRoutes, "W1N1", "W2N1").route.phase, "deployed");
+    });
+    test("routeOrAbsence reads 'none' vs 'unknown' through hasThreatDetail", () => {
+        assert.deepEqual(routeOrAbsence(noArButThr, "W1N1", "W2N1"), { absent: "none" });
+        assert.deepEqual(routeOrAbsence(degraded, "W1N1", "W2N1"), { absent: "unknown" });
+    });
+    test("routesOrAbsence returns all of a home's routes when any exist", () => {
+        assert.deepEqual(routesOrAbsence(withRoutes, "W1N1").routes.map(r => r.target), ["W2N1"]);
+    });
+    test("routesOrAbsence reads 'none' vs 'unknown' through hasThreatDetail", () => {
+        assert.deepEqual(routesOrAbsence(noArButThr, "W1N1"), { absent: "none" });
+        assert.deepEqual(routesOrAbsence(degraded, "W1N1"), { absent: "unknown" });
     });
 });
