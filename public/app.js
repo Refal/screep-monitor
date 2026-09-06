@@ -1112,12 +1112,17 @@ function remoteLogDmgCell(ep) {
     return td;
 }
 
-function remoteLogCoreCell(ep) {
-    if (ep.peakCoreLvl === undefined) return naCell("no core", "no invader core was seen during this episode");
-    const td = document.createElement("td");
-    td.textContent = `L${ep.peakCoreLvl}`;
-    if (ep.peakCoreLvl > 0) td.className = "critical";
-    return td;
+function remoteLogAggressorsCell(ep) {
+    const owners = ep.owners.filter(o => o !== "Source Keeper");
+    if (owners.length) return textCell(owners.join(", "));
+    if (ep.peakCoreLvl !== undefined) {
+        const cell = textCell(`core L${ep.peakCoreLvl}`, ep.peakCoreLvl > 0 ? "critical" : undefined);
+        cell.title = ep.peakCoreLvl > 0
+            ? "armed stronghold, no hostile creeps recorded"
+            : "reserving core only, no hostile creeps — harmless";
+        return cell;
+    }
+    return naCell("unnamed", "no owner was recorded for these hostiles — usually Invader NPCs");
 }
 
 function remoteLogColumns(msPerTick) {
@@ -1132,7 +1137,7 @@ function remoteLogColumns(msPerTick) {
           cell: ep => episodeTicksCell(ep, "replay from the first tick the hostiles were seen, back-dated by the sighting's own age") },
         { key: "peakH", label: "Peak hostiles", cell: remotePeakCell },
         { key: "peakDmg", label: "Peak dmg/t", cell: remoteLogDmgCell },
-        { key: "core", label: "Core", cell: remoteLogCoreCell },
+        { key: "owners", label: "Aggressors", cell: remoteLogAggressorsCell },
     ];
 }
 
