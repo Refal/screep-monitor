@@ -17,7 +17,7 @@ import {
     RANGES, DEFAULT_RANGE,
     empireVerdict, threatItems, clearRooms, isOutgunned,
     netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, TOWER_DPS_PER_ARMED,
-    remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes,
+    remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes, remoteDeployPhase,
     armyRoutesForHome, routeStatusText, excludeRoutedGuards, routeOrAbsence, routesOrAbsence,
     REMOTE_STALE_AGE_TICKS, MAX_REMOTE_THREATS,
     MANIFEST_GUARD_ROLE, SHARD, roomUrl, roomHistoryUrl,
@@ -412,6 +412,14 @@ function strongholdCard(item) {
     card.append(threatCardHead(item));
     card.append(boardRow("Core", `level ${entry.coreLvl}${entry.core != null ? ` · ${fmtHits(entry.core)} hits` : ""}`,
         "critical"));
+    const deploy = remoteDeployPhase(entry.exp, latest.tick);
+    if (deploy) {
+        const ms = observedMsPerTick(history);
+        const ticks = Math.max(0, deploy.ticks);
+        const text = ms != null ? fmtDuration(ticks * ms) : `~${compact(ticks)} ticks`;
+        card.append(boardRow(deploy.phase === "deploys" ? "Deploys in" : "Expires in", text,
+            deploy.phase === "deploys" ? undefined : "critical"));
+    }
     if (entry.home) card.append(boardRow("Threatens", `${entry.home}'s remote mining`));
     const response = responseRow(entry);
     if (response) card.append(response);
@@ -987,6 +995,25 @@ function remoteCoreCell(entry) {
     return td;
 }
 
+// Ticks convert to wall clock the same way the safe-mode cooldown cell does
+// (thr.smCd * ms fed to fmtDuration, with a raw-ticks fallback when no
+// ms-per-tick ratio is available yet). A stale sighting can put `ticks`
+// slightly negative — clamped rather than shown as a negative duration.
+function remoteDeployCell(entry, msPerTick) {
+    if (entry.coreLvl === undefined) return naCell("no core", "no invader core seen in this room");
+    const info = remoteDeployPhase(entry.exp, latest.tick);
+    if (!info) return naCell("unknown", "core lifecycle timer not tracked for this sighting");
+    const ticks = Math.max(0, info.ticks);
+    const ms = msPerTick != null ? ticks * msPerTick : null;
+    const text = ms != null ? fmtDuration(ms) : `~${compact(ticks)} ticks`;
+    const label = info.phase === "deploys" ? `deploys in ${text}` : `expires in ${text}`;
+    const td = textCell(label, info.phase === "deploys" ? undefined : "critical");
+    td.title = info.phase === "deploys"
+        ? "invader core is still vulnerable — killing it now prevents the stronghold"
+        : "armed stronghold's own collapse timer";
+    return td;
+}
+
 // `age` is the bot's own cached age for the sighting, independent of how old
 // the snapshot itself is: a fresh snapshot can carry a 2,000-tick-old memory.
 // Rendered in wall clock (which is what "is this happening now?" wants) with
@@ -1061,6 +1088,9 @@ function remoteColumns(msPerTick) {
         { key: "core", label: "Core",
           hint: "invader core hits and level — L0 is a harmless reserving core, L1-5 an armed stronghold",
           cell: remoteCoreCell },
+        { key: "deploy", label: "Deploys/Expires",
+          hint: "counts down to activation while the core is still vulnerable, or to its own collapse once armed",
+          cell: e => remoteDeployCell(e, msPerTick) },
         { key: "age", label: "Last seen",
           hint: "the bot's own cached age for this sighting, not the snapshot's age",
           cell: e => remoteAgeCell(e, msPerTick) },

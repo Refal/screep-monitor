@@ -124,7 +124,10 @@ describe("buildSnapshotDoc", () => {
         assert.equal("b5" in bare, false);
         assert.equal("b120" in bare, false);
 
-        const rt = [{ room: "W2N1", home: "W1N1", h: 1, owners: ["Invader"], melee: 30, ranged: 0, heal: 12, age: 30 }];
+        // `exp` (invader core deploy/collapse tick, screeps2 8e22d802) is just
+        // another opaque field on an rt entry — no collector change needed for
+        // it to reach Firestore, which this deepEqual below locks in.
+        const rt = [{ room: "W2N1", home: "W1N1", h: 1, owners: ["Invader"], melee: 30, ranged: 0, heal: 12, age: 30, exp: -500 }];
         const ar = [{ home: "W1N1", target: "W2N1", sq: [{ id: 1, st: "engaged", n: [0, 0, 2, 1], at: [0, 2, 0], b: 1 }] }];
         const full = buildSnapshotDoc({ ...entry(100), tsMs: 0, bmax: { XGHO2: 3000 }, rt, ar, b5: true, b30: true, b120: true });
         assert.deepEqual(full.bmax, { XGHO2: 3000 });

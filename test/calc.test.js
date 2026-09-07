@@ -9,7 +9,7 @@ import {
     fmtHits, barrierTarget, barrierLevel, isCriticalBarrier, roomPosture, defenderSummary,
     netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, MANIFEST_GUARD_ROLE,
     SHARD, roomUrl, roomHistoryUrl,
-    remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes,
+    remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes, remoteDeployPhase,
     empireVerdict, threatItems, clearRooms, isOutgunned,
     squadSummary, routeSummary, routePhase, routeStatusText, armyRoutes, armyRouteFor, armyRoutesForHome,
     excludeRoutedGuards, routeOrAbsence, routesOrAbsence,
@@ -598,6 +598,18 @@ describe("remoteThreatClass", () => {
     // vision and so no hit count, and must still rank as an armed stronghold.
     test("a carried row with a level but no core hits is still a stronghold", () => {
         assert.equal(remoteThreatClass({ room: "W1", h: 0, age: 800, coreLvl: 5, mem: 1 }), "stronghold");
+    });
+});
+
+describe("remoteDeployPhase", () => {
+    test("undefined exp means no lifecycle timer is known", () => {
+        assert.equal(remoteDeployPhase(undefined, 1000), null);
+    });
+    test("positive exp counts down to the core's own collapse", () => {
+        assert.deepEqual(remoteDeployPhase(1500, 1000), { phase: "expires", ticks: 500 });
+    });
+    test("negative exp counts down to activation — the pre-deployment case", () => {
+        assert.deepEqual(remoteDeployPhase(-1500, 1000), { phase: "deploys", ticks: 500 });
     });
 });
 

@@ -35,6 +35,14 @@ unconditionally — so **if any room in a snapshot still has `thr`, that snapsho
 `rt` genuinely means "no remote hostiles cached"**. Without that predicate every quiet
 snapshot would count as a coverage gap and the log's note would cry wolf.
 
+Each `rt` entry may also carry `exp`, an invader core's lifecycle deadline, sign-encoded so one
+field covers both phases: `exp > 0` is the absolute tick an armed stronghold's core collapses;
+`exp < 0` is `-`(absolute tick) it finishes deploying, while it still counts down toward
+zero — hence a not-yet-armed core reads negative until it activates. Absent `exp` means neither
+is known (no core, or a sighting — e.g. a memory-carried dark room — with no lifecycle detail).
+`remoteDeployPhase` in `public/calc.js` turns the sign into a `{ phase, ticks }` reading; the
+remote table's "Deploys/Expires" column and the threat board's stronghold card both render it.
+
 Three further notes, all downstream of one fact: each `rt` entry's `age` is the bot's own
 cached lookback (300-tick `hostileCache` TTL), not the snapshot's, so a fresh snapshot can
 carry a stale sighting. First, the latest-snapshot table de-emphasises rows past

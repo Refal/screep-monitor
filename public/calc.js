@@ -544,6 +544,15 @@ export function remoteThreatClass(entry) {
 
 const REMOTE_CLASS_RANK = { stronghold: 0, hostiles: 1, core: 2, keepers: 3 };
 
+// Sign convention published by screeps2 StatsManager (docs/stats-history-ring.md): exp > 0 is
+// the absolute tick an armed stronghold's core collapses; exp < 0 is -(absolute tick) it
+// finishes deploying, while it still counts down toward zero — hence "negative before
+// deployment". Absent `exp` means neither is known.
+export function remoteDeployPhase(exp, tick) {
+    if (exp === undefined) return null;
+    return exp > 0 ? { phase: "expires", ticks: exp - tick } : { phase: "deploys", ticks: -exp - tick };
+}
+
 // The bot already sorts and then slices to maxRemoteThreats, so the stored
 // order is right — but the slice can cut mid-class and a hand-written doc need
 // not be sorted at all. Sorting here makes the table's order self-evident

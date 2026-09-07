@@ -195,13 +195,23 @@ function demoRoles(k) {
 // list, which is exactly what makes hasThreatDetail() necessary.
 function demoRt(i, n, f) {
     const entries = [];
-    // Armed stronghold, core slowly chewed down over the window.
+    // Armed stronghold, core slowly chewed down over the window, with a fixed
+    // future collapse tick so the Deploys/Expires column shows a live
+    // "expires in ~Xm" countdown.
     entries.push({
         room: "E16S57", home: "E15S57", h: 4, owners: ["Invader"],
         melee: 420, ranged: 240, heal: 180,
         core: Math.round(2_000_000 * (1 - 0.35 * f)), coreLvl: 3,
         age: 2 + (i % 5),
+        exp: 76680000 + Math.floor(n * 1.4) * 120,
     });
+    // A core still deploying — negative exp, the "before deployment" case the
+    // bot commit added. Its activation tick sits past the end of the demo
+    // window (deliberately never reached), so the live remote table — which
+    // only ever shows the latest row — keeps reading "deploys in ~Xm" rather
+    // than flashing past the transition on the very last sample.
+    const deployAtTick = 76680000 + Math.floor(n * 1.5) * 120;
+    entries.push({ room: "E25S48", home: "E24S48", h: 0, coreLvl: 0, age: 3, exp: -deployAtTick });
     // A raid with a beginning and an end — the episode-close path.
     const raidFrom = Math.floor(n * 0.3), raidTo = Math.floor(n * 0.65);
     if (i >= raidFrom && i < raidTo) {
