@@ -66,6 +66,37 @@ function demoNuk(k, i, n, f) {
     }
 }
 
+// Repair-queue length per room (k) at row i — [own, remotes]. Mirrors the
+// bot's "omit when both are 0" contract: returns null for "nothing queued
+// this row", which the caller drops from the payload rather than storing a
+// zero pair. Covers: a steady own-only backlog; both legs fluctuating
+// together; a room that never has anything queued (always omitted, so its
+// chart renders as one continuous gap); and a backlog that only starts
+// appearing partway through the window (the real shape right after this
+// field ships, same idea as demoNuk's case 5).
+function demoRq(k, i, n, f) {
+    switch (k) {
+        case 0: { // steady own-room backlog, remotes always clear
+            const own = 3 + Math.round(2 * Math.sin(i / 6));
+            return own > 0 ? [own, 0] : null;
+        }
+        case 1: { // own and remote backlogs both drifting with overall growth
+            const own = Math.max(0, Math.round(4 * f + 2 * Math.sin(i / 5)));
+            const remote = Math.max(0, Math.round(6 * f + 3 * Math.sin(i / 7 + 1)));
+            return own > 0 || remote > 0 ? [own, remote] : null;
+        }
+        case 2: // never anything queued — always omitted
+            return null;
+        case 3: { // backlog only starts appearing partway through the window
+            const appearAt = Math.floor(n * 0.4);
+            if (i < appearAt) return null;
+            return [1 + ((i - appearAt) % 4), (i - appearAt) % 3];
+        }
+        default:
+            return null;
+    }
+}
+
 // Defense payload per room (k) — six rooms, six distinct posture states so
 // every roomPosture/defenderSummary branch is exercised at once: quiet &
 // healthy (with guard slots — one healthy, one short); a boosted attack the
@@ -350,6 +381,7 @@ export function synthDemo(rangeHours, maxPoints) {
             const frac = fillFrac[k];
             const spec = rclSpecs[k];
             const nuk = demoNuk(k, i, n, f);
+            const rq = demoRq(k, i, n, f);
             const roles = degraded ? null : demoRoles(k);
             const thr = degraded ? undefined : demoThr(k, i, n, f);
             const gained = spec.totalGain * f + spec.oscAmp * Math.sin(i / spec.oscPeriod + k);
@@ -383,6 +415,7 @@ export function synthDemo(rangeHours, maxPoints) {
                     G: Math.round(500 * frac), // present in bst but absent from bmax below — exercises "no max" chip
                 },
                 ...(nuk ? { nuk } : {}),
+                ...(rq ? { rq } : {}),
             };
         });
         const gpl = demoGpl(i, n);

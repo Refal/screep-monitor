@@ -1389,6 +1389,10 @@ function renderRoomCharts() {
         .sort(([, a], [, b]) => b - a).slice(0, 3).map(([sym]) => sym);
     renderLine("bst", "c-bst", topCompounds.map((sym, i) =>
         lineDataset(sym, of(r => r.bst?.[sym] ?? null), `--series-${i + 1}`)));
+    renderLine("repairQueue", "c-repair-queue", [
+        lineDataset("This room", of(r => r.rq ? r.rq[0] : null), "--series-1"),
+        lineDataset("Remotes", of(r => r.rq ? r.rq[1] : null), "--series-2"),
+    ]);
     renderRolesChart(room);
     renderBoostGrid(room);
     renderNuker(room, of);
