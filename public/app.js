@@ -609,8 +609,8 @@ function defenseColumns() {
         { key: "room", label: "Room", primary: true, cell: ([n]) => roomLinkCell(n) },
         { key: "posture", label: "Posture", cell: ([, r]) => postureBadge(r.thr) },
         { key: "hostiles", label: "Hostiles", cell: ([, r]) => hostilesCell(r.thr) },
-        { key: "dmgIn", label: "In dmg/t", hint: "hostile melee + ranged damage per tick, boosts folded in",
-          cell: ([, r]) => dmgInCell(r.thr) },
+        { key: "dmgIn", label: "RA/A/H", hint: "hostile ranged / attack (melee) / heal damage per tick, boosts folded in",
+          cell: ([, r]) => raahCell(r.thr) },
         { key: "towers", label: "Towers", hint: "towers with energy / built", cell: ([, r]) => towersCell(r.thr) },
         { key: "netDps", label: "Net dps",
           hint: "worst-case tower dps minus hostile heal/tick — negative means towers alone cannot break the heal",
@@ -843,6 +843,10 @@ function attackWhenCell(ep) {
     return td;
 }
 
+function attackLogRaahCell(ep) {
+    return textCell(`${fmtInt.format(ep.peakRanged)}/${fmtInt.format(ep.peakMelee)}/${fmtInt.format(ep.peakHeal)}`);
+}
+
 function attackLogColumns() {
     return [
         { key: "room", label: "Room", primary: true, cell: ep => roomLinkCell(ep.room) },
@@ -852,7 +856,7 @@ function attackLogColumns() {
           cell: ep => episodeTicksCell(ep, "replay from the first tick hostiles were observed") },
         { key: "peakH", label: "Peak hostiles",
           cell: ep => textCell(`${ep.peakH}${ep.boosted ? " ⚡" : ""}`) },
-        { key: "peakDmg", label: "Peak dmg/t", cell: ep => textCell(fmtInt.format(ep.peakDmg)) },
+        { key: "peakDmg", label: "Peak RA/A/H", cell: attackLogRaahCell },
         { key: "owners", label: "Aggressors",
           cell: ep => ep.owners.length ? textCell(ep.owners.join(", "))
               : naCell("unnamed", "no owner was recorded for these hostiles — usually Invader NPCs") },
@@ -972,11 +976,11 @@ function noHostilesTitle(entry) {
     return entry.mem ? NO_VISION_TITLE : "no hostile creeps cached";
 }
 
-function remoteDmgCell(entry) {
+function remoteRaahCell(entry) {
     if (entry.h === 0) return naCell(entry.mem ? "no vision" : "none", noHostilesTitle(entry));
     const td = document.createElement("td");
-    td.textContent = fmtInt.format((entry.melee ?? 0) + (entry.ranged ?? 0));
-    td.title = `melee ${fmtInt.format(entry.melee ?? 0)}/t · ranged ${fmtInt.format(entry.ranged ?? 0)}/t`
+    td.textContent = `${fmtInt.format(entry.ranged ?? 0)}/${fmtInt.format(entry.melee ?? 0)}/${fmtInt.format(entry.heal ?? 0)}`;
+    td.title = `ranged ${fmtInt.format(entry.ranged ?? 0)}/t · attack ${fmtInt.format(entry.melee ?? 0)}/t`
         + ` · heal ${fmtInt.format(entry.heal ?? 0)}/t`;
     return td;
 }
@@ -1049,11 +1053,6 @@ function remoteHostilesCell(entry) {
     return td;
 }
 
-function remoteHealCell(entry) {
-    if (entry.h === 0) return naCell(entry.mem ? "no vision" : "none", noHostilesTitle(entry));
-    return textCell(fmtInt.format(entry.heal ?? 0));
-}
-
 // Joined from `ar` by (home, room). A corridor sighting has no home, so no
 // room could answer it — an absence with a meaning, worded as such.
 function remoteResponseCell(entry) {
@@ -1082,9 +1081,8 @@ function remoteColumns(msPerTick) {
           hint: "squads the home room has fielded for this room, from the bot's army records: forming = still spawning at home, deployed = alive members in the room. Engaged squads never respawn, so “lost” is permanent",
           cell: remoteResponseCell },
         { key: "hostiles", label: "Hostiles", cell: remoteHostilesCell },
-        { key: "dmgIn", label: "In dmg/t", hint: "hostile melee + ranged damage per tick, boosts folded in",
-          cell: remoteDmgCell },
-        { key: "heal", label: "Heal/t", hint: "hostile healing per tick, boosts folded in", cell: remoteHealCell },
+        { key: "dmgIn", label: "RA/A/H", hint: "hostile ranged / attack (melee) / heal damage per tick, boosts folded in",
+          cell: remoteRaahCell },
         { key: "core", label: "Core",
           hint: "invader core hits and level — L0 is a harmless reserving core, L1-5 an armed stronghold",
           cell: remoteCoreCell },
@@ -1135,10 +1133,9 @@ function remotePeakCell(ep) {
     return td;
 }
 
-function remoteLogDmgCell(ep) {
+function remoteLogRaahCell(ep) {
     const td = document.createElement("td");
-    td.textContent = fmtInt.format(ep.peakDmg);
-    td.title = `peak heal ${fmtInt.format(ep.peakHeal)}/t`;
+    td.textContent = `${fmtInt.format(ep.peakRanged)}/${fmtInt.format(ep.peakMelee)}/${fmtInt.format(ep.peakHeal)}`;
     return td;
 }
 
@@ -1166,7 +1163,7 @@ function remoteLogColumns(msPerTick) {
           // snapshot that listed the sighting.
           cell: ep => episodeTicksCell(ep, "replay from the first tick the hostiles were seen, back-dated by the sighting's own age") },
         { key: "peakH", label: "Peak hostiles", cell: remotePeakCell },
-        { key: "peakDmg", label: "Peak dmg/t", cell: remoteLogDmgCell },
+        { key: "peakDmg", label: "Peak RA/A/H", cell: remoteLogRaahCell },
         { key: "owners", label: "Aggressors", cell: remoteLogAggressorsCell },
     ];
 }
@@ -1574,15 +1571,14 @@ function hostilesCell(thr) {
     return td;
 }
 
-// One column for melee+ranged rather than two — the sum is what's compared
-// against tower dps; splitting it adds width without adding a decision.
-function dmgInCell(thr) {
+// One column rather than three — the split is what you want to see, but each
+// part still fits one row, so a room's threat composition reads at a glance.
+function raahCell(thr) {
     if (!thr) return naCell("unknown", DEGRADED_TITLE);
     if (thr.h === 0) return naCell("none", "no hostiles in this room");
     const td = document.createElement("td");
-    const dmg = (thr.melee ?? 0) + (thr.ranged ?? 0);
-    td.textContent = fmtInt.format(dmg);
-    td.title = `melee ${fmtInt.format(thr.melee ?? 0)}/t · ranged ${fmtInt.format(thr.ranged ?? 0)}/t `
+    td.textContent = `${fmtInt.format(thr.ranged ?? 0)}/${fmtInt.format(thr.melee ?? 0)}/${fmtInt.format(thr.heal ?? 0)}`;
+    td.title = `ranged ${fmtInt.format(thr.ranged ?? 0)}/t · attack ${fmtInt.format(thr.melee ?? 0)}/t `
         + `· heal ${fmtInt.format(thr.heal ?? 0)}/t${thr.boosted ? ` · ${thr.boosted} boosted parts` : ""}`;
     return td;
 }

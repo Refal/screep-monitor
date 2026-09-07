@@ -479,14 +479,16 @@ export function hostileEpisodes(history) {
                 if (!ep) {
                     ep = {
                         room, fromMs: row.date, toMs: row.date, fromTick: row.tick, toTick: row.tick,
-                        peakH: 0, peakDmg: 0, owners: new Set(), boosted: false,
+                        peakH: 0, peakMelee: 0, peakRanged: 0, peakHeal: 0, owners: new Set(), boosted: false,
                     };
                     open.set(room, ep);
                 }
                 ep.toMs = row.date;
                 ep.toTick = row.tick;
                 ep.peakH = Math.max(ep.peakH, r.thr.h);
-                ep.peakDmg = Math.max(ep.peakDmg, (r.thr.melee ?? 0) + (r.thr.ranged ?? 0));
+                ep.peakMelee = Math.max(ep.peakMelee, r.thr.melee ?? 0);
+                ep.peakRanged = Math.max(ep.peakRanged, r.thr.ranged ?? 0);
+                ep.peakHeal = Math.max(ep.peakHeal, r.thr.heal ?? 0);
                 for (const o of r.thr.owners ?? []) ep.owners.add(o);
                 if ((r.thr.boosted ?? 0) > 0) ep.boosted = true;
             } else if (open.has(room)) {
@@ -629,7 +631,7 @@ export function remoteEpisodes(history) {
                     fromMs: row.date, toMs: row.date,
                     fromTick: row.tick - entry.age, toTick: row.tick - entry.age,
                     staleTicks: entry.age,
-                    peakH: 0, peakDmg: 0, peakHeal: 0, owners: new Set(),
+                    peakH: 0, peakMelee: 0, peakRanged: 0, peakHeal: 0, owners: new Set(),
                     peakCoreLvl: undefined,
                 };
                 open.set(entry.room, ep);
@@ -641,7 +643,8 @@ export function remoteEpisodes(history) {
             // assigned after toTick so it always describes the LAST observing row
             ep.staleTicks = row.tick - ep.toTick;
             ep.peakH = Math.max(ep.peakH, entry.h);
-            ep.peakDmg = Math.max(ep.peakDmg, (entry.melee ?? 0) + (entry.ranged ?? 0));
+            ep.peakMelee = Math.max(ep.peakMelee, entry.melee ?? 0);
+            ep.peakRanged = Math.max(ep.peakRanged, entry.ranged ?? 0);
             ep.peakHeal = Math.max(ep.peakHeal, entry.heal ?? 0);
             for (const o of entry.owners ?? []) ep.owners.add(o);
             if (entry.coreLvl !== undefined) ep.peakCoreLvl = Math.max(ep.peakCoreLvl ?? 0, entry.coreLvl);

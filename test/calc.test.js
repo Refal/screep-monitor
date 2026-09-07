@@ -516,7 +516,8 @@ describe("hostileEpisodes", () => {
         assert.equal(episodes.length, 1);
         assert.equal(episodes[0].room, "W1");
         assert.equal(episodes[0].peakH, 3);
-        assert.equal(episodes[0].peakDmg, 120);
+        assert.equal(episodes[0].peakMelee, 100);
+        assert.equal(episodes[0].peakRanged, 20);
         assert.equal(episodes[0].fromTick, 0);
         assert.equal(episodes[0].toTick, 100);
         assert.equal(covered, 3);
@@ -676,7 +677,8 @@ describe("remoteEpisodes", () => {
         assert.equal(ep.room, "W2N1");
         assert.equal(ep.home, "W1N1");
         assert.equal(ep.peakH, 5);
-        assert.equal(ep.peakDmg, 160);
+        assert.equal(ep.peakMelee, 120);
+        assert.equal(ep.peakRanged, 40);
         assert.equal(ep.peakHeal, 90);
         assert.deepEqual(ep.owners.sort(), ["Invader", "Kasami"]);
         assert.equal(ep.toTick, 100);
