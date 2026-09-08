@@ -3,23 +3,23 @@
 Room-statistics dashboard for the screeps2 bot — fully card-free:
 GitHub Actions (collector, every 5 min) → Firestore (Firebase Spark) → Firebase Hosting (dashboard).
 
-The bot publishes a compact stats JSON to **RawMemory segment 90** on shard2 every 20 ticks
-(`StatsManager` in the screeps2 repo, ~82s at today's shard speed) — well under the segment's
-95 KB budget, so it also keeps a ring of recent snapshots in its own heap and publishes those
-alongside the latest one. (The payload carries a wire version in `v`, but the collector no
-longer reads it — the `v: 1` path was removed in `1846ecd` and nothing gates on the field
-now; the rollout note at the bottom of this file is the only remaining guard.) Without the
-ring, a 5-minute collector poll only ever saw the newest of several snapshots published
-since the last poll — most were silently overwritten
-before being read. `scripts/collect.mjs` fetches the segment from the Screeps Web API, walks
-the ring for anything not yet stored, and stores it in Firestore; `public/` is a static
+The bot publishes a compact stats JSON to a pool of **RawMemory segments starting at 90** on
+shard2 every 20 ticks (`StatsManager` in the screeps2 repo, ~82s at today's shard speed).
+Segment 90 carries a manifest plus the newest snapshot; the ring of older snapshots it also
+keeps in its own heap is chunked across up to 9 more segments (91-99), so a slow poller still
+sees every publish without the old single-segment budget forcing hostile/repair-queue detail
+to drop out of history early — see "Bot side" under Operations, and screeps2's
+`docs/stats-history-ring.md`, for why a pool instead of one bigger segment. `scripts/collect.mjs`
+fetches the manifest from the Screeps Web API, then each history-chunk segment it names, merges
+them back into one payload, and stores anything not yet in Firestore; `public/` is a static
 Chart.js dashboard reading Firestore directly under read-only security rules.
 
 The **Defense** and **Remote threats** sections are deliberately built from `meta/latest`
 rather than a time series. `StatsManager`'s payload-size degradation drops `roles`/`thr` and
-the snapshot-level `rt` together, in its first step (`DEGRADATION_STEPS`, ~35% of the history
-budget), so historical coverage of all three in stored `snapshots` docs is size-dependent and
-not guaranteed — the head snapshot on `meta/latest` is the one place they're always complete.
+the snapshot-level `rt` together, in its first step (`DEGRADATION_STEPS`, ~35% of the
+history-pool budget — now the size of the whole segment pool, not just one segment), so
+historical coverage of all three in stored `snapshots` docs is size-dependent and not
+guaranteed — the head snapshot on `meta/latest` is the one place they're always complete.
 Both activity logs (`hostileEpisodes` / `remoteEpisodes` in `public/calc.js`) report their own
 coverage (`N of M snapshots in range carried threat detail`) rather than ever implying an
 uncovered stretch was quiet. Before adding a "hostiles over time" chart, check that coverage
@@ -277,8 +277,14 @@ gh workflow run collect                # first manual run
   ranges query only `b5`/`b30`/`b120` bucket-leader docs (~288/336/252 per full fetch; 6h
   fetches every doc, ~260), and incremental polls skip the query entirely until the current
   bucket rolls over (see `LOD_BY_RANGE` in `public/calc.js`).
-- Bot side: adjust cadence/segment/ring budget in `screeps2/src/config/config.stats.ts`;
-  check the segment with `node scripts/screepsLive.mjs segment 90` in the screeps2 repo.
-- Rollout order when changing the wire format again: deploy the collector first with support
-  for both the old and new version, confirm it's live, then publish the new version from the
-  bot. Doing it in the other order leaves the collector unable to parse what the bot sends.
+- Bot side: adjust cadence/segment/history-pool size in `screeps2/src/config/config.stats.ts`
+  (`segment`, `historySegmentCount`); check a segment with
+  `node scripts/screepsLive.mjs segment <90..99>` in the screeps2 repo. The collector needs no
+  matching config — it derives which chunk segments to fetch from the manifest's `chunks` field.
+- Rollout order when changing the wire format again: usually deploy the collector first with
+  support for both the old and new version, confirm it's live, then publish the new version
+  from the bot — doing it in the other order leaves the collector unable to parse what the bot
+  sends. The segment-pool migration (this file's "RawMemory segments" paragraph above) was a
+  deliberate exception: both sides did a clean cut with no dual-format support, accepting a
+  few poll cycles of reduced ring depth during rollout instead, because losing a little history
+  depth during a deploy is cheaper than carrying compatibility code for it indefinitely.

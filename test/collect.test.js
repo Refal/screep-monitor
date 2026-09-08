@@ -2,7 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-    unseenEntries, interpolateTimestamps, assignLodFlags, buildSnapshotDoc,
+    unseenEntries, interpolateTimestamps, assignLodFlags, buildSnapshotDoc, mergeChunks, parseSegment,
 } from "../scripts/collect.mjs";
 import { LOD_BUCKET_MS } from "../public/calc.js";
 
@@ -36,6 +36,63 @@ describe("unseenEntries", () => {
     test("dedups a tick that appears in both the head and the ring", () => {
         const payload = { ...entry(140), h: [entry(140), entry(100)] };
         assert.deepEqual(unseenEntries(payload, null).map(e => e.t), [100, 140]);
+    });
+});
+
+describe("mergeChunks", () => {
+    test("no chunks (chunks: 0 manifest) yields a head-only payload, matching legacy single-segment behavior", () => {
+        const head = entry(140);
+        assert.deepEqual(mergeChunks(head, []), { ...head, h: [] });
+    });
+
+    test("flattens successful chunks in order, newest chunk first", () => {
+        const head = entry(140);
+        const chunkEntries = [
+            [entry(120), entry(100)],
+            [entry(80)],
+        ];
+        assert.deepEqual(mergeChunks(head, chunkEntries).h.map(e => e.t), [120, 100, 80]);
+    });
+
+    test("a chunk missing from the fetched list (e.g. it failed) is simply absent, not a reason to drop later chunks", () => {
+        const head = entry(140);
+        // fetchPayload only pushes successfully-fetched chunks, so a failed
+        // middle chunk (segment 2 of 3) shows up here as a gap in the list,
+        // not an entry — later chunks still merge in.
+        const chunkEntries = [
+            [entry(120)],
+            [entry(80)],
+        ];
+        assert.deepEqual(mergeChunks(head, chunkEntries).h.map(e => e.t), [120, 80]);
+    });
+
+    test("preserves every head field alongside the merged h", () => {
+        const head = entry(140);
+        const merged = mergeChunks(head, []);
+        assert.equal(merged.t, 140);
+        assert.deepEqual(merged.rooms, head.rooms);
+    });
+});
+
+describe("parseSegment", () => {
+    test("parses a valid numeric string", () => {
+        assert.equal(parseSegment("90"), 90);
+    });
+
+    test("throws on an empty string instead of silently defaulting to segment 0", () => {
+        assert.throws(() => parseSegment(""), /non-negative integer/);
+    });
+
+    test("throws on a negative number", () => {
+        assert.throws(() => parseSegment("-1"), /non-negative integer/);
+    });
+
+    test("throws on a non-numeric string", () => {
+        assert.throws(() => parseSegment("abc"), /non-negative integer/);
+    });
+
+    test("throws on a non-integer number", () => {
+        assert.throws(() => parseSegment("90.5"), /non-negative integer/);
     });
 });
 

@@ -1,19 +1,37 @@
 /**
- * Fetches the bot's stats snapshot from RawMemory segment 90 on screeps.com
- * and stores it in Firestore. Runs in GitHub Actions (cron) and locally.
+ * Fetches the bot's stats snapshot from a pool of RawMemory segments on
+ * screeps.com and stores it in Firestore. Runs in GitHub Actions (cron) and
+ * locally.
  *
- * Payload shape: a head snapshot (t, gcl, gpl, cpu, cr, rooms, bmax?, rt?, ar?) plus `h`, a
- * newest-first ring of older snapshots the bot kept in memory, published
- * because segment 90 has room to spare (~9 KB used of a 95 KB budget) and
- * the bot only publishes once per 20 ticks (~82s) while this collector
- * polls every 5 minutes — without the ring, ~80% of published snapshots
- * were never read before being overwritten by the next publish.
+ * Payload shape: segment SEGMENT holds a manifest+head snapshot
+ * (t, gcl, gpl, cpu, cr, rooms, bmax?, rt?, ar?, chunks), where `chunks` is
+ * how many history-ring segments the bot wrote this publish, at
+ * SEGMENT+1 .. SEGMENT+chunks (newest chunk first, each a JSON array of
+ * older snapshots). The pool exists because the bot only publishes once per
+ * 20 ticks (~82s) while this collector polls every 5 minutes — without
+ * history, most published snapshots were never read before being
+ * overwritten by the next publish — and because a single segment's 95KB
+ * budget forced hostile/repair-queue detail to degrade out of history far
+ * too early; spilling across a pool of segments (rather than raising the
+ * degrade threshold) scales with empire size instead of just delaying the
+ * same problem. `fetchPayload()` fetches the manifest, then each chunk
+ * segment it names (capped at MAX_CHUNKS), and merges them back into the
+ * flat `{ ...head, h }` shape the rest of this file (and the tests) already
+ * expect — no other function needs to know segments exist. A chunk that
+ * fails to fetch, or whose JSON doesn't decode to an array, is skipped
+ * (logged as a warning) rather than losing the whole poll; only the
+ * manifest segment is required. `fetchPayload()` also reports how many
+ * chunks failed, so the ring-depth health check in `main()` can tell "the
+ * bot's ring is genuinely short" apart from "our own fetch had a glitch"
+ * instead of blaming the bot for both.
  *
  * Env:
  *   SCREEPS_TOKEN                  — screeps.com auth token (required)
  *   GOOGLE_APPLICATION_CREDENTIALS — path to a Firebase service-account JSON (required)
  *   SCREEPS_SHARD                  — default shard2
- *   SCREEPS_SEGMENT                — default 90
+ *   SCREEPS_SEGMENT                — manifest/head segment, default 90 (history
+ *                                    chunks are always SEGMENT+1..SEGMENT+chunks,
+ *                                    not separately configured)
  *
  * Firestore layout:
  *   snapshots/<autoId>  { ts, tick, gcl, gpl?, cpu, cr, rooms, bmax?, rt?, ar?, b5?, b30?, b120? }
@@ -35,20 +53,73 @@ import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { LOD_BUCKET_MS, bucketId, RETENTION_DAYS, SHARD as DEFAULT_SHARD } from "../public/calc.js";
 
+/** Parses SCREEPS_SEGMENT into a segment id, throwing loudly on anything
+ * that isn't a non-negative integer — including an empty string, which
+ * `Number()` alone would silently turn into segment 0. */
+export function parseSegment(raw) {
+    const n = Number(raw);
+    if (raw.trim() === "" || !Number.isInteger(n) || n < 0) {
+        throw new Error(`SCREEPS_SEGMENT must be a non-negative integer, got ${JSON.stringify(raw)}`);
+    }
+    return n;
+}
+
 const SHARD = process.env.SCREEPS_SHARD ?? DEFAULT_SHARD;
-const SEGMENT = process.env.SCREEPS_SEGMENT ?? "90";
+const SEGMENT = parseSegment(process.env.SCREEPS_SEGMENT ?? "90");
+const CHUNK_FETCH_DELAY_MS = 150; // spread sequential chunk fetches instead of bursting the Screeps API
+const MAX_CHUNKS = 9; // matches the documented segment-pool bound (91-99 for the default SEGMENT=90)
 const PRUNE_BATCH = 450;
 const PRUNE_MAX_BATCHES = 20; // caps a single run's delete cost if a backlog ever builds up
 
-async function fetchSegment() {
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function fetchSegment(segmentId) {
     const token = process.env.SCREEPS_TOKEN;
     if (!token) throw new Error("SCREEPS_TOKEN is not set");
-    const url = `https://screeps.com/api/user/memory-segment?segment=${SEGMENT}&shard=${SHARD}`;
+    const url = `https://screeps.com/api/user/memory-segment?segment=${segmentId}&shard=${SHARD}`;
     const res = await fetch(url, { headers: { "X-Token": token } });
     if (!res.ok) throw new Error(`Screeps API ${res.status}: ${await res.text()}`);
     const body = await res.json();
-    if (!body.ok || !body.data) throw new Error(`Segment ${SEGMENT} is empty (bot not publishing yet?)`);
+    if (!body.ok || !body.data) throw new Error(`Segment ${segmentId} is empty (bot not publishing yet?)`);
     return JSON.parse(body.data);
+}
+
+/**
+ * Merges a manifest's head with its successfully-fetched history chunks
+ * (each already a newest-first array of entries, in segment order) into the
+ * flat `{ ...head, h }` shape unseenEntries/buildSnapshotDoc already expect.
+ * A failed chunk is simply absent from `chunkEntries` — see fetchPayload().
+ */
+export function mergeChunks(head, chunkEntries) {
+    return { ...head, h: chunkEntries.flat() };
+}
+
+/** Fetches the manifest segment, then up to MAX_CHUNKS of the `chunks`
+ * history segments it names (SEGMENT+1..SEGMENT+chunks), and merges them.
+ * Only the manifest fetch can fail the whole poll — a chunk that fails to
+ * fetch, or whose JSON doesn't decode to an array, just logs a warning and
+ * is skipped. Returns the merged payload plus how many chunks failed, so
+ * callers can tell a short ring apart from a fetch glitch. */
+async function fetchPayload() {
+    const head = await fetchSegment(SEGMENT);
+    const chunkCount = Math.min(head.chunks ?? 0, MAX_CHUNKS);
+    const chunkEntries = [];
+    let failedChunks = 0;
+    for (let i = 0; i < chunkCount; i++) {
+        if (i > 0) await sleep(CHUNK_FETCH_DELAY_MS);
+        const segmentId = SEGMENT + 1 + i;
+        try {
+            const entries = await fetchSegment(segmentId);
+            if (!Array.isArray(entries)) {
+                throw new Error(`expected an array, got ${typeof entries}`);
+            }
+            chunkEntries.push(entries);
+        } catch (err) {
+            console.warn(`::warning::chunk segment ${segmentId} failed, skipping it: ${err.message}`);
+            failedChunks++;
+        }
+    }
+    return { payload: mergeChunks(head, chunkEntries), failedChunks };
 }
 
 /**
@@ -166,7 +237,7 @@ async function main() {
     const latestRef = db.doc("meta/latest");
 
     // independent round trips (screeps.com and Firestore) — fetch both at once
-    const [payload, latestSnap] = await Promise.all([fetchSegment(), latestRef.get()]);
+    const [{ payload, failedChunks }, latestSnap] = await Promise.all([fetchPayload(), latestRef.get()]);
     const latest = latestSnap.data();
     const latestTick = latest?.tick ?? null;
     const latestMs = latest?.ts?.toMillis() ?? null;
@@ -198,8 +269,15 @@ async function main() {
     if (ringDepth < 4 && latest != null) {
         // Below poll-covering depth (~4 entries at today's cadence) after the very
         // first run is the visible signature of a bot global reset whose bootstrap
-        // rehydrate failed — see screeps2 StatsManager's two-phase bootstrap.
-        console.log(`::warning::segment ${SEGMENT} ring depth is only ${ringDepth} — check for a failed bot restart bootstrap.`);
+        // rehydrate failed — see screeps2 StatsManager's two-phase bootstrap. But a
+        // short ring can also just mean one or more chunk segments failed to fetch
+        // this poll (see fetchPayload) — that's not a bot problem, so say so instead
+        // of pointing at the bot every time.
+        if (failedChunks > 0) {
+            console.log(`::warning::segment ${SEGMENT} ring depth is only ${ringDepth} after ${failedChunks} chunk fetch failure(s) this poll — likely a fetch glitch, not necessarily a bot restart.`);
+        } else {
+            console.log(`::warning::segment ${SEGMENT} ring depth is only ${ringDepth} — check for a failed bot restart bootstrap.`);
+        }
     }
 
     // retention sweep on the first run of each UTC day
