@@ -1374,9 +1374,17 @@ function renderRoomCharts() {
     $("room-title").replaceChildren(`Room ${room} `, screepsRoomLink(room));
     const of = fn => history.map(r => (r.rooms[room] ? fn(r.rooms[room]) : null));
     renderRoomTiles(room);
-    renderLine("rcl", "c-rcl",
-        [lineDataset("RCL progress", of(r => pct(r.rcl.p, r.rcl.pt)), "--series-1")],
-        { yMax: 100, unit: "%" });
+    const curRcl = latest.rooms[room]?.rcl;
+    const rclMaxed = !curRcl?.pt;
+    $("rcl-card").hidden = rclMaxed;
+    if (rclMaxed) {
+        charts.rcl?.destroy();
+        delete charts.rcl;
+    } else {
+        renderLine("rcl", "c-rcl",
+            [lineDataset("RCL progress", of(r => pct(r.rcl.p, r.rcl.pt)), "--series-1")],
+            { yMax: 100, unit: "%" });
+    }
     const rclDatasets = rateDatasets("RCL/tick", r => r.rooms[room]?.rcl ?? null);
     const upwSeries = of(r => r.upw ?? null);
     const upwDataset = lineDataset("UPW", upwSeries, "--series-3");
