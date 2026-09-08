@@ -387,6 +387,7 @@ export function synthDemo(rangeHours, maxPoints) {
             const gained = spec.totalGain * f + spec.oscAmp * Math.sin(i / spec.oscPeriod + k);
             rooms[name] = {
                 rcl: advanceRcl(spec.level, spec.progress, Math.max(0, gained)),
+                upw: Math.max(0, (spec.totalGain / n + (spec.oscAmp / spec.oscPeriod) * Math.cos(i / spec.oscPeriod + k)) / 120),
                 e: 1200 + Math.round(600 * Math.sin(i / 5 + k)), ec: 1800,
                 se: 200000 + f * 80000 + 20000 * Math.sin(i / 9 + k), te: k * 40000,
                 q: (i + k) % 9,

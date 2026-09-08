@@ -1377,7 +1377,12 @@ function renderRoomCharts() {
     renderLine("rcl", "c-rcl",
         [lineDataset("RCL progress", of(r => pct(r.rcl.p, r.rcl.pt)), "--series-1")],
         { yMax: 100, unit: "%" });
-    renderLine("rclRate", "c-rcl-rate", rateDatasets("RCL/tick", r => r.rooms[room]?.rcl ?? null));
+    const rclDatasets = rateDatasets("RCL/tick", r => r.rooms[room]?.rcl ?? null);
+    const upwSeries = of(r => r.upw ?? null);
+    const upwDataset = lineDataset("UPW", upwSeries, "--series-3");
+    if (upwSeries.filter(v => v != null).length < 5) upwDataset.pointRadius = 3;
+    rclDatasets.push(upwDataset);
+    renderLine("rclRate", "c-rcl-rate", rclDatasets);
     renderLine("energy", "c-energy", [
         lineDataset("Storage", of(r => r.se), "--series-1"),
         lineDataset("Terminal", of(r => r.te), "--series-2"),
