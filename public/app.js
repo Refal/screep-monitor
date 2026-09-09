@@ -15,7 +15,7 @@ import {
     PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, bucketId, LOD_BY_RANGE,
     fmtHits, roomPosture, defenderSummary, barrierTarget, barrierLevel, isCriticalBarrier,
     RANGES, DEFAULT_RANGE,
-    empireVerdict, threatItems, clearRooms, isOutgunned,
+    empireVerdict, threatItems, clearRooms, isOutgunned, hasNoSpawn,
     netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, TOWER_DPS_PER_ARMED,
     remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes, remoteDeployPhase,
     armyRoutesForHome, routeStatusText, excludeRoutedGuards, routeOrAbsence, routesOrAbsence,
@@ -286,9 +286,9 @@ function renderTileRow(containerId, tiles) {
 // collapse to one line. calc.js owns the judgment, this owns the wording.
 
 const VERDICT_TONE = {
-    // Above every posture: if the towers cannot break the heal, the room is
-    // losing regardless of what else is in order. Same red as `exposed`, since
-    // both are "act now" and a second red would only dilute it.
+    // Above every posture, `spawnless` included: a colony that cannot rebuild
+    // lost creeps is worse off than one merely losing the current fight.
+    spawnless:  { color: "--status-critical", headline: "NO SPAWN" },
     outgunned:  { color: "--status-critical", headline: "OUTGUNNED" },
     exposed:    { color: "--status-critical", headline: "EXPOSED" },
     engaged:    { color: "--status-warning",  headline: "ENGAGED" },
@@ -298,6 +298,7 @@ const VERDICT_TONE = {
 };
 
 const THREAT_KIND_LABEL = {
+    spawnless: "no spawn",
     outgunned: "outgunned",
     exposed: "exposed",
     engaged: "engaged",
@@ -307,6 +308,7 @@ const THREAT_KIND_LABEL = {
 
 function verdictSubtitle(v) {
     const parts = [];
+    if (v.counts.spawnless) parts.push(`${pluralCount(v.counts.spawnless, "room")} with no spawn`);
     if (v.counts.outgunned) parts.push(`${v.counts.outgunned} outgunned`);
     if (v.counts.exposed) parts.push(`${v.counts.exposed} exposed`);
     if (v.counts.engaged) parts.push(`${v.counts.engaged} engaged`);
@@ -347,6 +349,10 @@ function roomThreatCard(item) {
     const card = document.createElement("article");
     card.className = "board-card";
     card.append(threatCardHead(item));
+
+    if (item.spawnless) {
+        card.append(boardRow("Spawns", "none — colony cannot rebuild lost creeps until a new spawn is built", "critical"));
+    }
 
     const thr = item.thr;
     if (!thr) {
@@ -442,9 +448,12 @@ function renderThreatBoard() {
     // single reason and the banner has already given it — one card per room
     // would just be the same sentence N times. Name the rooms on one line
     // instead. A PARTIALLY covered snapshot is different: there, an uncovered
-    // room really is its own finding and keeps its card.
+    // room really is its own finding and keeps its card. `spawnless` rooms are
+    // kept even here — it's a structural fact off a field that is never dropped
+    // by payload-size degradation, not a "same sentence N times" case, and it's
+    // exactly the kind of chaos that makes a big payload (and degradation) likely.
     const items = v.degraded
-        ? threatItems(latest).filter(i => i.scope === "remote")
+        ? threatItems(latest).filter(i => i.scope === "remote" || i.spawnless)
         : threatItems(latest);
 
     // A degraded payload leads with that, never with a colour that reads calm.
@@ -1936,6 +1945,9 @@ function roomsColumns() {
         { key: "progress", label: "Progress",
           cell: ([, r]) => textCell(!r.rcl.pt ? "max" : `${pct(r.rcl.p, r.rcl.pt).toFixed(1)}%`) },
         { key: "eta", label: "ETA → next", cell: ([n, r]) => textCell(etaFor(n, r.rcl)) },
+        { key: "spawns", label: "Spawns",
+          hint: "STRUCTURE_SPAWN count — 0 means the room's spawn was destroyed and cannot rebuild lost creeps",
+          cell: ([, r]) => textCell(r.sp ?? "—", hasNoSpawn(r) ? "critical" : undefined) },
         { key: "spawnEnergy", label: "Spawn energy", cell: ([, r]) => textCell(`${r.e} / ${r.ec}`) },
         { key: "storage", label: "Storage", cell: ([, r]) => textCell(compact(r.se)) },
         { key: "terminal", label: "Terminal", tier: 3, cell: ([, r]) => textCell(compact(r.te)) },

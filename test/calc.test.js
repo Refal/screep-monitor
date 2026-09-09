@@ -997,6 +997,24 @@ describe("empireVerdict", () => {
         assert.equal(v.counts.outgunned, 0);
         assert.equal(v.level, "unknown");
     });
+
+    test("a spawnless room outranks an outgunned one", () => {
+        const v = empireVerdict({
+            rooms: { NoSpawn: room({ sp: 0, thr: thr() }), Losing: room({ thr: outHealed() }) },
+        });
+        assert.equal(v.counts.spawnless, 1);
+        assert.equal(v.counts.outgunned, 1);
+        assert.equal(v.level, "spawnless");
+    });
+
+    test("a spawnless room counts even with no thr at all", () => {
+        // Structural, not combat — an aftermath room with no cached threat
+        // reading must still be flagged, not folded into 'unknown'.
+        const v = empireVerdict({ rooms: { NoSpawn: room({ sp: 0 }) } });
+        assert.equal(v.counts.spawnless, 1);
+        assert.equal(v.counts.unknown, 0);
+        assert.equal(v.level, "spawnless");
+    });
 });
 
 describe("threatItems", () => {
@@ -1077,6 +1095,17 @@ describe("threatItems", () => {
         assert.deepEqual(threatItems({}), []);
         assert.deepEqual(threatItems(undefined), []);
     });
+
+    test("a spawnless room surfaces even with a clear posture, and leads outgunned", () => {
+        const items = threatItems({
+            rooms: {
+                NoSpawn: room({ sp: 0, thr: thr() }), // thr() is a clear reading
+                Outgunned: room({ thr: outHealed() }),
+            },
+        });
+        assert.deepEqual(items.map(i => i.room), ["NoSpawn", "Outgunned"]);
+        assert.deepEqual(items.map(i => i.kind), ["spawnless", "outgunned"]);
+    });
 });
 
 describe("clearRooms", () => {
@@ -1088,6 +1117,12 @@ describe("clearRooms", () => {
         const snap = { rooms: { A: room({ thr: thr() }), B: room({ thr: thr({ h: 1 }) }), C: room() } };
         const named = new Set([...clearRooms(snap), ...threatItems(snap).filter(i => i.scope === "room").map(i => i.room)]);
         assert.deepEqual([...named].sort(), ["A", "B", "C"]);
+    });
+    test("a spawnless room is never counted as clear, even with a calm thr reading", () => {
+        // Otherwise it renders as a critical card on the threat board AND gets
+        // named in the "clear" summary line right below it.
+        const snap = { rooms: { NoSpawn: room({ sp: 0, thr: thr() }) } };
+        assert.deepEqual(clearRooms(snap), []);
     });
 });
 

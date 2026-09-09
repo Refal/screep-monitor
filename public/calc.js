@@ -326,17 +326,22 @@ const POSTURE_RANK = { exposed: 0, engaged: 1, unknown: 2, clear: 3 };
 // it.
 export function empireVerdict(latest) {
     const rooms = Object.values(latest?.rooms ?? {});
-    // `outgunned` REPLACES a room's posture here rather than sitting beside it,
-    // so every room is counted exactly once and the subtitle can't report one
-    // room twice. (`strongholds` below is a separate axis — it comes from `rt`,
-    // not from these rooms.)
-    const counts = { outgunned: 0, exposed: 0, engaged: 0, unknown: 0, clear: 0 };
-    for (const r of rooms) counts[isOutgunned(r.thr) ? "outgunned" : roomPosture(r.thr).level]++;
+    // `spawnless`/`outgunned` REPLACE a room's posture here rather than sitting
+    // beside it, so every room is counted exactly once and the subtitle can't
+    // report one room twice. (`strongholds` below is a separate axis — it
+    // comes from `rt`, not from these rooms.)
+    const counts = { spawnless: 0, outgunned: 0, exposed: 0, engaged: 0, unknown: 0, clear: 0 };
+    for (const r of rooms) {
+        counts[hasNoSpawn(r) ? "spawnless" : isOutgunned(r.thr) ? "outgunned" : roomPosture(r.thr).level]++;
+    }
     const degraded = rooms.length > 0 && !hasThreatDetail(latest);
     const strongholds = (latest?.rt ?? []).filter(e => remoteThreatClass(e) === "stronghold").length;
     // Worst first, and `unknown` outranks `clear` for the same reason
-    // POSTURE_RANK puts it there: silence is not safety.
-    const level = counts.outgunned ? "outgunned"
+    // POSTURE_RANK puts it there: silence is not safety. `spawnless` outranks
+    // even `outgunned` — a colony that cannot rebuild lost creeps is worse off
+    // than one merely losing the current fight.
+    const level = counts.spawnless ? "spawnless"
+        : counts.outgunned ? "outgunned"
         : counts.exposed ? "exposed"
         : counts.engaged ? "engaged"
         : strongholds ? "stronghold"
@@ -352,20 +357,25 @@ export function empireVerdict(latest) {
 //
 // Ranking is an extension of POSTURE_RANK rather than a new scheme. An armed
 // stronghold sorts below an engaged owned room on purpose: a remote has
-// nothing to lose, an owned room has everything.
-const THREAT_RANK = { outgunned: 0, exposed: 1, engaged: 2, stronghold: 3, unknown: 4 };
+// nothing to lose, an owned room has everything. `spawnless` leads even
+// `outgunned` — see empireVerdict.
+const THREAT_RANK = { spawnless: 0, outgunned: 1, exposed: 2, engaged: 3, stronghold: 4, unknown: 5 };
 
 export function threatItems(latest) {
     const items = [];
     for (const [room, r] of Object.entries(latest?.rooms ?? {})) {
         const posture = roomPosture(r.thr);
-        if (posture.level === "clear") continue;
+        const spawnless = hasNoSpawn(r);
+        // A spawnless room must surface even with a clear combat posture — it's
+        // a structural condition, not a threat one, and can be true whether or
+        // not the room is currently under attack.
+        if (posture.level === "clear" && !spawnless) continue;
         const net = r.thr ? netTowerDps(r.thr) : null;
         // "Outgunned" REPLACES the posture rather than qualifying it: a room whose
         // towers cannot break the heal leads the list whether the bot called it
-        // exposed or merely engaged. See isOutgunned.
-        const kind = isOutgunned(r.thr) ? "outgunned" : posture.level;
-        items.push({ scope: "room", kind, room, thr: r.thr, roles: r.roles, rcl: r.rcl, posture, net });
+        // exposed or merely engaged. See isOutgunned. `spawnless` replaces both.
+        const kind = spawnless ? "spawnless" : isOutgunned(r.thr) ? "outgunned" : posture.level;
+        items.push({ scope: "room", kind, room, thr: r.thr, roles: r.roles, rcl: r.rcl, posture, net, spawnless });
     }
     for (const entry of latest?.rt ?? []) {
         if (remoteThreatClass(entry) !== "stronghold") continue;
@@ -379,9 +389,13 @@ export function threatItems(latest) {
         || a.room.localeCompare(b.room));
 }
 
+// A spawnless room is never "clear" — see empireVerdict/threatItems, which
+// give it the same override treatment. Without this, a room with sp: 0 but a
+// calm thr reading would show up here AND as a critical card on the threat
+// board above it.
 export function clearRooms(latest) {
     return Object.entries(latest?.rooms ?? {})
-        .filter(([, r]) => roomPosture(r.thr).level === "clear")
+        .filter(([, r]) => roomPosture(r.thr).level === "clear" && !hasNoSpawn(r))
         .map(([name]) => name)
         .sort();
 }
@@ -409,6 +423,15 @@ export function netTowerDps(thr) {
 // file reach it by hoisting, as they already do for netTowerDps.
 export function isOutgunned(thr) {
     return !!thr && thr.h > 0 && netTowerDps(thr) < 0;
+}
+
+// A destroyed spawn structure — checked against an explicit 0, never a falsy
+// `sp`, so a snapshot predating the bot deploy that adds this field (`sp` is
+// `undefined` there) reads as "unknown", not "spawnless". Outranks even
+// isOutgunned: a room that cannot rebuild lost creeps is in worse shape than
+// one merely losing the current fight.
+export function hasNoSpawn(r) {
+    return r.sp === 0;
 }
 
 // Everything the dashboard needs to render the def[] cell/chart correctly,

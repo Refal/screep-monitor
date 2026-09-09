@@ -153,6 +153,16 @@ function demoThr(k, i, n, f) {
     }
 }
 
+// Spawn structure count per room (k) — independent of demoThr, so it can
+// pair a spawn-loss scenario with any combat state (or none at all): the
+// dashboard must flag a spawnless room whether it's mid-raid or long quiet.
+// Room 2 ("towers dry, no defense plan") is the one picked to also have lost
+// its spawn — a raid that broke through the towers plausibly took the spawn
+// with it — proving the highlight doesn't depend on a fresh `thr` reading.
+function demoSpawns(k) {
+    return k === 2 ? 0 : 1;
+}
+
 // GPL (empire-wide, not per-room) state at row i. Modeled as a staircase, not
 // a ramp: real GPL only advances while some room sits at EnergyLevel.HIGH
 // (isPowerProcessingActive, screeps2 config.powerSpawn.ts), so gain happens
@@ -388,6 +398,7 @@ export function synthDemo(rangeHours, maxPoints) {
             rooms[name] = {
                 rcl: advanceRcl(spec.level, spec.progress, Math.max(0, gained)),
                 upw: Math.max(0, (spec.totalGain / n + (spec.oscAmp / spec.oscPeriod) * Math.cos(i / spec.oscPeriod + k)) / 120),
+                sp: demoSpawns(k),
                 e: 1200 + Math.round(600 * Math.sin(i / 5 + k)), ec: 1800,
                 se: 200000 + f * 80000 + 20000 * Math.sin(i / 9 + k), te: k * 40000,
                 q: (i + k) % 9,
