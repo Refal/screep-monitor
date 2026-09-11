@@ -313,15 +313,13 @@ describe("fmtHits", () => {
 
 describe("barrierTarget", () => {
     test("resolves the RCL-scaled ladder per kind", () => {
-        assert.equal(barrierTarget("rampart", 1), 2000);
-        assert.equal(barrierTarget("rampart", 8), 2_000_000);
-        assert.equal(barrierTarget("wall", 1), 1000);
-        assert.equal(barrierTarget("wall", 8), 2_000_000);
-        assert.equal(barrierTarget("zoneRampart", 8), 300_000_000); // not a copy of the plain rampart ladder
+        assert.equal(barrierTarget("barrier", 1), 2000);
+        assert.equal(barrierTarget("barrier", 8), 2_000_000);
+        assert.equal(barrierTarget("defenderZone", 8), 300_000_000); // not a copy of the plain barrier ladder
     });
     test("falls back to the ladder's default outside RCL 1-8", () => {
-        assert.equal(barrierTarget("rampart", 0), 10_000);
-        assert.equal(barrierTarget("rampart", 9), 10_000);
+        assert.equal(barrierTarget("barrier", 0), 10_000);
+        assert.equal(barrierTarget("barrier", 9), 10_000);
     });
     test("returns null for an unknown barrier kind", () => {
         assert.equal(barrierTarget("moat", 5), null);
@@ -330,29 +328,29 @@ describe("barrierTarget", () => {
 
 describe("barrierLevel", () => {
     test("returns null when hits are absent (unknown, never good)", () => {
-        assert.equal(barrierLevel(null, "rampart", 1), null);
+        assert.equal(barrierLevel(null, "barrier", 1), null);
     });
     test("ramps against the RCL target", () => {
-        assert.equal(barrierLevel(2000, "rampart", 1), 5);  // at target
-        assert.equal(barrierLevel(200, "rampart", 1), 1);   // 10% of target
+        assert.equal(barrierLevel(2000, "barrier", 1), 5);  // at target
+        assert.equal(barrierLevel(200, "barrier", 1), 1);   // 10% of target
     });
     test("clamps above-target hits to the top bucket instead of overflowing", () => {
-        assert.equal(barrierLevel(4000, "rampart", 1), 5);  // 2x target
+        assert.equal(barrierLevel(4000, "barrier", 1), 5);  // 2x target
     });
 });
 
 describe("isCriticalBarrier", () => {
-    test("flags a rampart just under the absolute critical-repair floor", () => {
-        assert.equal(isCriticalBarrier(CRITICAL_RAMPART_HITS - 1, "rampart"), true);
+    test("flags a defender zone just under the absolute critical-repair floor", () => {
+        assert.equal(isCriticalBarrier(CRITICAL_RAMPART_HITS - 1, "defenderZone"), true);
     });
-    test("does not flag a rampart at or above the floor", () => {
-        assert.equal(isCriticalBarrier(CRITICAL_RAMPART_HITS, "rampart"), false);
+    test("does not flag a defender zone at or above the floor", () => {
+        assert.equal(isCriticalBarrier(CRITICAL_RAMPART_HITS, "defenderZone"), false);
     });
-    test("never flags walls (the bot's priority-0 rule is rampart-only)", () => {
-        assert.equal(isCriticalBarrier(100, "wall"), false);
+    test("never flags the outside-zone barrier (secondary/informational only, only the zone is critical)", () => {
+        assert.equal(isCriticalBarrier(100, "barrier"), false);
     });
     test("does not flag an absent reading", () => {
-        assert.equal(isCriticalBarrier(null, "rampart"), false);
+        assert.equal(isCriticalBarrier(null, "defenderZone"), false);
     });
 });
 

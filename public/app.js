@@ -378,11 +378,16 @@ function roomThreatCard(item) {
             : thr.smAvail > 0 ? `${pluralCount(thr.smAvail, "charge")} ready`
             : "no charge available",
         thr.sm === undefined && thr.smAvail === 0 ? "critical" : undefined));
-    card.append(boardRow("Zone rampart",
+    card.append(boardRow("Defender zone",
         thr.defRmp != null
-            ? `${fmtHits(thr.defRmp)} of ${fmtHits(barrierTarget("zoneRampart", item.rcl.l))} target at RCL ${item.rcl.l}`
-            : "no rampart inside the configured defender zone",
-        thr.defRmp == null ? "na" : isCriticalBarrier(thr.defRmp, "zoneRampart") ? "critical" : undefined));
+            ? `${fmtHits(thr.defRmp)} of ${fmtHits(barrierTarget("defenderZone", item.rcl.l))} target at RCL ${item.rcl.l}`
+            : BARRIER_ABSENT.defenderZone.why,
+        thr.defRmp == null ? "na" : isCriticalBarrier(thr.defRmp, "defenderZone") ? "critical" : undefined));
+    card.append(boardRow("Barrier",
+        thr.bar != null
+            ? `${fmtHits(thr.bar)} of ${fmtHits(barrierTarget("barrier", item.rcl.l))} target at RCL ${item.rcl.l} — buys time for a defender to spawn`
+            : BARRIER_ABSENT.barrier.why,
+        thr.bar == null ? "na" : isCriticalBarrier(thr.bar, "barrier") ? "critical" : undefined));
     const def = defenderSummary(thr, item.roles);
     card.append(boardRow("Defenders",
         def.des ? `${def.cur} of ${def.des} fielded` : DEF_STATE_EXPLAIN[def.state] ?? def.state,
@@ -581,11 +586,11 @@ function renderDefenseTiles() {
     const longestCd = withThr.reduce((a, [, r]) => Math.max(a, r.thr.smCd ?? 0), 0);
     const ms = observedMsPerTick(history);
 
-    const rmps = withThr.filter(([, r]) => r.thr.rmp != null);
-    const weakestRmp = rmps.length ? rmps.reduce((a, b) => a[1].thr.rmp < b[1].thr.rmp ? a : b) : null;
-    const defRmps = withThr.map(([, r]) => r.thr.defRmp).filter(v => v != null);
-    const minDefRmp = defRmps.length ? Math.min(...defRmps) : null;
-    const criticalRmpCount = withThr.filter(([, r]) => isCriticalBarrier(r.thr.rmp, "rampart")).length;
+    const defRmpEntries = withThr.filter(([, r]) => r.thr.defRmp != null);
+    const weakestDefRmp = defRmpEntries.length ? defRmpEntries.reduce((a, b) => a[1].thr.defRmp < b[1].thr.defRmp ? a : b) : null;
+    const bars = withThr.map(([, r]) => r.thr.bar).filter(v => v != null);
+    const minBar = bars.length ? Math.min(...bars) : null;
+    const criticalZoneCount = withThr.filter(([, r]) => isCriticalBarrier(r.thr.defRmp, "defenderZone")).length;
 
     const tiles = [
         {
@@ -606,8 +611,8 @@ function renderDefenseTiles() {
             sub: longestCd ? `longest cooldown ~${ms != null ? fmtDuration(longestCd * ms) : `${compact(longestCd)} ticks`}` : undefined,
         },
         {
-            label: "Weakest rampart", value: weakestRmp ? fmtHits(weakestRmp[1].thr.rmp) : "—", delta: weakestRmp ? weakestRmp[0] : "—",
-            sub: `zone ${fmtHits(minDefRmp)} · ${criticalRmpCount} under ${fmtHits(CRITICAL_RAMPART_HITS)}`,
+            label: "Weakest defender zone", value: weakestDefRmp ? fmtHits(weakestDefRmp[1].thr.defRmp) : "—", delta: weakestDefRmp ? weakestDefRmp[0] : "—",
+            sub: `barrier ${fmtHits(minBar)} · ${criticalZoneCount} zone${criticalZoneCount === 1 ? "" : "s"} under ${fmtHits(CRITICAL_RAMPART_HITS)}`,
         },
     ];
     renderTileRow("defense-tiles", tiles);
@@ -625,16 +630,12 @@ function defenseColumns() {
           hint: "worst-case tower dps minus hostile heal/tick — negative means towers alone cannot break the heal",
           cell: ([, r]) => netDpsCell(r.thr) },
         { key: "safeMode", label: "Safe mode", cell: ([, r]) => safeModeCell(r.thr) },
-        { key: "rampart", label: "Rampart", hint: "weakest own rampart",
-          cell: ([, r]) => barrierCell(r.thr?.rmp, "rampart", r.rcl.l) },
-        { key: "zoneRampart", label: "Zone rampart",
+        { key: "zone", label: "Zone",
           hint: "weakest rampart inside the configured defender zone — the one you actually fight behind",
-          cell: ([, r]) => barrierCell(r.thr?.defRmp, "zoneRampart", r.rcl.l) },
-        // Was smuggled into the Rampart cell's tooltip; it is a distinct
-        // measurement against its own RCL ladder, so it gets its own column.
-        { key: "wall", label: "Weakest wall", tier: 3,
-          hint: "weakest own wall, ramped against the wall repair target for this RCL",
-          cell: ([, r]) => barrierCell(r.thr?.wall, "wall", r.rcl.l) },
+          cell: ([, r]) => barrierCell(r.thr?.defRmp, "defenderZone", r.rcl.l) },
+        { key: "barrier", label: "Barrier", tier: 3,
+          hint: "weakest own rampart or wall outside the defender zone — buys time for a defender to spawn, not a final line",
+          cell: ([, r]) => barrierCell(r.thr?.bar, "barrier", r.rcl.l) },
         { key: "defenders", label: "Defenders",
           hint: "home defense fleet from the live spawn manifest, plus this room's standing remote guards; on-demand squads are in Squads out",
           cell: ([, r]) => defCell(r.thr, r.roles) },
@@ -1323,8 +1324,8 @@ function renderRoomDefense(room) {
         { label: "Towers", value: `${thr.twrArmed}/${thr.twrTotal}`, delta: `worst-case ${fmtInt.format(thr.dps)} dps`,
           sub: thr.h ? (netDps < 0 ? `heal exceeds tower dps by ${fmtInt.format(-netDps)}` : `towers out-damage heal by ${fmtInt.format(netDps)}`) : "" },
         { label: "Safe mode", value: smValue, delta: smActive ? "active" : "available", sub: smSub },
-        { label: "Barriers", value: fmtHits(thr.rmp), delta: `zone ${fmtHits(thr.defRmp)}`,
-          sub: `wall ${fmtHits(thr.wall)} · targets ${fmtHits(barrierTarget("rampart", r.rcl.l))} / ${fmtHits(barrierTarget("zoneRampart", r.rcl.l))} at RCL ${r.rcl.l}` },
+        { label: "Barriers", value: fmtHits(thr.defRmp), delta: `barrier ${fmtHits(thr.bar)}`,
+          sub: `targets zone ${fmtHits(barrierTarget("defenderZone", r.rcl.l))} / barrier ${fmtHits(barrierTarget("barrier", r.rcl.l))} at RCL ${r.rcl.l}` },
     ]);
 
     // Defense fleet card: def[] home-defender slots, standing army_member
@@ -1647,14 +1648,13 @@ function safeModeCell(thr) {
     return td;
 }
 
-// `kind` is one of calc.js's BARRIER_TARGETS keys ("rampart"/"zoneRampart"/
-// "wall"); `rcl` resolves the RCL-scaled repair target the hits are ramped
-// against, so a healthy low-RCL rampart and a neglected high-RCL one never
-// read the same color.
+// `kind` is one of calc.js's BARRIER_TARGETS keys ("defenderZone"/"barrier");
+// `rcl` resolves the RCL-scaled repair target the hits are ramped against, so
+// a healthy low-RCL rampart and a neglected high-RCL one never read the same
+// color.
 const BARRIER_ABSENT = {
-    rampart:     { word: "no rampart", why: "this room has no own rampart" },
-    zoneRampart: { word: "no zone",    why: "no rampart inside the configured defender zone" },
-    wall:        { word: "no wall",    why: "this room has no own wall" },
+    defenderZone: { word: "no zone",    why: "no rampart inside the configured defender zone" },
+    barrier:      { word: "no barrier", why: "no own rampart or wall outside the configured defender zone" },
 };
 
 function barrierCell(hits, kind, rcl) {

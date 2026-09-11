@@ -244,16 +244,16 @@ export const NUKER_GHODIUM_CAPACITY = 5000;
 export const NUKER_ENERGY_CAPACITY = 300000;
 export const NUKER_COOLDOWN = 100000; // ticks after a launch
 
-// RCL-scaled repair targets — screeps2 config/config.repairs.ts:18-27,
-// DEFAULT_WALL_MAX_HEALTH / DEFAULT_RAMPART_MAX_HEALTH /
+// RCL-scaled repair targets — screeps2 config/config.repairs.ts,
+// DEFAULT_BARRIER_MAX_HEALTH (wall and rampart merged into one outside-zone
+// ladder, per-RCL max of the two former tables) and
 // DEFAULT_SAFE_ZONE_RAMPART_MAX_HEALTH, copied verbatim (REPAIRS_BY_SHARD is
 // empty today, so the defaults are live everywhere). Colouring barrier hits
 // against these rather than an absolute threshold is the point: a healthy
 // RCL6 rampart and a neglected RCL8 one must not read the same.
 export const BARRIER_TARGETS = {
-    wall: { 1: 1000, 2: 5000, 3: 10_000, 4: 50_000, 5: 200_000, 6: 600_000, 7: 1_200_000, 8: 2_000_000, default: 5000 },
-    rampart: { 1: 2000, 2: 10_000, 3: 20_000, 4: 50_000, 5: 200_000, 6: 600_000, 7: 1_200_000, 8: 2_000_000, default: 10_000 },
-    zoneRampart: { 1: 2_000, 2: 10_000, 3: 20_000, 4: 200_000, 5: 1_000_000, 6: 2_200_000, 7: 6_600_000, 8: 300_000_000, default: 10_000 },
+    barrier: { 1: 2000, 2: 10_000, 3: 20_000, 4: 50_000, 5: 200_000, 6: 600_000, 7: 1_200_000, 8: 2_000_000, default: 10_000 },
+    defenderZone: { 1: 2_000, 2: 10_000, 3: 20_000, 4: 200_000, 5: 1_000_000, 6: 2_200_000, 7: 6_600_000, 8: 300_000_000, default: 10_000 },
 };
 
 // Mirrors the bot's own console formatter — threatReport.ts:99-103 — term for
@@ -283,10 +283,13 @@ export function barrierLevel(hits, kind, rcl) {
     return rampLevel(Math.min(1, hits / target));
 }
 
-// Absolute cliff below CRITICAL_RAMPART_HITS, independent of RCL — walls
-// aren't covered (the bot's own priority-0 rule is rampart-only).
+// Absolute cliff below CRITICAL_RAMPART_HITS, independent of RCL — only the
+// defender zone can go critical. The outside-zone barrier is secondary and
+// purely informational (its only job is buying time for a defender to
+// spawn), so it ramps through the normal fill-level colors but never flags
+// critical-red.
 export function isCriticalBarrier(hits, kind) {
-    return kind !== "wall" && hits != null && hits < CRITICAL_RAMPART_HITS;
+    return kind === "defenderZone" && hits != null && hits < CRITICAL_RAMPART_HITS;
 }
 
 // Reproduces roomStatusIcon (threatReport.ts:120-126) term for term, so this
