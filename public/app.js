@@ -1325,8 +1325,9 @@ function renderRoomDefense(room) {
         { label: "Towers", value: `${thr.twrArmed}/${thr.twrTotal}`, delta: `worst-case ${fmtInt.format(thr.dps)} dps`,
           sub: thr.h ? (netDps < 0 ? `heal exceeds tower dps by ${fmtInt.format(-netDps)}` : `towers out-damage heal by ${fmtInt.format(netDps)}`) : "" },
         { label: "Safe mode", value: smValue, delta: smActive ? "active" : "available", sub: smSub },
-        { label: "Barriers", value: fmtHits(thr.defRmp), delta: `barrier ${fmtHits(thr.bar)}`,
-          sub: `targets zone ${fmtHits(barrierTarget("defenderZone", r.rcl.l))} / barrier ${fmtHits(barrierTarget("barrier", r.rcl.l))} at RCL ${r.rcl.l}` },
+        { label: "Barriers",
+          value: `Zone: ${fmtHits(thr.defRmp)}/${fmtHits(barrierTarget("defenderZone", r.rcl.l))} at RCL ${r.rcl.l}`,
+          delta: `Barrier: ${fmtHits(thr.bar)}/${fmtHits(barrierTarget("barrier", r.rcl.l))}` },
     ]);
 
     // Defense fleet card: def[] home-defender slots, standing army_member
