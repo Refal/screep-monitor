@@ -555,6 +555,7 @@ function renderDefenseTiles() {
     const rooms = Object.entries(latest.rooms);
     const withThr = rooms.filter(([, r]) => r.thr);
     const unknownCount = rooms.length - withThr.length;
+    const rcl8 = withThr.filter(([, r]) => r.rcl?.l === 8);
 
     const totalH = withThr.reduce((a, [, r]) => a + r.thr.h, 0);
     const hostileRoomCount = withThr.filter(([, r]) => r.thr.h > 0).length;
@@ -579,18 +580,18 @@ function renderDefenseTiles() {
     const worstOutgunned = outgunned[0]?.[0];
     const worstOutgunnedNet = outgunned[0]?.[1];
 
-    const smAvails = withThr.map(([, r]) => r.thr.smAvail);
+    const smAvails = rcl8.map(([, r]) => r.thr.smAvail);
     const minSmAvail = smAvails.length ? Math.min(...smAvails) : null;
     const activeSm = withThr.filter(([, r]) => r.thr.sm !== undefined).length;
     const zeroSm = withThr.filter(([, r]) => r.thr.smAvail === 0).length;
     const longestCd = withThr.reduce((a, [, r]) => Math.max(a, r.thr.smCd ?? 0), 0);
     const ms = observedMsPerTick(history);
 
-    const defRmpEntries = withThr.filter(([, r]) => r.thr.defRmp != null);
+    const defRmpEntries = rcl8.filter(([, r]) => r.thr.defRmp != null);
     const weakestDefRmp = defRmpEntries.length ? defRmpEntries.reduce((a, b) => a[1].thr.defRmp < b[1].thr.defRmp ? a : b) : null;
-    const bars = withThr.map(([, r]) => r.thr.bar).filter(v => v != null);
+    const bars = rcl8.map(([, r]) => r.thr.bar).filter(v => v != null);
     const minBar = bars.length ? Math.min(...bars) : null;
-    const criticalZoneCount = withThr.filter(([, r]) => isCriticalBarrier(r.thr.defRmp, "defenderZone")).length;
+    const criticalZoneCount = rcl8.filter(([, r]) => isCriticalBarrier(r.thr.defRmp, "defenderZone")).length;
 
     const tiles = [
         {
@@ -607,11 +608,11 @@ function renderDefenseTiles() {
             sub: worstOutgunned ? `${worstOutgunned[0]} ${fmtInt.format(worstOutgunnedNet)}` : "—",
         },
         {
-            label: "Safe-mode charges (min)", value: minSmAvail ?? "—", delta: `${activeSm} active · ${zeroSm} room${zeroSm === 1 ? "" : "s"} at 0`,
+            label: "Safe-mode charges (min, RCL8)", value: minSmAvail ?? "—", delta: `${activeSm} active · ${zeroSm} room${zeroSm === 1 ? "" : "s"} at 0`,
             sub: longestCd ? `longest cooldown ~${ms != null ? fmtDuration(longestCd * ms) : `${compact(longestCd)} ticks`}` : undefined,
         },
         {
-            label: "Weakest defender zone", value: weakestDefRmp ? fmtHits(weakestDefRmp[1].thr.defRmp) : "—", delta: weakestDefRmp ? weakestDefRmp[0] : "—",
+            label: "Weakest defender zone (RCL8)", value: weakestDefRmp ? fmtHits(weakestDefRmp[1].thr.defRmp) : "—", delta: weakestDefRmp ? weakestDefRmp[0] : "—",
             sub: `barrier ${fmtHits(minBar)} · ${criticalZoneCount} zone${criticalZoneCount === 1 ? "" : "s"} under ${fmtHits(CRITICAL_RAMPART_HITS)}`,
         },
     ];
