@@ -110,7 +110,9 @@ ever urgent is "is anything on fire?".
   strongholds, worst first; clear rooms collapse to one line. **A snapshot whose threat
   detail was degraded away must never produce a calm verdict** — `empireVerdict` returns
   `degraded` for that, and the board headlines it instead of a posture. There is a unit test
-  pinning this, and `?demo=degraded` reaches it in a browser.
+  pinning this, and `?demo=degraded` reaches it in a browser. A room with an incoming nuke
+  (`nukes`) surfaces here too, ranked above even `spawnless`, using the same "overrides the
+  posture, shows even on a clear room" mechanism.
 - **Sections** are native `<details data-section="…">` accordions. A collapsed one is
   `display: none`, and a Chart.js chart built inside a zero-sized container bakes a wrong
   `devicePixelRatio` it does not recover from, so `SECTIONS` in `public/app.js` renders

@@ -16,6 +16,7 @@ import {
     fmtHits, roomPosture, defenderSummary, barrierTarget, barrierLevel, isCriticalBarrier,
     RANGES, DEFAULT_RANGE,
     empireVerdict, threatItems, clearRooms, isOutgunned, hasNoSpawn,
+    hasIncomingNuke, incomingNukes,
     netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, TOWER_DPS_PER_ARMED,
     remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes, remoteDeployPhase,
     armyRoutesForHome, routeStatusText, excludeRoutedGuards, routeOrAbsence, routesOrAbsence,
@@ -286,8 +287,11 @@ function renderTileRow(containerId, tiles) {
 // collapse to one line. calc.js owns the judgment, this owns the wording.
 
 const VERDICT_TONE = {
-    // Above every posture, `spawnless` included: a colony that cannot rebuild
-    // lost creeps is worse off than one merely losing the current fight.
+    // Above every posture, `spawnless` included: a scheduled, unavoidable hit
+    // is the single most decision-relevant fact about a room when true.
+    nuked:      { color: "--status-critical", headline: "NUKE INCOMING" },
+    // Above every remaining posture: a colony that cannot rebuild lost creeps
+    // is worse off than one merely losing the current fight.
     spawnless:  { color: "--status-critical", headline: "NO SPAWN" },
     outgunned:  { color: "--status-critical", headline: "OUTGUNNED" },
     exposed:    { color: "--status-critical", headline: "EXPOSED" },
@@ -298,6 +302,7 @@ const VERDICT_TONE = {
 };
 
 const THREAT_KIND_LABEL = {
+    nuked: "nuke incoming",
     spawnless: "no spawn",
     outgunned: "outgunned",
     exposed: "exposed",
@@ -308,6 +313,7 @@ const THREAT_KIND_LABEL = {
 
 function verdictSubtitle(v) {
     const parts = [];
+    if (v.counts.nuked) parts.push(`${pluralCount(v.counts.nuked, "room")} facing an incoming nuke`);
     if (v.counts.spawnless) parts.push(`${pluralCount(v.counts.spawnless, "room")} with no spawn`);
     if (v.counts.outgunned) parts.push(`${v.counts.outgunned} outgunned`);
     if (v.counts.exposed) parts.push(`${v.counts.exposed} exposed`);
@@ -352,6 +358,12 @@ function roomThreatCard(item) {
 
     if (item.spawnless) {
         card.append(boardRow("Spawns", "none — colony cannot rebuild lost creeps until a new spawn is built", "critical"));
+    }
+    // Nuke rows come before the `!thr` early return below — an incoming nuke
+    // doesn't depend on threat detail, so it must still show on a degraded
+    // snapshot that has dropped `thr` entirely.
+    for (const [ticksToLand, launchRoom, x, y] of item.nukes ?? []) {
+        card.append(boardRow("Nuke", nukeLandingText(ticksToLand, launchRoom, x, y), "critical"));
     }
 
     const thr = item.thr;
@@ -453,12 +465,14 @@ function renderThreatBoard() {
     // single reason and the banner has already given it — one card per room
     // would just be the same sentence N times. Name the rooms on one line
     // instead. A PARTIALLY covered snapshot is different: there, an uncovered
-    // room really is its own finding and keeps its card. `spawnless` rooms are
-    // kept even here — it's a structural fact off a field that is never dropped
-    // by payload-size degradation, not a "same sentence N times" case, and it's
-    // exactly the kind of chaos that makes a big payload (and degradation) likely.
+    // room really is its own finding and keeps its card. `spawnless`/nuked
+    // rooms are kept even here — both are structural or scheduled facts off
+    // fields that are never dropped by payload-size degradation, not a "same
+    // sentence N times" case (a nuke's ETA/launch room differs room to room),
+    // and they're exactly the kind of chaos that makes a big payload (and
+    // degradation) likely.
     const items = v.degraded
-        ? threatItems(latest).filter(i => i.scope === "remote" || i.spawnless)
+        ? threatItems(latest).filter(i => i.scope === "remote" || i.spawnless || i.nukes.length)
         : threatItems(latest);
 
     // A degraded payload leads with that, never with a colour that reads calm.
@@ -1216,6 +1230,33 @@ function renderRoomTiles(room) {
     renderTileRow("room-tiles", tiles);
 }
 
+// Shared by the threat-board card and the per-room nukes section — ticksToLand
+// counts down by exactly 1 per tick (unlike the nuker's fill stocks), so no
+// rate estimation is needed, just the same observed ms/tick → fmtDuration
+// conversion the nuker cooldown ETA already uses below.
+function nukeEta(ticksToLand) {
+    const ms = observedMsPerTick(history);
+    return ms != null ? `~${fmtDuration(ticksToLand * ms)}` : `~${compact(ticksToLand)} ticks`;
+}
+function nukeLandingText(ticksToLand, launchRoom, x, y) {
+    return `lands in ${nukeEta(ticksToLand)} at (${x}, ${y}) · launched from ${launchRoom}`;
+}
+
+// Incoming nukes for the selected room — tiles only, hidden entirely when
+// there are none. No chart: ticksToLand counts down deterministically, so
+// there's no trend to plot the way the nuker's fill stocks have one.
+function renderNukes(room) {
+    const nukes = incomingNukes(latest.rooms[room] ?? {});
+    $("nukes-section").hidden = nukes.length === 0;
+    if (nukes.length === 0) return;
+    renderTileRow("nukes-tiles", nukes.map(([ticksToLand, launchRoom, x, y], i) => ({
+        label: nukes.length > 1 ? `Nuke ${i + 1}` : "Nuke",
+        value: nukeEta(ticksToLand),
+        delta: `from ${launchRoom} · (${x}, ${y})`,
+        sub: `lands at tick ${fmtInt.format(latest.tick + ticksToLand)}`,
+    })));
+}
+
 // Nuker status for the selected room — tiles + a two-series fill chart,
 // hidden entirely when the room has no nuker. `nuk` is [ghodium, energy,
 // cooldown]; absence is never a truncated payload (see nukerCell) so it's an
@@ -1420,6 +1461,7 @@ function renderRoomCharts() {
     ]);
     renderRolesChart(room);
     renderBoostGrid(room);
+    renderNukes(room);
     renderNuker(room, of);
     renderRoomDefense(room);
 }
@@ -1560,6 +1602,19 @@ function nukerCell(nuk) {
     td.title = `${ready ? "ready · " : cd > 0 ? `cooldown ${fmtInt.format(cd)} · ` : ""}`
         + `ghodium ${fmtInt.format(g)} / ${fmtInt.format(NUKER_GHODIUM_CAPACITY)} · `
         + `energy ${fmtInt.format(e)} / ${fmtInt.format(NUKER_ENERGY_CAPACITY)}`;
+    return td;
+}
+
+// Soonest-first array from incomingNukes; empty means none. Unlike nukerCell's
+// naCell (a room simply has no nuker, forever), an empty title here is a
+// genuinely reassuring "no incoming nukes", not an absence with a meaning to
+// explain.
+function nukesCell(nukes) {
+    if (!nukes.length) return naCell("none", "no incoming nukes");
+    const td = document.createElement("td");
+    const [soonest] = nukes;
+    td.append(makeBadge(cssVar("--status-critical"), `${compact(soonest[0])}t`));
+    td.title = nukes.map(([t, room, x, y]) => `${compact(t)}t from ${room} (${x}, ${y})`).join(" · ");
     return td;
 }
 
@@ -1941,6 +1996,10 @@ function roomsColumns() {
     // The ETA cell is the one that needs history, not just the snapshot — it
     // reads the room's own RCL series to get an observed points-per-tick.
     const etaFor = (name, rcl) => etaCellText(levelEta(row => row.rooms[name]?.rcl ?? null, rcl, history), !rcl.pt);
+    // Incoming nukes are rare — unlike spawns/nuker, this column only appears
+    // at all once some room actually has one, so a normal day doesn't carry a
+    // column of "none" cells nobody needs to see.
+    const anyNukes = Object.values(latest.rooms).some(hasIncomingNuke);
     return [
         { key: "room", label: "Room", primary: true, cell: ([n]) => roomLinkCell(n) },
         { key: "rcl", label: "RCL", cell: ([, r]) => textCell(String(r.rcl.l)) },
@@ -1950,6 +2009,9 @@ function roomsColumns() {
         { key: "spawns", label: "Spawns",
           hint: "STRUCTURE_SPAWN count — 0 means the room's spawn was destroyed and cannot rebuild lost creeps",
           cell: ([, r]) => textCell(r.sp ?? "—", hasNoSpawn(r) ? "critical" : undefined) },
+        ...(anyNukes ? [{ key: "nukes", label: "Nukes",
+            hint: "incoming nukes on this room, soonest first — see the room view for full detail",
+            cell: ([, r]) => nukesCell(incomingNukes(r)) }] : []),
         { key: "spawnEnergy", label: "Spawn energy", cell: ([, r]) => textCell(`${r.e} / ${r.ec}`) },
         { key: "storage", label: "Storage", cell: ([, r]) => textCell(compact(r.se)) },
         { key: "terminal", label: "Terminal", tier: 3, cell: ([, r]) => textCell(compact(r.te)) },

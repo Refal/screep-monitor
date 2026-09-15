@@ -66,6 +66,41 @@ function demoNuk(k, i, n, f) {
     }
 }
 
+// Incoming nukes per room (k) at row i. Real nukes are rare, so most rooms
+// carry none. Covers: one with plenty of time left, landed on room 0 — quiet
+// and otherwise clear (demoThr case 0), exercising the dashboard's "surfaces
+// even with a clear posture" override; one about to land, stacked onto room
+// 1's already-active attack; two stacked on room 3, deliberately supplied out
+// of soonest-first order to exercise the dashboard's own defensive re-sort
+// (incomingNukes); and one on room 5 — whose thr is dropped entirely
+// (demoThr case 5) — that only starts publishing partway through the window,
+// the same leading-gap shape as demoNuk's case 5/demoGpl, proving a nuke row
+// doesn't depend on threat detail. `tick`/`now` mirror the row.tick formula
+// below (76680000 + i * 120) so ticksToLand counts down by exactly one tick
+// step per row, the way a real nuke's timeToLand does.
+function demoNukes(k, i, n) {
+    const tick = 76680000 + i * 120;
+    const now = 76680000 + (n - 1) * 120;
+    switch (k) {
+        case 0: // plenty of time left, on an otherwise-clear room
+            return [[now + 40000 - tick, "W6N6", 30, 40]];
+        case 1: // about to land
+            return [[now + 300 - tick, "W5N5", 10, 20]];
+        case 3: // two stacked, supplied unsorted
+            return [
+                [now + 30000 - tick, "W9N3", 25, 25],
+                [now + 2000 - tick, "W6N6", 15, 35],
+            ];
+        case 5: { // starts publishing partway through the window
+            const appearAt = Math.floor(n * 0.4);
+            if (i < appearAt) return undefined;
+            return [[now + 1000 - tick, "W5N5", 5, 45]];
+        }
+        default:
+            return undefined;
+    }
+}
+
 // Repair-queue length per room (k) at row i — [own, remotes]. Mirrors the
 // bot's "omit when both are 0" contract: returns null for "nothing queued
 // this row", which the caller drops from the payload rather than storing a
@@ -394,6 +429,7 @@ export function synthDemo(rangeHours, maxPoints) {
             const frac = fillFrac[k];
             const spec = rclSpecs[k];
             const nuk = demoNuk(k, i, n, f);
+            const nukes = demoNukes(k, i, n);
             const rq = demoRq(k, i, n, f);
             const roles = degraded ? null : demoRoles(k);
             const thr = degraded ? undefined : demoThr(k, i, n, f);
@@ -430,6 +466,7 @@ export function synthDemo(rangeHours, maxPoints) {
                     G: Math.round(500 * frac), // present in bst but absent from bmax below — exercises "no max" chip
                 },
                 ...(nuk ? { nuk } : {}),
+                ...(nukes ? { nukes } : {}),
                 ...(rq ? { rq } : {}),
             };
         });

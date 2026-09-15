@@ -329,21 +329,24 @@ const POSTURE_RANK = { exposed: 0, engaged: 1, unknown: 2, clear: 3 };
 // it.
 export function empireVerdict(latest) {
     const rooms = Object.values(latest?.rooms ?? {});
-    // `spawnless`/`outgunned` REPLACE a room's posture here rather than sitting
-    // beside it, so every room is counted exactly once and the subtitle can't
-    // report one room twice. (`strongholds` below is a separate axis — it
-    // comes from `rt`, not from these rooms.)
-    const counts = { spawnless: 0, outgunned: 0, exposed: 0, engaged: 0, unknown: 0, clear: 0 };
+    // `nuked`/`spawnless`/`outgunned` REPLACE a room's posture here rather than
+    // sitting beside it, so every room is counted exactly once and the
+    // subtitle can't report one room twice. (`strongholds` below is a separate
+    // axis — it comes from `rt`, not from these rooms.)
+    const counts = { nuked: 0, spawnless: 0, outgunned: 0, exposed: 0, engaged: 0, unknown: 0, clear: 0 };
     for (const r of rooms) {
-        counts[hasNoSpawn(r) ? "spawnless" : isOutgunned(r.thr) ? "outgunned" : roomPosture(r.thr).level]++;
+        counts[hasIncomingNuke(r) ? "nuked" : hasNoSpawn(r) ? "spawnless" : isOutgunned(r.thr) ? "outgunned" : roomPosture(r.thr).level]++;
     }
     const degraded = rooms.length > 0 && !hasThreatDetail(latest);
     const strongholds = (latest?.rt ?? []).filter(e => remoteThreatClass(e) === "stronghold").length;
     // Worst first, and `unknown` outranks `clear` for the same reason
-    // POSTURE_RANK puts it there: silence is not safety. `spawnless` outranks
-    // even `outgunned` — a colony that cannot rebuild lost creeps is worse off
-    // than one merely losing the current fight.
-    const level = counts.spawnless ? "spawnless"
+    // POSTURE_RANK puts it there: silence is not safety. `nuked` leads even
+    // `spawnless` — a scheduled, unavoidable hit outranks a structural
+    // weakness — and `spawnless` outranks `outgunned` — a colony that cannot
+    // rebuild lost creeps is worse off than one merely losing the current
+    // fight.
+    const level = counts.nuked ? "nuked"
+        : counts.spawnless ? "spawnless"
         : counts.outgunned ? "outgunned"
         : counts.exposed ? "exposed"
         : counts.engaged ? "engaged"
@@ -361,24 +364,30 @@ export function empireVerdict(latest) {
 // Ranking is an extension of POSTURE_RANK rather than a new scheme. An armed
 // stronghold sorts below an engaged owned room on purpose: a remote has
 // nothing to lose, an owned room has everything. `spawnless` leads even
-// `outgunned` — see empireVerdict.
-const THREAT_RANK = { spawnless: 0, outgunned: 1, exposed: 2, engaged: 3, stronghold: 4, unknown: 5 };
+// `outgunned` — see empireVerdict. `nuked` leads even `spawnless` — see
+// empireVerdict.
+const THREAT_RANK = { nuked: 0, spawnless: 1, outgunned: 2, exposed: 3, engaged: 4, stronghold: 5, unknown: 6 };
 
 export function threatItems(latest) {
     const items = [];
     for (const [room, r] of Object.entries(latest?.rooms ?? {})) {
         const posture = roomPosture(r.thr);
         const spawnless = hasNoSpawn(r);
-        // A spawnless room must surface even with a clear combat posture — it's
-        // a structural condition, not a threat one, and can be true whether or
-        // not the room is currently under attack.
-        if (posture.level === "clear" && !spawnless) continue;
+        const nuked = hasIncomingNuke(r);
+        // A spawnless or nuked room must surface even with a clear combat
+        // posture — both are structural/scheduled conditions, not threat ones,
+        // and can be true whether or not the room is currently under attack.
+        if (posture.level === "clear" && !spawnless && !nuked) continue;
         const net = r.thr ? netTowerDps(r.thr) : null;
         // "Outgunned" REPLACES the posture rather than qualifying it: a room whose
         // towers cannot break the heal leads the list whether the bot called it
-        // exposed or merely engaged. See isOutgunned. `spawnless` replaces both.
-        const kind = spawnless ? "spawnless" : isOutgunned(r.thr) ? "outgunned" : posture.level;
-        items.push({ scope: "room", kind, room, thr: r.thr, roles: r.roles, rcl: r.rcl, posture, net, spawnless });
+        // exposed or merely engaged. See isOutgunned. `spawnless`/`nuked` replace
+        // all of the above.
+        const kind = nuked ? "nuked" : spawnless ? "spawnless" : isOutgunned(r.thr) ? "outgunned" : posture.level;
+        items.push({
+            scope: "room", kind, room, thr: r.thr, roles: r.roles, rcl: r.rcl, posture, net,
+            spawnless, nukes: incomingNukes(r),
+        });
     }
     for (const entry of latest?.rt ?? []) {
         if (remoteThreatClass(entry) !== "stronghold") continue;
@@ -392,13 +401,13 @@ export function threatItems(latest) {
         || a.room.localeCompare(b.room));
 }
 
-// A spawnless room is never "clear" — see empireVerdict/threatItems, which
-// give it the same override treatment. Without this, a room with sp: 0 but a
-// calm thr reading would show up here AND as a critical card on the threat
-// board above it.
+// A spawnless or nuked room is never "clear" — see empireVerdict/threatItems,
+// which give both the same override treatment. Without this, a room with
+// sp: 0 (or an incoming nuke) but a calm thr reading would show up here AND
+// as a critical card on the threat board above it.
 export function clearRooms(latest) {
     return Object.entries(latest?.rooms ?? {})
-        .filter(([, r]) => roomPosture(r.thr).level === "clear" && !hasNoSpawn(r))
+        .filter(([, r]) => roomPosture(r.thr).level === "clear" && !hasNoSpawn(r) && !hasIncomingNuke(r))
         .map(([name]) => name)
         .sort();
 }
@@ -435,6 +444,19 @@ export function isOutgunned(thr) {
 // one merely losing the current fight.
 export function hasNoSpawn(r) {
     return r.sp === 0;
+}
+
+// The bot already publishes soonest-first, but re-sort defensively anyway —
+// the same caution sortRemoteThreats takes with rt's bot-sorted order.
+export function incomingNukes(r) {
+    return [...(r.nukes ?? [])].sort((a, b) => a[0] - b[0]);
+}
+
+// A scheduled, unavoidable hit — see empireVerdict/threatItems, which give it
+// the same override treatment hasNoSpawn gets, ranked even higher: a nuke in
+// flight is the single most decision-relevant fact about a room when true.
+export function hasIncomingNuke(r) {
+    return incomingNukes(r).length > 0;
 }
 
 // Everything the dashboard needs to render the def[] cell/chart correctly,

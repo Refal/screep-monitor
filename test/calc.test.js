@@ -10,7 +10,7 @@ import {
     netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, MANIFEST_GUARD_ROLE,
     SHARD, roomUrl, roomHistoryUrl,
     remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes, remoteDeployPhase,
-    empireVerdict, threatItems, clearRooms, isOutgunned,
+    empireVerdict, threatItems, clearRooms, isOutgunned, hasIncomingNuke, incomingNukes,
     squadSummary, routeSummary, routePhase, routeStatusText, armyRoutes, armyRouteFor, armyRoutesForHome,
     excludeRoutedGuards, routeOrAbsence, routesOrAbsence,
 } from "../public/calc.js";
@@ -1013,6 +1013,35 @@ describe("empireVerdict", () => {
         assert.equal(v.counts.unknown, 0);
         assert.equal(v.level, "spawnless");
     });
+
+    test("a nuked room outranks a spawnless one", () => {
+        const v = empireVerdict({
+            rooms: { Nuked: room({ nukes: [[500, "W1N1", 1, 1]], thr: thr() }), NoSpawn: room({ sp: 0 }) },
+        });
+        assert.equal(v.counts.nuked, 1);
+        assert.equal(v.counts.spawnless, 1);
+        assert.equal(v.level, "nuked");
+    });
+
+    test("a nuked room counts even with no thr at all", () => {
+        const v = empireVerdict({ rooms: { Nuked: room({ nukes: [[500, "W1N1", 1, 1]] }) } });
+        assert.equal(v.counts.nuked, 1);
+        assert.equal(v.counts.unknown, 0);
+        assert.equal(v.level, "nuked");
+    });
+});
+
+describe("incomingNukes / hasIncomingNuke", () => {
+    test("no nukes field reads as none", () => {
+        assert.deepEqual(incomingNukes(room()), []);
+        assert.equal(hasIncomingNuke(room()), false);
+    });
+
+    test("re-sorts soonest-first even if the source wasn't", () => {
+        const r = room({ nukes: [[5000, "W2N2", 2, 2], [500, "W1N1", 1, 1]] });
+        assert.deepEqual(incomingNukes(r), [[500, "W1N1", 1, 1], [5000, "W2N2", 2, 2]]);
+        assert.equal(hasIncomingNuke(r), true);
+    });
 });
 
 describe("threatItems", () => {
@@ -1104,6 +1133,18 @@ describe("threatItems", () => {
         assert.deepEqual(items.map(i => i.room), ["NoSpawn", "Outgunned"]);
         assert.deepEqual(items.map(i => i.kind), ["spawnless", "outgunned"]);
     });
+
+    test("a nuked room surfaces even with a clear posture, and leads a spawnless one", () => {
+        const items = threatItems({
+            rooms: {
+                Nuked: room({ nukes: [[500, "W1N1", 1, 1]], thr: thr() }), // thr() is a clear reading
+                NoSpawn: room({ sp: 0, thr: thr() }),
+            },
+        });
+        assert.deepEqual(items.map(i => i.room), ["Nuked", "NoSpawn"]);
+        assert.deepEqual(items.map(i => i.kind), ["nuked", "spawnless"]);
+        assert.deepEqual(items[0].nukes, [[500, "W1N1", 1, 1]], "the card gets every inbound nuke, not just the soonest");
+    });
 });
 
 describe("clearRooms", () => {
@@ -1120,6 +1161,11 @@ describe("clearRooms", () => {
         // Otherwise it renders as a critical card on the threat board AND gets
         // named in the "clear" summary line right below it.
         const snap = { rooms: { NoSpawn: room({ sp: 0, thr: thr() }) } };
+        assert.deepEqual(clearRooms(snap), []);
+    });
+
+    test("a nuked room is never counted as clear, even with a calm thr reading", () => {
+        const snap = { rooms: { Nuked: room({ nukes: [[500, "W1N1", 1, 1]], thr: thr() }) } };
         assert.deepEqual(clearRooms(snap), []);
     });
 });
