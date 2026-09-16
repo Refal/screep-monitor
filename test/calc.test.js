@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
     compact, pct, progressDelta, rateSeries, observedMsPerTick, windowRate, stockRate,
+    netRateSeries, netWindowRate, netEta,
     levelEta, fmtDuration, downsample, rampLevel, boostFillLevel, boostFloor,
     PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, LOD_BY_RANGE, RETENTION_DAYS,
     RANGES, DEFAULT_RANGE,
@@ -32,6 +33,11 @@ describe("compact", () => {
     test("renders an em dash for null/undefined", () => {
         assert.equal(compact(null), "—");
         assert.equal(compact(undefined), "—");
+    });
+    test("strips the sign off a negative value that rounds to zero, unlike a real negative", () => {
+        assert.equal(compact(-0.04), "0");
+        assert.equal(compact(-0.4), "-0.4");
+        assert.equal(compact(-4), "-4");
     });
 });
 
@@ -162,6 +168,108 @@ describe("stockRate", () => {
             { tick: 100, nuk: 500 },
         ];
         assert.equal(stockRate(r => r.nuk, history), null);
+    });
+});
+
+describe("netRateSeries", () => {
+    test("first point is always null (no predecessor)", () => {
+        assert.deepEqual(netRateSeries(r => r.bar, [{ tick: 0, bar: 100 }]), [null]);
+    });
+    test("a drop yields a negative rate, not null — unlike stockRate", () => {
+        const history = [
+            { tick: 0, bar: 1000 },
+            { tick: 100, bar: 4000 }, // +3000/100 ticks
+            { tick: 200, bar: 0 },    // combat drop — real signal, not skipped
+        ];
+        assert.deepEqual(netRateSeries(r => r.bar, history), [null, 30, -40]);
+    });
+    test("returns null for an interval touching a null reading", () => {
+        const history = [
+            { tick: 0, bar: null },
+            { tick: 100, bar: 500 },
+        ];
+        assert.deepEqual(netRateSeries(r => r.bar, history), [null, null]);
+    });
+    test("returns null for a non-positive dTick", () => {
+        const history = [
+            { tick: 0, bar: 100 },
+            { tick: 0, bar: 500 },
+        ];
+        assert.deepEqual(netRateSeries(r => r.bar, history), [null, null]);
+    });
+});
+
+describe("netWindowRate", () => {
+    test("a window that nets a decrease overall returns a negative rate, not null", () => {
+        const history = [
+            { tick: 0, bar: 1000 },
+            { tick: 100, bar: 1500 }, // +500/100 ticks
+            { tick: 200, bar: 700 },  // -800/100 ticks — net decrease over the window
+        ];
+        const wr = netWindowRate(r => r.bar, history);
+        assert.equal(wr.rate, -1.5); // (500 - 800) / 200 ticks
+    });
+    test("aggregates net change including a drop — same input as stockRate's launch fixture, different result", () => {
+        const history = [
+            { tick: 0, nuk: 1000 },
+            { tick: 100, nuk: 4000 }, // +3000/100 ticks
+            { tick: 200, nuk: 0 },    // -4000/100 ticks — counted here, unlike stockRate
+            { tick: 300, nuk: 1000 }, // +1000/100 ticks
+        ];
+        const wr = netWindowRate(r => r.nuk, history);
+        assert.equal(wr.rate, 0); // (3000 - 4000 + 1000) / 300 ticks
+    });
+    test("returns null with fewer than 2 history rows", () => {
+        assert.equal(netWindowRate(r => r.bar, []), null);
+        assert.equal(netWindowRate(r => r.bar, [{ tick: 0, bar: 100 }]), null);
+    });
+    test("skips only intervals touching a null reading or a non-positive dTick", () => {
+        const history = [
+            { tick: 0, bar: null },
+            { tick: 100, bar: null },
+            { tick: 200, bar: 500 },
+            { tick: 300, bar: 1000 },
+        ];
+        assert.equal(netWindowRate(r => r.bar, history).rate, 5); // 500 / 100
+    });
+});
+
+describe("netEta", () => {
+    const growing = [
+        { tick: 0, date: new Date(0), bar: 100 },
+        { tick: 100, date: new Date(1000), bar: 200 },
+    ];
+    const shrinking = [
+        { tick: 0, bar: 1000 },
+        { tick: 100, bar: 1500 },
+        { tick: 200, bar: 700 },
+    ];
+    // netEta takes an already-computed netWindowRate result rather than
+    // sel/history — every real caller (barrierGrowthTile) already has `wr`
+    // in scope, so these fixtures compute it once here too.
+    const growingWr = netWindowRate(r => r.bar, growing);
+    const shrinkingWr = netWindowRate(r => r.bar, shrinking);
+    test("returns null when already at or above target", () => {
+        assert.equal(netEta(500, 500, growingWr), null);
+        assert.equal(netEta(600, 500, growingWr), null);
+    });
+    test("returns null when there's no rate to project (wr null)", () => {
+        assert.equal(netEta(100, 500, null), null);
+    });
+    test("returns null when the window's net rate is negative", () => {
+        assert.equal(netEta(700, 2000, shrinkingWr), null);
+    });
+    test("computes etaTicks/etaMs correctly for a positive rate", () => {
+        const eta = netEta(200, 300, growingWr);
+        assert.equal(eta.rate, 1); // 100 gained / 100 ticks
+        assert.equal(eta.etaTicks, 100); // (300 - 200) / 1
+        assert.equal(eta.etaMs, 1000); // 100 ticks * 10ms/tick
+    });
+    test("an RCL8-scale target against a small positive rate resolves to a large but finite ETA", () => {
+        const eta = netEta(3000, 300_000_000, growingWr);
+        assert.equal(Number.isFinite(eta.etaTicks), true);
+        assert.equal(Number.isFinite(eta.etaMs), true);
+        assert.equal(eta.etaTicks, 300_000_000 - 3000); // rate is 1/tick
     });
 });
 

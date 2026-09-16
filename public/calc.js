@@ -6,7 +6,15 @@
 // can be exercised without a browser environment.
 
 const fmtCompact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
-export const compact = n => (n == null ? "—" : fmtCompact.format(n));
+// Intl's compact notation can round a small negative magnitude down to "-0"
+// (or "-0K" etc.) — strip the sign so a barely-negative rate doesn't read as
+// "no change" to a caller (e.g. netWindowRate) that specifically wants a
+// negative value to be legible as shrinking, not flat.
+export const compact = n => {
+    if (n == null) return "—";
+    const s = fmtCompact.format(n);
+    return /^-0(?:[A-Za-z]|$)/.test(s) ? s.slice(1) : s;
+};
 export const pct = (p, pt) => (pt ? (100 * p / pt) : 0);
 
 export const PARTS_PER_BOOST = 30; // LAB_BOOST_MINERAL
@@ -122,6 +130,26 @@ export function windowRate(sel, history) {
     return { rate, msPerTick: observedMsPerTick(history) };
 }
 
+// Shared accumulate-over-ticks loop behind stockRate and netWindowRate: sums
+// the per-interval delta and elapsed ticks across history, skipping any
+// interval touching a null reading or a non-positive dTick. `dropTolerant`
+// is the one behavioral difference between the two callers — stockRate skips
+// a dropped interval too (a nuke launch emptying the store must not poison
+// the refill trend), netWindowRate counts it (a barrier losing hits is real
+// signal, not noise).
+function accumulateDeltas(sel, history, { dropTolerant }) {
+    let delta = 0, ticks = 0;
+    for (let i = 1; i < history.length; i++) {
+        const prev = sel(history[i - 1]), cur = sel(history[i]);
+        const dTick = history[i].tick - history[i - 1].tick;
+        if (prev == null || cur == null || dTick <= 0) continue;
+        if (!dropTolerant && cur < prev) continue;
+        delta += cur - prev;
+        ticks += dTick;
+    }
+    return { delta, ticks };
+}
+
 // Average non-decreasing rate of a plain numeric series over the window —
 // the nuker-fill analogue of windowRate, but for raw numbers rather than
 // {l,p,pt}. Skips any interval where the value dropped (a nuke launch empties
@@ -129,15 +157,61 @@ export function windowRate(sel, history) {
 // interrupted) and any interval touching a null reading (room/nuker absent
 // from that snapshot, or predating this field entirely).
 export function stockRate(sel, history) {
-    let gained = 0, ticks = 0;
-    for (let i = 1; i < history.length; i++) {
-        const prev = sel(history[i - 1]), cur = sel(history[i]);
-        const dTick = history[i].tick - history[i - 1].tick;
-        if (prev == null || cur == null || dTick <= 0 || cur < prev) continue;
-        gained += cur - prev;
-        ticks += dTick;
-    }
-    return ticks > 0 && gained > 0 ? gained / ticks : null;
+    const { delta, ticks } = accumulateDeltas(sel, history, { dropTolerant: false });
+    return ticks > 0 && delta > 0 ? delta / ticks : null;
+}
+
+// Per-tick net delta of a plain numeric field between consecutive history
+// rows — the drop-tolerant analogue of rateSeries, for fields that are NOT
+// {l,p,pt} and where a decrease is real signal (e.g. barrier hits taking
+// combat damage or a rebuilt segment resetting the zone minimum), not noise
+// to be filtered like a nuker launch. Unlike stockRate, a drop is returned as
+// a negative value, never skipped.
+export function netRateSeries(sel, history) {
+    return history.map((r, i) => {
+        if (i === 0) return null;
+        const prev = sel(history[i - 1]), cur = sel(r);
+        const dTick = r.tick - history[i - 1].tick;
+        if (prev == null || cur == null || dTick <= 0) return null;
+        return (cur - prev) / dTick;
+    });
+}
+
+// Average net rate over the whole window — the drop-tolerant analogue of
+// windowRate/stockRate for a plain numeric field. Unlike stockRate, does NOT
+// skip an interval where the value dropped, and unlike windowRate, does NOT
+// return null for a non-positive net change: zero or negative is a valid,
+// meaningful answer (flat or shrinking), and the caller (netEta) is what
+// decides a non-positive rate has no ETA. Null only when there's no usable
+// coverage at all (fewer than 2 rows, or no interval had both a positive
+// dTick and two non-null readings).
+export function netWindowRate(sel, history) {
+    if (history.length < 2) return null;
+    const { delta, ticks } = accumulateDeltas(sel, history, { dropTolerant: true });
+    if (ticks <= 0) return null;
+    return { rate: delta / ticks, msPerTick: observedMsPerTick(history) };
+}
+
+// Shared {rate, etaTicks, etaMs} construction behind netEta/levelEta.
+function etaFromRate(wr, etaTicks) {
+    return { rate: wr.rate, etaTicks, etaMs: wr.msPerTick ? etaTicks * wr.msPerTick : null };
+}
+
+// ETA to an explicit external target for a plain current value — the
+// netWindowRate analogue of levelEta, for fields that carry their target
+// externally (barrierTarget(kind, rcl)) rather than embedded as {pt}. Takes
+// an already-computed netWindowRate result rather than sel/history, since
+// every caller already has (or needs) `wr` itself — see barrierGrowthTile in
+// app.js. Null when there's nothing to reach (cur/target absent, or cur
+// already at/above target — a maxed-out ETA of 0 would be as misleading as
+// levelEta's !cur.pt case) or when the rate isn't positive (flat or
+// shrinking is a real possibility here, unlike levelEta's monotonic
+// progress).
+export function netEta(cur, target, wr) {
+    if (cur == null || target == null || cur >= target) return null;
+    if (!wr || wr.rate <= 0) return null;
+    const etaTicks = (target - cur) / wr.rate;
+    return etaFromRate(wr, etaTicks);
 }
 
 // ETA to the next level for a current {l,p,pt} reading. `pt` is falsy at max
@@ -149,7 +223,7 @@ export function levelEta(sel, cur, history) {
     const wr = windowRate(sel, history);
     if (!wr) return null;
     const etaTicks = (cur.pt - cur.p) / wr.rate;
-    return { rate: wr.rate, etaTicks, etaMs: wr.msPerTick ? etaTicks * wr.msPerTick : null };
+    return etaFromRate(wr, etaTicks);
 }
 
 export function fmtDuration(ms) {

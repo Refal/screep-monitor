@@ -11,6 +11,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-lite.js";
 import {
     compact, pct, rateSeries, observedMsPerTick, windowRate, stockRate,
+    netRateSeries, netWindowRate, netEta,
     levelEta, fmtDuration, downsample, rampLevel, boostFillLevel, boostFloor,
     PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, bucketId, LOD_BY_RANGE,
     fmtHits, roomPosture, defenderSummary, barrierTarget, barrierLevel, isCriticalBarrier,
@@ -220,13 +221,15 @@ function baseOptions(series) {
 
 function lineDataset(label, data, colorVar) {
     const color = cssVar(colorVar);
+    const nonNull = data.filter(v => v != null).length;
     return {
         label, data,
         borderColor: color,
         backgroundColor: color,
         borderWidth: 2,
-        // with only a few snapshots a 0-radius line is invisible — show dots until history fills in
-        pointRadius: history.length < 5 ? 3 : 0,
+        // with only a few actual (non-null) points a 0-radius line is
+        // invisible — show dots until enough real data fills in
+        pointRadius: nonNull < 5 ? 3 : 0,
         pointHoverRadius: 4,
         pointHoverBorderColor: cssVar("--surface-1"),
         pointHoverBorderWidth: 2,
@@ -234,19 +237,34 @@ function lineDataset(label, data, colorVar) {
     };
 }
 
-// Instantaneous per-tick rate plus a flat dashed line at the window average,
-// so the current rate reads against the range's trend. Shared by the empire
-// GCL chart and the per-room RCL chart. The avg is omitted (and with it the
-// legend, per baseOptions) when there's no positive gain in range.
-function rateDatasets(label, sel) {
-    const datasets = [lineDataset(label, rateSeries(sel, history), "--series-1")];
-    const wr = windowRate(sel, history);
+// Shared by rateDatasets/netRateDatasets: the raw-rate line plus a flat
+// dashed line at the window average, so the current rate reads against the
+// range's trend. The avg is omitted (and with it the legend, per
+// baseOptions) when `wr` is null.
+function rateLineDatasets(label, series, wr) {
+    const datasets = [lineDataset(label, series, "--series-1")];
     if (wr) {
         const avg = lineDataset(`avg ${compact(wr.rate)}/tick`, history.map(() => wr.rate), "--series-2");
         Object.assign(avg, { borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 0, tension: 0 });
         datasets.push(avg);
     }
     return datasets;
+}
+
+// Instantaneous per-tick rate for an {l,p,pt} field. Shared by the empire GCL
+// chart and the per-room RCL chart. windowRate is null (so the avg line is
+// omitted) when there's no positive gain in range.
+function rateDatasets(label, sel) {
+    return rateLineDatasets(label, rateSeries(sel, history), windowRate(sel, history));
+}
+
+// The netRateSeries/netWindowRate analogue of rateDatasets, for plain
+// (non {l,p,pt}) numeric fields such as barrier hits, where the avg line can
+// legitimately sit at or below zero — that's the shrinking signal this
+// chart exists to show, not a "no data" state to omit like rateDatasets does
+// for windowRate's null case.
+function netRateDatasets(label, sel) {
+    return rateLineDatasets(label, netRateSeries(sel, history), netWindowRate(sel, history));
 }
 
 function renderLine(key, canvasId, datasets, { yMax = undefined, unit = "" } = {}) {
@@ -262,6 +280,27 @@ function etaText(eta) {
     return eta
         ? `ETA ~${eta.etaMs != null ? fmtDuration(eta.etaMs) : `${compact(eta.etaTicks)} ticks`} · ${compact(eta.rate)}/tick`
         : "ETA — no gain in range";
+}
+
+// Growth-rate + ETA tile for a plain (non {l,p,pt}) numeric field tracked
+// against an explicit target — the netWindowRate/netEta analogue of the RCL
+// tile's Upgrade/ETA pair. `kind` is one of calc.js's BARRIER_TARGETS keys
+// ("defenderZone"/"barrier"), same as barrierCell, so a null `cur` (no
+// rampart there at all — a real, page-wide-recognized state, see
+// BARRIER_ABSENT below) reads the same way here as it does in the barrier
+// table, instead of showing a stale historical rate next to a contradictory
+// "no gain in range". Once `cur` is known, three branches: already at/above
+// target, a genuinely shrinking/flat trend (a dropping barrier is real
+// signal, not silence — must not read the same as "no data"), and a normal
+// positive ETA.
+function barrierGrowthTile(label, sel, cur, target, kind, history) {
+    if (cur == null) return { label, value: BARRIER_ABSENT[kind].word, delta: BARRIER_ABSENT[kind].why };
+    const wr = netWindowRate(sel, history);
+    const atTarget = target != null && cur >= target;
+    const delta = atTarget ? "at target"
+        : wr && wr.rate < 0 ? "shrinking — no ETA"
+        : etaText(netEta(cur, target, wr));
+    return { label, value: wr ? `${compact(wr.rate)}/tick` : "—", delta };
 }
 
 function renderTileRow(containerId, tiles) {
@@ -1313,16 +1352,8 @@ function renderNuker(room, of) {
         { label: "ETA ready", value: etaLabel, delta: ready || etaKnown ? "" : "no gain in range" },
     ]);
 
-    const gSeries = of(r => r.nuk ? pct(r.nuk[0], NUKER_GHODIUM_CAPACITY) : null);
-    const eSeries = of(r => r.nuk ? pct(r.nuk[1], NUKER_ENERGY_CAPACITY) : null);
-    const gDataset = lineDataset("Ghodium", gSeries, "--series-1");
-    const eDataset = lineDataset("Energy", eSeries, "--series-2");
-    // A nuker built (or first published) mid-window can have fewer than 5
-    // non-null points even though history.length >= 5 — lineDataset's radius-0
-    // default would then render nothing, since a lone point draws no segment.
-    for (const [ds, series] of [[gDataset, gSeries], [eDataset, eSeries]]) {
-        if (series.filter(v => v != null).length < 5) ds.pointRadius = 3;
-    }
+    const gDataset = lineDataset("Ghodium", of(r => r.nuk ? pct(r.nuk[0], NUKER_GHODIUM_CAPACITY) : null), "--series-1");
+    const eDataset = lineDataset("Energy", of(r => r.nuk ? pct(r.nuk[1], NUKER_ENERGY_CAPACITY) : null), "--series-2");
     renderLine("nuker", "c-nuker", [gDataset, eDataset], { yMax: 100, unit: "%" });
 }
 
@@ -1359,6 +1390,8 @@ function renderRoomDefense(room) {
         : pluralCount(thr.smAvail, "charge");
     const smSub = smActive ? "" : (thr.smCd ? `cooldown ${ms != null ? fmtDuration(thr.smCd * ms) : `~${compact(thr.smCd)} ticks`}` : "");
 
+    const barrierCovered = history.filter(row => row.rooms[room]?.thr).length;
+    const barrierSub = barrierCovered < history.length ? `${barrierCovered}/${history.length} snapshots had barrier detail` : "";
     renderTileRow("defense-room-tiles", [
         { label: "Posture", value: posture.label, delta: posture.reasons.join(" · ") || (thr.h === 0 ? "no hostiles" : ""), sub: `${thr.h} hostiles` },
         { label: "Hostiles", value: fmtInt.format(thr.h), delta: (thr.owners ?? []).join(", ") || "—",
@@ -1369,6 +1402,10 @@ function renderRoomDefense(room) {
         { label: "Barriers",
           value: `Zone: ${fmtHits(thr.defRmp)}/${fmtHits(barrierTarget("defenderZone", r.rcl.l))} at RCL ${r.rcl.l}`,
           delta: `Barrier: ${fmtHits(thr.bar)}/${fmtHits(barrierTarget("barrier", r.rcl.l))}` },
+        { ...barrierGrowthTile("Zone growth", r2 => r2.rooms[room]?.thr?.defRmp ?? null,
+            thr.defRmp, barrierTarget("defenderZone", r.rcl.l), "defenderZone", history), sub: barrierSub },
+        { ...barrierGrowthTile("Barrier growth", r2 => r2.rooms[room]?.thr?.bar ?? null,
+            thr.bar, barrierTarget("barrier", r.rcl.l), "barrier", history), sub: barrierSub },
     ]);
 
     // Defense fleet card: def[] home-defender slots, standing army_member
@@ -1422,6 +1459,28 @@ function renderRoomDefense(room) {
     }
 }
 
+// Barrier hits-per-tick growth for the two watched fields — the
+// netRateSeries/netWindowRate analogue of the RCL-rate chart, for a plain
+// non-monotonic numeric field. Separate from renderRoomDefense so that
+// function stays about the *current* ratios while this one is about *trend*;
+// does its own thr check since it owns different DOM (two chart cards, not
+// the tile row) than renderRoomDefense's own !thr early return.
+function renderBarrierRates(room) {
+    const thr = latest.rooms[room]?.thr;
+    if (!thr) {
+        for (const key of ["barrierZoneRate", "barrierRate"]) { charts[key]?.destroy(); delete charts[key]; }
+        $("barrier-zone-rate-card").hidden = true;
+        $("barrier-rate-card").hidden = true;
+        return;
+    }
+    $("barrier-zone-rate-card").hidden = false;
+    $("barrier-rate-card").hidden = false;
+    renderLine("barrierZoneRate", "c-barrier-zone-rate",
+        netRateDatasets("Zone hits/tick", r => r.rooms[room]?.thr?.defRmp ?? null));
+    renderLine("barrierRate", "c-barrier-rate",
+        netRateDatasets("Barrier hits/tick", r => r.rooms[room]?.thr?.bar ?? null));
+}
+
 function renderRoomCharts() {
     const room = selectedRoom;
     $("room-title").replaceChildren(`Room ${room} `, screepsRoomLink(room));
@@ -1439,10 +1498,7 @@ function renderRoomCharts() {
             { yMax: 100, unit: "%" });
     }
     const rclDatasets = rateDatasets("RCL/tick", r => r.rooms[room]?.rcl ?? null);
-    const upwSeries = of(r => r.upw ?? null);
-    const upwDataset = lineDataset("UPW", upwSeries, "--series-3");
-    if (upwSeries.filter(v => v != null).length < 5) upwDataset.pointRadius = 3;
-    rclDatasets.push(upwDataset);
+    rclDatasets.push(lineDataset("UPW", of(r => r.upw ?? null), "--series-3"));
     renderLine("rclRate", "c-rcl-rate", rclDatasets);
     renderLine("energy", "c-energy", [
         lineDataset("Storage", of(r => r.se), "--series-1"),
@@ -1464,6 +1520,7 @@ function renderRoomCharts() {
     renderNukes(room);
     renderNuker(room, of);
     renderRoomDefense(room);
+    renderBarrierRates(room);
 }
 
 // Shared horizontal-bar recipe for "current vs desired"-style charts — roles,
