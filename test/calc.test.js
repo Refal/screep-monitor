@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import {
     compact, pct, progressDelta, rateSeries, observedMsPerTick, windowRate, stockRate,
     netRateSeries, netWindowRate, netEta,
-    levelEta, fmtDuration, downsample, rampLevel, boostFillLevel, boostFloor,
+    levelEta, fmtDuration, downsample, detectGaps, rampLevel, boostFillLevel, boostFloor,
     PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, LOD_BY_RANGE, RETENTION_DAYS,
     RANGES, DEFAULT_RANGE,
     fmtHits, barrierTarget, barrierLevel, isCriticalBarrier, roomPosture, defenderSummary,
@@ -349,6 +349,34 @@ describe("downsample", () => {
         const out = downsample(rows, 500);
         assert.equal(out.length, 500);
         assert.equal(out[out.length - 1], 999);
+    });
+});
+
+describe("detectGaps", () => {
+    const row = ms => ({ date: new Date(ms) });
+    test("no gaps at normal cadence", () => {
+        const history = [row(0), row(300_000), row(600_000), row(900_000)];
+        assert.deepEqual(detectGaps(history, 300_000), []);
+    });
+    test("flags a step well past the expected interval", () => {
+        const history = [row(0), row(300_000), row(300_000 + 3_600_000)];
+        const gaps = detectGaps(history, 300_000);
+        assert.equal(gaps.length, 1);
+        assert.deepEqual(gaps[0], {
+            afterIndex: 2, startMs: 300_000, endMs: 300_000 + 3_600_000, durationMs: 3_600_000,
+        });
+    });
+    test("does not flag a step just under the threshold", () => {
+        const history = [row(0), row(300_000 * 3 - 1)];
+        assert.deepEqual(detectGaps(history, 300_000), []);
+    });
+    test("no expected interval (unflagged range with no cadence to compare against) reports nothing", () => {
+        const history = [row(0), row(10_000_000)];
+        assert.deepEqual(detectGaps(history, null), []);
+    });
+    test("fewer than two rows can't have a gap", () => {
+        assert.deepEqual(detectGaps([row(0)], 300_000), []);
+        assert.deepEqual(detectGaps([], 300_000), []);
     });
 });
 

@@ -46,6 +46,14 @@ export const roomHistoryUrl = (room, tick) =>
 // is ever queried).
 export const LOD_BUCKET_MS = { b5: 5 * 60_000, b30: 30 * 60_000, b120: 120 * 60_000 };
 
+// The bot's own publish cadence (~20 ticks, ~82s at today's shard speed — see
+// the LOD_BY_RANGE comment below), not the collector's 5-minute poll
+// interval: the collector's ring backfill means stored rows land this far
+// apart even though the collector itself only runs once every 5 minutes.
+// This is the "normal spacing" baseline for detectGaps on the unflagged
+// (raw) range, where LOD_BUCKET_MS has no entry to use instead.
+export const RAW_INTERVAL_MS = 82_000;
+
 // Snapshot retention window. Drives both the collector's daily prune sweep
 // and the longest selectable dashboard range (the "21d" button), so the UI
 // can never offer a window the data doesn't cover. Was 60; the ring raised
@@ -244,6 +252,34 @@ export function downsample(rows, max) {
     for (let i = 0; i < max; i++) out.push(rows[Math.floor(i * step)]);
     out[out.length - 1] = rows[rows.length - 1];
     return out;
+}
+
+// How far apart two consecutive stored rows must be before the dashboard
+// treats the space between them as a collection outage rather than normal
+// cadence. The collector writes nothing when a poll fails outright or its
+// segment-90 backfill ring is too short to cover the miss (see
+// scripts/collect.mjs) — there's no placeholder doc, so a real outage is
+// only visible as unusually wide spacing between two rows that do exist.
+const GAP_FACTOR = 3;
+
+// Flags each history[i] whose row is further from history[i-1] than
+// GAP_FACTOR times the caller's normal cadence for the active view
+// (raw polling interval, or the LOD_BUCKET_MS width behind the range's flag
+// — see LOD_BY_RANGE). A fixed threshold would misfire on the coarser
+// ranges, where rows are naturally spaced much further apart than on the
+// raw one, so the expected interval has to come from the caller.
+export function detectGaps(history, expectedIntervalMs) {
+    if (!expectedIntervalMs) return [];
+    const gaps = [];
+    for (let i = 1; i < history.length; i++) {
+        const startMs = history[i - 1].date.getTime();
+        const endMs = history[i].date.getTime();
+        const durationMs = endMs - startMs;
+        if (durationMs > expectedIntervalMs * GAP_FACTOR) {
+            gaps.push({ afterIndex: i, startMs, endMs, durationMs });
+        }
+    }
+    return gaps;
 }
 
 // Fill ramp (red = short, green = stocked) — 5 buckets plus zero/no-max.

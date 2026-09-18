@@ -12,8 +12,8 @@ import {
 import {
     compact, pct, rateSeries, observedMsPerTick, windowRate, stockRate,
     netRateSeries, netWindowRate, netEta,
-    levelEta, fmtDuration, downsample, rampLevel, boostFillLevel, boostFloor,
-    PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, bucketId, LOD_BY_RANGE,
+    levelEta, fmtDuration, downsample, detectGaps, rampLevel, boostFillLevel, boostFloor,
+    PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, RAW_INTERVAL_MS, bucketId, LOD_BY_RANGE,
     fmtHits, roomPosture, defenderSummary, barrierTarget, barrierLevel, isCriticalBarrier,
     RANGES, DEFAULT_RANGE,
     empireVerdict, threatItems, clearRooms, isOutgunned, hasNoSpawn,
@@ -68,6 +68,7 @@ let selectedRoom = null;
 let latest = null;
 let history = [];        // downsampled [{date, tick, gcl, gpl?, cpu, cr, rooms}]
 let historyRaw = [];     // every fetched row for the current range, un-downsampled
+let historyGaps = [];    // detectGaps(history, ...) — collection outages within `history`
 let inFlight = false;
 let lastPollAt = 0;
 let pollTimer = null;
@@ -161,15 +162,30 @@ async function loadHistoryIncremental() {
     return rows.length;
 }
 
+// The normal spacing between stored rows for the current range — the active
+// LOD tier's bucket width, or the bot's raw publish cadence (RAW_INTERVAL_MS,
+// not the collector's much coarser poll interval) on an unflagged (short)
+// range. detectGaps flags anything wider than a multiple of this as an
+// outage rather than ordinary cadence.
+function expectedIntervalMs() {
+    const flag = LOD_BY_RANGE[rangeHours];
+    return flag ? LOD_BUCKET_MS[flag] : RAW_INTERVAL_MS;
+}
+
 // Returns the number of new rows fetched (used by the render gate). Range
 // switches reset historyRaw to [] (see bindControls), so an empty historyRaw
 // doubles as "need a full fetch" without a separate range-tracking flag.
 async function loadHistory() {
-    if (DEMO) { history = await demoHistory(); return history.length; }
+    if (DEMO) {
+        history = await demoHistory();
+        historyGaps = detectGaps(history, expectedIntervalMs());
+        return history.length;
+    }
     const added = historyRaw.length > 0
         ? await loadHistoryIncremental().catch(loadHistoryFull)
         : await loadHistoryFull();
     history = downsample(historyRaw, MAX_POINTS);
+    historyGaps = detectGaps(history, expectedIntervalMs());
     return added;
 }
 
@@ -180,6 +196,18 @@ function timeLabels() {
     return history.map(r => short
         ? r.date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
         : r.date.toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }));
+}
+
+// Default tooltip title (Chart.js's own default is the point's x-axis label)
+// plus a note when the point right after it was flagged by detectGaps — the
+// tooltip is where the exact outage duration lives, since the shaded band
+// (gapBandPlugin) and the broken line (lineDataset's segment.borderColor)
+// can't carry text of their own.
+function tooltipTitle(items) {
+    if (!items.length) return "";
+    const title = items[0].label;
+    const gap = historyGaps.find(g => g.afterIndex === items[0].dataIndex);
+    return gap ? [title, `⚠ ${fmtDuration(gap.durationMs)} gap before this point — no data collected`] : title;
 }
 
 function baseOptions(series) {
@@ -201,6 +229,7 @@ function baseOptions(series) {
                 borderColor: cssVar("--border"),
                 borderWidth: 1,
                 usePointStyle: false,
+                callbacks: { title: tooltipTitle },
             },
         },
         scales: {
@@ -234,8 +263,40 @@ function lineDataset(label, data, colorVar) {
         pointHoverBorderColor: cssVar("--surface-1"),
         pointHoverBorderWidth: 2,
         tension: 0.15,
+        // Breaks the line across a detected collection outage (historyGaps)
+        // without discarding either real point on either side of it — unlike
+        // a null data point, which would also blank out that point's own
+        // (legitimate) value. Without this the category x-axis (see
+        // timeLabels) draws the two points evenly spaced like any other step,
+        // and the outage becomes invisible — the exact "false continuity"
+        // this exists to prevent.
+        segment: {
+            borderColor: ctx => historyGaps.some(g => g.afterIndex === ctx.p1DataIndex) ? "transparent" : undefined,
+        },
     };
 }
+
+// Shades each detected outage's column on the category x-axis so a gap reads
+// at a glance, not just as a broken line (lineDataset's segment.borderColor).
+// The axis stays category-based (see timeLabels), so the band's width is
+// always exactly one column regardless of the outage's real duration — the
+// tooltip title (tooltipTitle) carries the actual duration text.
+const gapBandPlugin = {
+    id: "gapBands",
+    beforeDatasetsDraw(chart) {
+        if (!historyGaps.length) return;
+        const { ctx, chartArea, scales: { x } } = chart;
+        if (!chartArea) return;
+        ctx.save();
+        ctx.fillStyle = cssVar("--status-warning") + "26"; // ~15% alpha
+        for (const gap of historyGaps) {
+            const left = x.getPixelForValue(gap.afterIndex - 1);
+            const right = x.getPixelForValue(gap.afterIndex);
+            ctx.fillRect(Math.min(left, right), chartArea.top, Math.abs(right - left), chartArea.bottom - chartArea.top);
+        }
+        ctx.restore();
+    },
+};
 
 // Shared by rateDatasets/netRateDatasets: the raw-rate line plus a flat
 // dashed line at the window average, so the current rate reads against the
@@ -271,8 +332,12 @@ function renderLine(key, canvasId, datasets, { yMax = undefined, unit = "" } = {
     charts[key]?.destroy();
     const opts = baseOptions(datasets.length);
     if (yMax !== undefined) opts.scales.y.max = yMax;
-    if (unit) opts.plugins.tooltip.callbacks = { label: c => ` ${c.dataset.label}: ${compact(c.parsed.y)}${unit}` };
-    charts[key] = new Chart($(canvasId), { type: "line", data: { labels: timeLabels(), datasets }, options: opts });
+    // Assigned onto the existing callbacks, not replacing them — tooltipTitle
+    // (baseOptions) has to survive this or a unit'd chart loses its gap note.
+    if (unit) opts.plugins.tooltip.callbacks.label = c => ` ${c.dataset.label}: ${compact(c.parsed.y)}${unit}`;
+    charts[key] = new Chart($(canvasId), {
+        type: "line", data: { labels: timeLabels(), datasets }, options: opts, plugins: [gapBandPlugin],
+    });
 }
 
 // ETA text shared by the empire GCL tile and the per-room stat strip.
@@ -566,6 +631,31 @@ function renderTiles() {
         // judgment, named per room and impossible to miss.
     );
     renderTileRow("tiles", tiles);
+}
+
+// One line above every chart, naming any collection outage in the current
+// range before a reader has to notice a shaded band or a broken line
+// themselves (see gapBandPlugin/lineDataset) — the same "surface it in text,
+// don't rely on the chart alone" pattern renderAttackLog already uses for
+// degraded threat detail.
+// Written into both the overview and room views' note element — a gap in
+// `history` isn't specific to whichever view happens to be open, and the
+// room view's charts get the same gapBandPlugin/lineDataset gap styling as
+// the overview's without this, they'd have no persistent text explaining it.
+function renderDataGapNote() {
+    let text = "";
+    if (historyGaps.length) {
+        const totalMs = historyGaps.reduce((a, g) => a + g.durationMs, 0);
+        const worst = historyGaps.reduce((a, g) => g.durationMs > a.durationMs ? g : a);
+        const when = new Date(worst.startMs).toLocaleString([],
+            { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+        text = `⚠ ${pluralCount(historyGaps.length, "data gap")} in this range `
+            + `(${fmtDuration(totalMs)} total, no data collected) — largest ${fmtDuration(worst.durationMs)} starting ${when}`;
+    }
+    for (const id of ["data-gap-note", "room-data-gap-note"]) {
+        const el = $(id);
+        if (el) el.textContent = text;
+    }
 }
 
 function renderEmpireCharts() {
@@ -2166,6 +2256,7 @@ function renderAll() {
     applyRoute();
     renderThreatBoard();
     renderTiles();
+    renderDataGapNote();
     renderRoomSelect();
     for (const s of SECTIONS) dirtySections.add(s.id);
     if (route.view === OVERVIEW) {
