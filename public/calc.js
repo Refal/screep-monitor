@@ -256,8 +256,8 @@ export function downsample(rows, max) {
 
 // How far apart two consecutive stored rows must be before the dashboard
 // treats the space between them as a collection outage rather than normal
-// cadence. The collector writes nothing when a poll fails outright or its
-// segment-90 backfill ring is too short to cover the miss (see
+// cadence. The collector writes nothing when a poll fails outright or the
+// bot's history buckets no longer cover the miss (see
 // scripts/collect.mjs) — there's no placeholder doc, so a real outage is
 // only visible as unusually wide spacing between two rows that do exist.
 const GAP_FACTOR = 3;

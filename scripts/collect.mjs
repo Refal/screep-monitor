@@ -4,33 +4,30 @@
  * locally.
  *
  * Payload shape: segment SEGMENT holds a manifest+head snapshot
- * (t, gcl, gpl, cpu, cr, rooms, bmax?, rt?, ar?, chunks), where `chunks` is
- * how many history-ring segments the bot wrote this publish, at
- * SEGMENT+1 .. SEGMENT+chunks (newest chunk first, each a JSON array of
- * older snapshots). The pool exists because the bot only publishes once per
- * 20 ticks (~82s) while this collector polls every 5 minutes — without
- * history, most published snapshots were never read before being
- * overwritten by the next publish — and because a single segment's 95KB
- * budget forced hostile/repair-queue detail to degrade out of history far
- * too early; spilling across a pool of segments (rather than raising the
- * degrade threshold) scales with empire size instead of just delaying the
- * same problem. `fetchPayload()` fetches the manifest, then each chunk
- * segment it names (capped at MAX_CHUNKS), and merges them back into the
- * flat `{ ...head, h }` shape the rest of this file (and the tests) already
- * expect — no other function needs to know segments exist. A chunk that
- * fails to fetch, or whose JSON doesn't decode to an array, is skipped
- * (logged as a warning) rather than losing the whole poll; only the
- * manifest segment is required. `fetchPayload()` also reports how many
- * chunks failed, so the ring-depth health check in `main()` can tell "the
- * bot's ring is genuinely short" apart from "our own fetch had a glitch"
- * instead of blaming the bot for both.
+ * (t, gcl, gpl, cpu, cr, rooms, bmax?, rt?, ar?, buckets), where `buckets`
+ * is how many history bucket segments the bot keeps, at
+ * SEGMENT+1 .. SEGMENT+buckets. Each bucket is a JSON array of the snapshots
+ * published during one fixed window of game ticks (oldest first); the bot
+ * appends to the current window's bucket and overwrites the oldest bucket
+ * when the window rolls, so bucket order carries no meaning and the head
+ * also appears inside its own bucket — readers dedup by `t`. The ring exists
+ * because the bot only publishes once per 20 ticks (~82s) while this
+ * collector polls every 5 minutes; without history, most published
+ * snapshots were never read before being overwritten. `fetchPayload()`
+ * fetches the manifest, then every bucket segment it names (capped at
+ * MAX_BUCKETS), and merges them into the flat `{ ...head, h }` shape the
+ * rest of this file (and the tests) expect — no other function needs to
+ * know segments exist. A bucket that fails to fetch, or whose JSON doesn't
+ * decode to an array, is skipped (logged as a warning) rather than losing
+ * the whole poll; a bucket never written yet reads as empty. Only the
+ * manifest segment is required.
  *
  * Env:
  *   SCREEPS_TOKEN                  — screeps.com auth token (required)
  *   GOOGLE_APPLICATION_CREDENTIALS — path to a Firebase service-account JSON (required)
  *   SCREEPS_SHARD                  — default shard2
  *   SCREEPS_SEGMENT                — manifest/head segment, default 90 (history
- *                                    chunks are always SEGMENT+1..SEGMENT+chunks,
+ *                                    buckets are always SEGMENT+1..SEGMENT+buckets,
  *                                    not separately configured)
  *
  * Firestore layout:
@@ -51,6 +48,10 @@
 import { pathToFileURL } from "node:url";
 import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
+// `bucketId`/LOD_BUCKET_MS are wall-clock downsampling buckets (b5/b30/b120,
+// used below in assignLodFlags) — an unrelated concept from this file's own
+// "bucket" segments (bucketSegmentIds et al.), which are the bot's fixed
+// tick-window history-ring segments.
 import { LOD_BUCKET_MS, bucketId, RETENTION_DAYS, SHARD as DEFAULT_SHARD } from "../public/calc.js";
 
 /** Parses SCREEPS_SEGMENT into a segment id, throwing loudly on anything
@@ -66,13 +67,17 @@ export function parseSegment(raw) {
 
 const SHARD = process.env.SCREEPS_SHARD ?? DEFAULT_SHARD;
 const SEGMENT = parseSegment(process.env.SCREEPS_SEGMENT ?? "90");
-const CHUNK_FETCH_DELAY_MS = 150; // spread sequential chunk fetches instead of bursting the Screeps API
-const MAX_CHUNKS = 9; // matches the documented segment-pool bound (91-99 for the default SEGMENT=90)
+const BUCKET_FETCH_DELAY_MS = 150; // spread sequential bucket fetches instead of bursting the Screeps API
+const MAX_BUCKETS = 9; // segment ids stop at 99, so 91-99 is the most the default SEGMENT=90 can own
 const PRUNE_BATCH = 450;
 const PRUNE_MAX_BATCHES = 20; // caps a single run's delete cost if a backlog ever builds up
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+/** Returns `undefined` for a segment with no data yet ("never written"),
+ * rather than throwing — callers with different requiredness (the manifest
+ * is required, a bucket may legitimately be unwritten) decide what that
+ * means. Any API/auth failure still throws. */
 async function fetchSegment(segmentId) {
     const token = process.env.SCREEPS_TOKEN;
     if (!token) throw new Error("SCREEPS_TOKEN is not set");
@@ -80,55 +85,57 @@ async function fetchSegment(segmentId) {
     const res = await fetch(url, { headers: { "X-Token": token } });
     if (!res.ok) throw new Error(`Screeps API ${res.status}: ${await res.text()}`);
     const body = await res.json();
-    if (!body.ok || !body.data) throw new Error(`Segment ${segmentId} is empty (bot not publishing yet?)`);
-    return JSON.parse(body.data);
+    if (!body.ok) throw new Error(`Screeps API rejected segment ${segmentId}: ${JSON.stringify(body)}`);
+    return body.data ? JSON.parse(body.data) : undefined;
 }
 
-/**
- * Merges a manifest's head with its successfully-fetched history chunks
- * (each already a newest-first array of entries, in segment order) into the
- * flat `{ ...head, h }` shape unseenEntries/buildSnapshotDoc already expect.
- * A failed chunk is simply absent from `chunkEntries` — see fetchPayload().
- */
-export function mergeChunks(head, chunkEntries) {
-    return { ...head, h: chunkEntries.flat() };
+/** SEGMENT+1 .. SEGMENT+buckets, capped at MAX_BUCKETS; a manifest without
+ * `buckets` (or an older wire format) names no history at all. */
+export function bucketSegmentIds(head, base) {
+    const count = Math.min(head.buckets ?? 0, MAX_BUCKETS);
+    return Array.from({ length: count }, (_, i) => base + 1 + i);
 }
 
-/** Fetches the manifest segment, then up to MAX_CHUNKS of the `chunks`
- * history segments it names (SEGMENT+1..SEGMENT+chunks), and merges them.
- * Only the manifest fetch can fail the whole poll — a chunk that fails to
- * fetch, or whose JSON doesn't decode to an array, just logs a warning and
- * is skipped. Returns the merged payload plus how many chunks failed, so
- * callers can tell a short ring apart from a fetch glitch. */
+/** Merges a manifest's head with its successfully-fetched history buckets
+ * into the flat `{ ...head, h }` shape unseenEntries/buildSnapshotDoc expect
+ * (see the file header for the bucket-order/dedup contract). A failed bucket
+ * is simply absent from `bucketEntries` — see fetchPayload(). */
+export function mergeBuckets(head, bucketEntries) {
+    return { ...head, h: bucketEntries.flat() };
+}
+
+/** Fetches the manifest segment, then every bucket segment it names, and
+ * merges them. Only the manifest fetch can fail the whole poll — a bucket
+ * that fails to fetch, or whose JSON doesn't decode to an array, just logs a
+ * warning and is skipped. Returns the merged payload plus how many buckets
+ * failed, so callers can tell an empty ring apart from a fetch glitch. */
 async function fetchPayload() {
     const head = await fetchSegment(SEGMENT);
-    const chunkCount = Math.min(head.chunks ?? 0, MAX_CHUNKS);
-    const chunkEntries = [];
-    let failedChunks = 0;
-    for (let i = 0; i < chunkCount; i++) {
-        if (i > 0) await sleep(CHUNK_FETCH_DELAY_MS);
-        const segmentId = SEGMENT + 1 + i;
+    if (head === undefined) throw new Error(`Segment ${SEGMENT} is empty (bot not publishing yet?)`);
+    const bucketEntries = [];
+    let failedBuckets = 0;
+    for (const [i, segmentId] of bucketSegmentIds(head, SEGMENT).entries()) {
+        if (i > 0) await sleep(BUCKET_FETCH_DELAY_MS);
         try {
-            const entries = await fetchSegment(segmentId);
+            const entries = await fetchSegment(segmentId) ?? [];
             if (!Array.isArray(entries)) {
                 throw new Error(`expected an array, got ${typeof entries}`);
             }
-            chunkEntries.push(entries);
+            bucketEntries.push(entries);
         } catch (err) {
-            console.warn(`::warning::chunk segment ${segmentId} failed, skipping it: ${err.message}`);
-            failedChunks++;
+            console.warn(`::warning::bucket segment ${segmentId} failed, skipping it: ${err.message}`);
+            failedBuckets++;
         }
     }
-    return { payload: mergeChunks(head, chunkEntries), failedChunks };
+    return { payload: mergeBuckets(head, bucketEntries), failedBuckets };
 }
 
 /**
  * Flattens a payload into every entry it carries — the head snapshot plus
- * the newest-first `h` ring — filtered to strictly-newer-than-latestTick and
- * returned oldest-first (the order they should be inserted in, so
- * `meta/latest` ends up holding the true newest). Ticks are deduped
- * defensively; the bot should never publish the same tick twice, but a
- * stale ring entry is cheap to guard against.
+ * the `h` ring — filtered to strictly-newer-than-latestTick and returned
+ * oldest-first (the order they should be inserted in, so `meta/latest` ends
+ * up holding the true newest). Deduped by tick, head wins (see the file
+ * header for why the head also appears in its own bucket).
  */
 export function unseenEntries(payload, latestTick) {
     const { h, ...head } = payload; // buildSnapshotDoc whitelists what persists
@@ -137,7 +144,9 @@ export function unseenEntries(payload, latestTick) {
     const byTick = new Map();
     for (const entry of all) {
         if (latestTick != null && entry.t <= latestTick) continue;
-        byTick.set(entry.t, entry); // first occurrence wins; entries are already newest-first
+        // first occurrence wins, so the head beats its bucket copy — Map.set()
+        // alone would overwrite on a repeat key, so this guards explicitly.
+        if (!byTick.has(entry.t)) byTick.set(entry.t, entry);
     }
     return [...byTick.values()].sort((a, b) => a.t - b.t);
 }
@@ -237,7 +246,7 @@ async function main() {
     const latestRef = db.doc("meta/latest");
 
     // independent round trips (screeps.com and Firestore) — fetch both at once
-    const [{ payload, failedChunks }, latestSnap] = await Promise.all([fetchPayload(), latestRef.get()]);
+    const [{ payload, failedBuckets }, latestSnap] = await Promise.all([fetchPayload(), latestRef.get()]);
     const latest = latestSnap.data();
     const latestTick = latest?.tick ?? null;
     const latestMs = latest?.ts?.toMillis() ?? null;
@@ -266,17 +275,15 @@ async function main() {
     console.log(
         `Stored ${docs.length} tick(s) [${docs[0].t}..${docs.at(-1).t}] (${Object.keys(payload.rooms).length} rooms), ring depth ${ringDepth}.`
     );
-    if (ringDepth < 4 && latest != null) {
-        // Below poll-covering depth (~4 entries at today's cadence) after the very
-        // first run is the visible signature of a bot global reset whose bootstrap
-        // rehydrate failed — see screeps2 StatsManager's two-phase bootstrap. But a
-        // short ring can also just mean one or more chunk segments failed to fetch
-        // this poll (see fetchPayload) — that's not a bot problem, so say so instead
-        // of pointing at the bot every time.
-        if (failedChunks > 0) {
-            console.log(`::warning::segment ${SEGMENT} ring depth is only ${ringDepth} after ${failedChunks} chunk fetch failure(s) this poll — likely a fetch glitch, not necessarily a bot restart.`);
-        } else {
-            console.log(`::warning::segment ${SEGMENT} ring depth is only ${ringDepth} — check for a failed bot restart bootstrap.`);
+    // Suppressed before the first successful run (`latest == null`) — there's no
+    // baseline yet to call a bucket fetch problem unusual.
+    if (latest != null) {
+        if (failedBuckets > 0) {
+            console.log(`::warning::segment ${SEGMENT} had ${failedBuckets} bucket fetch failure(s) this poll (ring depth ${ringDepth}) — likely a fetch glitch.`);
+        } else if (ringDepth === 0 && (payload.buckets ?? 0) > 0) {
+            // The bot always writes the head into its bucket, so a named-but-empty
+            // ring (with no fetch failures to blame) means the bot isn't writing it.
+            console.log(`::warning::segment ${SEGMENT} names ${payload.buckets} bucket(s) but none carried history — check the bot's bucket writes.`);
         }
     }
 

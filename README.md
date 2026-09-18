@@ -5,21 +5,23 @@ GitHub Actions (collector, every 5 min) → Firestore (Firebase Spark) → Fireb
 
 The bot publishes a compact stats JSON to a pool of **RawMemory segments starting at 90** on
 shard2 every 20 ticks (`StatsManager` in the screeps2 repo, ~82s at today's shard speed).
-Segment 90 carries a manifest plus the newest snapshot; the ring of older snapshots it also
-keeps in its own heap is chunked across up to 9 more segments (91-99), so a slow poller still
-sees every publish without the old single-segment budget forcing hostile/repair-queue detail
-to drop out of history early — see "Bot side" under Operations, and screeps2's
-`docs/stats-history-ring.md`, for why a pool instead of one bigger segment. `scripts/collect.mjs`
-fetches the manifest from the Screeps Web API, then each history-chunk segment it names, merges
-them back into one payload, and stores anything not yet in Firestore; `public/` is a static
-Chart.js dashboard reading Firestore directly under read-only security rules.
+Segment 90 carries a manifest plus the newest snapshot; a time-bucketed ring of recent
+snapshots lives in the next `buckets` segments (91-96 by default). Each bucket holds every
+snapshot published during one fixed window of game ticks, the bot appends to the current
+window's bucket and overwrites the oldest when the window rolls, so a slow poller still sees
+every publish while the bot writes only two segments per publish — see "Bot side" under
+Operations, and screeps2's `docs/stats-history-ring.md`. `scripts/collect.mjs` fetches the
+manifest from the Screeps Web API, then every bucket segment it names, merges them back into
+one payload (order is irrelevant; entries are sorted and deduped by tick), and stores anything
+not yet in Firestore; `public/` is a static Chart.js dashboard reading Firestore directly under
+read-only security rules.
 
 The **Defense** and **Remote threats** sections are deliberately built from `meta/latest`
 rather than a time series. `StatsManager`'s payload-size degradation drops `roles`/`thr` and
-the snapshot-level `rt` together, in its first step (`DEGRADATION_STEPS`, ~35% of the
-history-pool budget — now the size of the whole segment pool, not just one segment), so
-historical coverage of all three in stored `snapshots` docs is size-dependent and not
-guaranteed — the head snapshot on `meta/latest` is the one place they're always complete.
+the snapshot-level `rt` together, in its first step (`DEGRADATION_STEPS`, applied when a head
+snapshot alone exceeds one 95KB segment), so historical coverage of all three in stored
+`snapshots` docs is size-dependent and not guaranteed — the head snapshot on `meta/latest` is
+the one place they're always complete.
 Both activity logs (`hostileEpisodes` / `remoteEpisodes` in `public/calc.js`) report their own
 coverage (`N of M snapshots in range carried threat detail`) rather than ever implying an
 uncovered stretch was quiet. Before adding a "hostiles over time" chart, check that coverage
@@ -279,14 +281,15 @@ gh workflow run collect                # first manual run
   ranges query only `b5`/`b30`/`b120` bucket-leader docs (~288/336/252 per full fetch; 6h
   fetches every doc, ~260), and incremental polls skip the query entirely until the current
   bucket rolls over (see `LOD_BY_RANGE` in `public/calc.js`).
-- Bot side: adjust cadence/segment/history-pool size in `screeps2/src/config/config.stats.ts`
-  (`segment`, `historySegmentCount`); check a segment with
+- Bot side: adjust cadence/segment/ring geometry in `screeps2/src/config/config.stats.ts`
+  (`segment`, `historySegmentCount`, `bucketTicks`); check a segment with
   `node scripts/screepsLive.mjs segment <90..99>` in the screeps2 repo. The collector needs no
-  matching config — it derives which chunk segments to fetch from the manifest's `chunks` field.
+  matching config — it derives which bucket segments to fetch from the manifest's `buckets` field.
 - Rollout order when changing the wire format again: usually deploy the collector first with
   support for both the old and new version, confirm it's live, then publish the new version
   from the bot — doing it in the other order leaves the collector unable to parse what the bot
-  sends. The segment-pool migration (this file's "RawMemory segments" paragraph above) was a
-  deliberate exception: both sides did a clean cut with no dual-format support, accepting a
-  few poll cycles of reduced ring depth during rollout instead, because losing a little history
-  depth during a deploy is cheaper than carrying compatibility code for it indefinitely.
+  sends. The segment-pool migration and the later switch to time buckets (this file's
+  "RawMemory segments" paragraph above) were deliberate exceptions: both sides did a clean cut
+  with no dual-format support, accepting a few poll cycles of reduced ring depth during rollout
+  instead, because losing a little history depth during a deploy is cheaper than carrying
+  compatibility code for it indefinitely.

@@ -2,7 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-    unseenEntries, interpolateTimestamps, assignLodFlags, buildSnapshotDoc, mergeChunks, parseSegment,
+    unseenEntries, interpolateTimestamps, assignLodFlags, buildSnapshotDoc, mergeBuckets, bucketSegmentIds, parseSegment,
 } from "../scripts/collect.mjs";
 import { LOD_BUCKET_MS } from "../public/calc.js";
 
@@ -37,41 +37,63 @@ describe("unseenEntries", () => {
         const payload = { ...entry(140), h: [entry(140), entry(100)] };
         assert.deepEqual(unseenEntries(payload, null).map(e => e.t), [100, 140]);
     });
+
+    test("on a tick collision, the head wins over its bucket copy, not the reverse", () => {
+        // The bot always writes the exact same JSON into both the head and its
+        // bucket, so this can't happen in practice today — but the dedup must
+        // still honor "head wins" if that guarantee is ever relaxed.
+        const degradedCopy = { ...entry(140), rt: undefined };
+        const payload = { ...entry(140), rt: [{ room: "W2N1" }], h: [degradedCopy] };
+        const [head] = unseenEntries(payload, null);
+        assert.deepEqual(head.rt, [{ room: "W2N1" }]);
+    });
 });
 
-describe("mergeChunks", () => {
-    test("no chunks (chunks: 0 manifest) yields a head-only payload, matching legacy single-segment behavior", () => {
+describe("mergeBuckets", () => {
+    test("no buckets yields a head-only payload", () => {
         const head = entry(140);
-        assert.deepEqual(mergeChunks(head, []), { ...head, h: [] });
+        assert.deepEqual(mergeBuckets(head, []), { ...head, h: [] });
     });
 
-    test("flattens successful chunks in order, newest chunk first", () => {
+    test("flattens buckets in fetched order; bucket order is not tick order and unseenEntries sorts", () => {
         const head = entry(140);
-        const chunkEntries = [
-            [entry(120), entry(100)],
-            [entry(80)],
+        const bucketEntries = [
+            [entry(120), entry(140)],
+            [entry(80), entry(100)],
         ];
-        assert.deepEqual(mergeChunks(head, chunkEntries).h.map(e => e.t), [120, 100, 80]);
+        const merged = mergeBuckets(head, bucketEntries);
+        assert.deepEqual(merged.h.map(e => e.t), [120, 140, 80, 100]);
+        assert.deepEqual(unseenEntries(merged, null).map(e => e.t), [80, 100, 120, 140]);
     });
 
-    test("a chunk missing from the fetched list (e.g. it failed) is simply absent, not a reason to drop later chunks", () => {
+    test("a bucket missing from the fetched list (e.g. it failed) is simply absent", () => {
         const head = entry(140);
-        // fetchPayload only pushes successfully-fetched chunks, so a failed
-        // middle chunk (segment 2 of 3) shows up here as a gap in the list,
-        // not an entry — later chunks still merge in.
-        const chunkEntries = [
+        const bucketEntries = [
             [entry(120)],
             [entry(80)],
         ];
-        assert.deepEqual(mergeChunks(head, chunkEntries).h.map(e => e.t), [120, 80]);
+        assert.deepEqual(mergeBuckets(head, bucketEntries).h.map(e => e.t), [120, 80]);
     });
 
     test("preserves every head field alongside the merged h", () => {
         const head = entry(140);
-        const merged = mergeChunks(head, []);
+        const merged = mergeBuckets(head, []);
         assert.equal(merged.t, 140);
         assert.deepEqual(merged.rooms, head.rooms);
     });
+});
+
+describe("bucketSegmentIds", () => {
+    for (const [label, head, expected] of [
+        ["no buckets field (older wire format)", {}, []],
+        ["buckets: 0", { buckets: 0 }, []],
+        ["buckets: 6", { buckets: 6 }, [91, 92, 93, 94, 95, 96]],
+        ["buckets above the cap", { buckets: 12 }, [91, 92, 93, 94, 95, 96, 97, 98, 99]],
+    ]) {
+        test(label, () => {
+            assert.deepEqual(bucketSegmentIds(head, 90), expected);
+        });
+    }
 });
 
 describe("parseSegment", () => {
