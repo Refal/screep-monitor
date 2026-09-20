@@ -363,7 +363,7 @@ export const NUKER_COOLDOWN = 100000; // ticks after a launch
 // RCL6 rampart and a neglected RCL8 one must not read the same.
 export const BARRIER_TARGETS = {
     barrier: { 1: 2000, 2: 10_000, 3: 20_000, 4: 50_000, 5: 200_000, 6: 600_000, 7: 1_200_000, 8: 2_000_000, default: 10_000 },
-    defenderZone: { 1: 2_000, 2: 10_000, 3: 20_000, 4: 200_000, 5: 1_000_000, 6: 2_200_000, 7: 6_600_000, 8: 300_000_000, default: 10_000 },
+    defenderZone: { 1: 2_000, 2: 10_000, 3: 20_000, 4: 200_000, 5: 1_000_000, 6: 2_200_000, 7: 11_200_000, 8: 300_000_000, default: 10_000 },
 };
 
 // Mirrors the bot's own console formatter — threatReport.ts:99-103 — term for
