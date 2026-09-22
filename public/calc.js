@@ -954,3 +954,173 @@ export function routesOrAbsence(latest, home) {
     const routes = armyRoutesForHome(latest, home);
     return routes.length ? { routes } : { absent: hasThreatDetail(latest) ? "none" : "unknown" };
 }
+
+// ---------------------------------------------------------------------------
+// Power harvesting (pb / ph / pba / pw) — the power-bank pipeline.
+// screeps2/src/manager/StatsManager.ts (buildPowerBanks) reads it off
+// Memory.highwayIntel + the planner's verdict cache; docs/stats-history-ring.md
+// ("Power banks") is the field-by-field contract these mirror, and the bot's
+// debugPowerBanks() console command is the same view in text form.
+//
+// Four fields, three of them snapshot-level because a bank is home-agnostic:
+// several homes may hold a cached verdict on the same bank and only one ever
+// reads `committed`.
+//
+//  - `pb`  live banks: power, last-seen hits, `dec` ticks to decay, `ft` free
+//          adjacent tiles, `con` contestant totals [count, Σdps, Σheal], `dps`
+//          our attackers' summed dps in the bank room, `pl` the planner's
+//          CACHED decision per home, `sq` waves/fight squads, `hl` haulers.
+//  - `ph`  haulers whose bank record is already gone: our own kill deletes the
+//          intel record exactly while they are loading, so the loot leg home
+//          would otherwise vanish from the payload entirely.
+//  - `pba` the autoHarvest gate, a scalar that is ALWAYS published and never
+//          degraded — the only thing that keeps "gate off" apart from "no
+//          banks" apart from "degraded away".
+//  - `pw`  per-room [storage, terminal, power spawn, processing 0|1]. It is in
+//          no degradation step, so its history is complete going forward (the
+//          `gpl` case); the only gap is the ticks before the collector began
+//          persisting it, which cannot be backfilled.
+//
+// `pb`/`ph` ride DEGRADATION_STEPS[0] with roles/thr/rt/ar, so absence is read
+// through hasThreatDetail exactly as `rt` and `ar` are.
+
+// `age` is Game.time - lastSeenTick: StatsManager never reads the bank room,
+// so hits/power only refresh while something of ours has vision there. Past a
+// bank's own decay the record is dropped, but until then a row can outlive the
+// real structure — the same "memory, not a live reading" caveat as a remote.
+export const POWER_BANK_STALE_AGE_TICKS = 300;
+
+// Which of the three readings a snapshot's gate carries. Deliberately not a
+// boolean: `uncollected` is a snapshot stored before the collector persisted
+// `pba` at all, and must never render as "off".
+export function powerGateState(row) {
+    if (row?.pba === undefined) return "uncollected";
+    return row.pba === 1 ? "on" : "off";
+}
+
+// The banks a snapshot shows, or which absence it is. `pb` is omitted on an
+// empty list AND dropped by degradation, so the branch needs hasThreatDetail
+// the same way routesOrAbsence does. The gate is reported alongside because a
+// reader's first question about an empty list is whether harvesting is even
+// switched on.
+export function powerBanksOrAbsence(latest) {
+    const gate = powerGateState(latest);
+    const banks = latest?.pb ?? [];
+    if (banks.length) return { banks, gate };
+    if (gate === "uncollected") return { absent: "uncollected", gate };
+    if (gate === "off") return { absent: "off", gate };
+    return { absent: hasThreatDetail(latest ?? {}) ? "none" : "unknown", gate };
+}
+
+// Ticks until our attackers break the bank, against the ticks until it decays
+// on its own. `dps` is 0 whenever nothing of ours is swinging — including
+// every bank we have not committed to — so "never" here is the normal case,
+// not an error, and the caller renders it as a word rather than an infinity.
+export function bankEta(bank) {
+    const decayIn = bank.dec;
+    if (!bank.dps) return { killIn: null, decaysFirst: true, decayIn };
+    const killIn = Math.ceil(bank.hits / bank.dps);
+    return { killIn, decaysFirst: killIn > decayIn, decayIn };
+}
+
+// Contestants are other players racing or fighting us for the same bank.
+// `con` is omitted when there are none; [count, Σdps, Σheal] when there are.
+export function bankContest(bank) {
+    if (!bank.con) return null;
+    const [count, dps, heal] = bank.con;
+    return { count, dps, heal };
+}
+
+export function bankStale(bank) {
+    return bank.age >= POWER_BANK_STALE_AGE_TICKS;
+}
+
+// The planner's CACHED decision per home (screeps2 powerBankVerdict.ts), never
+// a fresh evaluation: `committed` is a cached go (`m` says loot/fight/race),
+// `skip` a committed skip, `retry` a skip awaiting re-evaluation with `in`
+// ticks to go (≤ 0 once due). The cache is heap state, so the first publish
+// after a global reset legitimately carries no `pl` at all — an empty list is
+// "not decided yet", not "no home in range".
+export function bankPlans(bank) {
+    return (bank.pl ?? []).map(p => ({
+        home: p.h,
+        kind: p.k,
+        mode: p.m ?? null,
+        reason: p.r ?? null,
+        retryIn: p.in ?? null,
+        text: planText(p),
+    })).sort((a, b) => a.home.localeCompare(b.home));
+}
+
+function planText(p) {
+    switch (p.k) {
+        case "committed": return `committed ${p.m ?? "go"}`;
+        case "skip": return `skip · ${p.r ?? "no reason given"}`;
+        case "retry": {
+            const why = p.r ? ` (${p.r})` : "";
+            return (p.in ?? 0) > 0 ? `retry in ${p.in}t${why}` : `retry due${why}`;
+        }
+        default: return p.k;
+    }
+}
+
+// `sq` carries only what `ar` lacks — the harvest wave number `w` and the
+// fight flag `f` — so status and member counts come from joining back to the
+// army route on home + bank room + squad id. Harvest armies are kind
+// 'offense'. A join miss is normal rather than an error: `ar` and `pb` ride
+// the same degradation step but `ar` is also omitted when Memory.armies is
+// empty, and the two are built from different sources within one tick.
+export function bankSquads(latest, bank) {
+    return (bank.sq ?? []).map(s => {
+        const route = armyRoutes(latest ?? {}).find(r =>
+            r.home === s.home && r.target === bank.rm && r.squads.some(q => q.id === s.id));
+        const squad = route?.squads.find(q => q.id === s.id) ?? null;
+        return {
+            id: s.id, home: s.home,
+            fight: s.f === 1,
+            wave: s.w ?? null,
+            // Squad-level, not route-level: one route carries both the harvest
+            // wave and its fight squad, so route phase/status would describe
+            // the pair rather than the row the reader is pointing at.
+            squad,
+            status: squad?.status ?? null,
+            route: route ?? null,
+        };
+    }).sort((a, b) => a.home.localeCompare(b.home) || a.id - b.id);
+}
+
+// `hl` is [count, carried power, min ticksToLive]. The min ttl is 0 while
+// EVERY hauler is still spawning — the one reading a caller must not print as
+// a number, since "0" there says "about to die" when it means the opposite.
+export function haulerSummary(hl) {
+    if (!hl) return null;
+    const [count, carrying, minTtl] = hl;
+    return { count, carrying, minTtl, spawning: minTtl === 0 };
+}
+
+// Σ power held across the empire per snapshot, for the history chart, plus how
+// many rooms are actually processing it. `pw` is omitted for a room with
+// neither a power spawn nor any power in store, so a room without it holds
+// zero — but a snapshot where NO room has `pw` is ambiguous: it is either an
+// empire genuinely holding no power, or one stored before the field existed.
+// `pba` resolves it the way hasThreatDetail resolves a missing `rt`: the bot
+// commit that added `pw` added the always-published `pba` in the same payload,
+// so a snapshot carrying `pba` and no `pw` anywhere really does hold zero,
+// while one carrying neither predates both and returns null — a blank left
+// edge on the chart rather than a fabricated zero (the `gpl` precedent).
+export function powerStockPoint(row) {
+    const rooms = Object.values(row.rooms ?? {});
+    if (!rooms.some(r => r.pw)) return row?.pba === undefined ? null : { stock: 0, processing: 0 };
+    let stock = 0, processing = 0;
+    for (const r of rooms) {
+        if (!r.pw) continue;
+        const [storage, terminal, spawn, proc] = r.pw;
+        stock += storage + terminal + spawn;
+        if (proc === 1) processing += 1;
+    }
+    return { stock, processing };
+}
+
+export function powerStockSeries(history) {
+    return history.map(row => ({ row, point: powerStockPoint(row) }));
+}

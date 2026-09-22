@@ -69,6 +69,7 @@
             <div class="card"><h3>CPU used · limit <span id="cpu-limit"></span></h3><div class="plot"><canvas id="c-cpu"></canvas></div></div>
             <div class="card"><h3>CPU bucket</h3><div class="plot"><canvas id="c-bucket"></canvas></div></div>
             <div class="card"><h3>Reaction uptime · % of lab rooms reacting</h3><div class="plot"><canvas id="c-uptime"></canvas></div></div>
+            <div class="card" id="card-power-stock"><h3>Power held · storage + terminal + power spawn</h3><div class="plot"><canvas id="c-power-stock"></canvas></div></div>
         </div>
         </details>
 
@@ -109,6 +110,30 @@
             </table>
         </div>
         <p id="remote-log-note" class="viz-legend"></p>
+        </details>
+
+        <details class="section" data-section="power">
+            <summary>Power harvesting · live banks (latest snapshot)</summary>
+        <div class="tiles" id="power-tiles"></div>
+        <div class="table-wrap">
+            <table id="power-table">
+                <thead></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <h3 class="sub-head">Haulers in flight · bank already gone</h3>
+        <div class="table-wrap">
+            <table id="power-haul-table">
+                <thead></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div class="viz-legend">
+            <span>a bank room is a highway room — the name links to screeps.com, not to a per-room view</span>
+            <span>“Plan” is the planner’s cached decision per home, not a fresh evaluation; after a global reset it is empty until the planner runs again</span>
+            <span>“Last seen” is how stale the hits/power reading is — the bot only refreshes a bank while something of ours has vision there</span>
+            <span>the second table exists because our own kill deletes the bank’s intel record while the haulers are still loading</span>
+        </div>
         </details>
 
         <details class="section" data-section="rooms">

@@ -14,6 +14,9 @@ import {
     empireVerdict, threatItems, clearRooms, isOutgunned, hasIncomingNuke, incomingNukes,
     squadSummary, routeSummary, routePhase, routeStatusText, armyRoutes, armyRouteFor, armyRoutesForHome,
     excludeRoutedGuards, routeOrAbsence, routesOrAbsence,
+    powerGateState, powerBanksOrAbsence, bankEta, bankContest, bankStale, bankPlans,
+    bankSquads, haulerSummary, powerStockPoint, powerStockSeries,
+    POWER_BANK_STALE_AGE_TICKS,
 } from "../public/calc.js";
 
 describe("pct", () => {
@@ -1533,5 +1536,137 @@ describe("routeOrAbsence / routesOrAbsence", () => {
     test("routesOrAbsence reads 'none' vs 'unknown' through hasThreatDetail", () => {
         assert.deepEqual(routesOrAbsence(noArButThr, "W1N1"), { absent: "none" });
         assert.deepEqual(routesOrAbsence(degraded, "W1N1"), { absent: "unknown" });
+    });
+});
+
+// --- Power harvesting (pb / ph / pba / pw) --------------------------------
+
+const bank = (over = {}) => ({ rm: "W5N5", p: 4200, hits: 1_800_000, dec: 3000, age: 10, ft: 3, dps: 0, ...over });
+
+describe("powerGateState", () => {
+    test("separates gate-off from a snapshot that never carried the field", () => {
+        assert.equal(powerGateState({ pba: 1 }), "on");
+        assert.equal(powerGateState({ pba: 0 }), "off");
+        assert.equal(powerGateState({}), "uncollected");
+        assert.equal(powerGateState(undefined), "uncollected");
+    });
+});
+
+describe("powerBanksOrAbsence", () => {
+    test("returns the banks when any are live", () => {
+        const latest = { pba: 1, pb: [bank()], rooms: { W1N1: { thr: thr() } } };
+        assert.deepEqual(powerBanksOrAbsence(latest).banks.map(b => b.rm), ["W5N5"]);
+        assert.equal(powerBanksOrAbsence(latest).gate, "on");
+    });
+    test("gate off outranks the empty-list branch — harvesting is simply switched off", () => {
+        assert.deepEqual(powerBanksOrAbsence({ pba: 0, rooms: { W1N1: { thr: thr() } } }),
+            { absent: "off", gate: "off" });
+    });
+    test("with the gate on, reads 'none' vs 'unknown' through hasThreatDetail", () => {
+        assert.deepEqual(powerBanksOrAbsence({ pba: 1, rooms: { W1N1: { thr: thr() } } }),
+            { absent: "none", gate: "on" });
+        assert.deepEqual(powerBanksOrAbsence({ pba: 1, rooms: { W1N1: {} } }),
+            { absent: "unknown", gate: "on" });
+    });
+    test("a pre-deploy snapshot is 'uncollected', never 'off'", () => {
+        assert.deepEqual(powerBanksOrAbsence({ rooms: { W1N1: { thr: thr() } } }),
+            { absent: "uncollected", gate: "uncollected" });
+    });
+});
+
+describe("bankEta", () => {
+    test("no dps of ours means no kill — the normal state for an uncommitted bank", () => {
+        assert.deepEqual(bankEta(bank()), { killIn: null, decaysFirst: true, decayIn: 3000 });
+    });
+    test("kill eta rounds up and is compared against decay", () => {
+        assert.deepEqual(bankEta(bank({ hits: 1000, dps: 300 })), { killIn: 4, decaysFirst: false, decayIn: 3000 });
+        assert.equal(bankEta(bank({ hits: 1_800_000, dps: 300, dec: 500 })).decaysFirst, true);
+    });
+});
+
+describe("bankContest / bankStale", () => {
+    test("contest is null when the bot published no contestants", () => {
+        assert.equal(bankContest(bank()), null);
+        assert.deepEqual(bankContest(bank({ con: [2, 300, 120] })), { count: 2, dps: 300, heal: 120 });
+    });
+    test("staleness is intel age, not the snapshot's own age", () => {
+        assert.equal(bankStale(bank({ age: POWER_BANK_STALE_AGE_TICKS - 1 })), false);
+        assert.equal(bankStale(bank({ age: POWER_BANK_STALE_AGE_TICKS })), true);
+    });
+});
+
+describe("bankPlans", () => {
+    test("renders each cached verdict kind, sorted by home", () => {
+        const plans = bankPlans(bank({ pl: [
+            { h: "W2N2", k: "retry", in: 40, r: "no_pairs" },
+            { h: "W1N1", k: "committed", m: "loot" },
+            { h: "W3N3", k: "skip", r: "too_far" },
+        ] }));
+        assert.deepEqual(plans.map(p => p.home), ["W1N1", "W2N2", "W3N3"]);
+        assert.deepEqual(plans.map(p => p.text),
+            ["committed loot", "retry in 40t (no_pairs)", "skip · too_far"]);
+    });
+    test("a due retry says so rather than printing a non-positive countdown", () => {
+        assert.equal(bankPlans(bank({ pl: [{ h: "W1N1", k: "retry", in: -12 }] }))[0].text, "retry due");
+    });
+    test("no pl at all is empty, not an error — the verdict cache is heap state", () => {
+        assert.deepEqual(bankPlans(bank()), []);
+    });
+});
+
+describe("bankSquads", () => {
+    const latest = {
+        ar: [{ home: "W1N1", target: "W5N5", kind: "offense", sq: [sq({ id: 7 })] }],
+        rooms: { W1N1: { thr: thr() } },
+    };
+    test("joins sq back to ar on home + bank room + squad id", () => {
+        const [s] = bankSquads(latest, bank({ sq: [{ id: 7, home: "W1N1", w: 2 }] }));
+        assert.equal(s.wave, 2);
+        assert.equal(s.fight, false);
+        assert.equal(s.status, "engaged");
+        assert.equal(s.route.phase, "deployed");
+        // the squad's OWN counts, not the route's: one harvest route carries
+        // both the wave and its fight squad, so route-level totals would
+        // describe the pair rather than the row a reader is pointing at.
+        assert.equal(s.squad.alive, 2);
+        assert.equal(s.squad.atTarget, 2);
+    });
+    test("a join miss leaves the squad null instead of inventing a status", () => {
+        const [s] = bankSquads(latest, bank({ sq: [{ id: 9, home: "W1N1", f: 1 }] }));
+        assert.equal(s.squad, null);
+        assert.equal(s.status, null);
+        assert.equal(s.fight, true);
+        assert.equal(s.wave, null);
+    });
+});
+
+describe("haulerSummary", () => {
+    test("min ttl 0 means every hauler is still spawning, not about to die", () => {
+        assert.deepEqual(haulerSummary([2, 1600, 0]), { count: 2, carrying: 1600, minTtl: 0, spawning: true });
+        assert.equal(haulerSummary([1, 800, 940]).spawning, false);
+    });
+    test("no hl at all is null", () => {
+        assert.equal(haulerSummary(undefined), null);
+    });
+});
+
+describe("powerStockPoint / powerStockSeries", () => {
+    test("sums storage + terminal + power spawn and counts processing rooms", () => {
+        const row = { rooms: {
+            W1N1: { pw: [10_000, 2000, 80, 1] },
+            W2N2: { pw: [500, 0, 0, 0] },
+            W3N3: {},
+        } };
+        assert.deepEqual(powerStockPoint(row), { stock: 12_580, processing: 1 });
+    });
+    test("no pw anywhere and no pba means the snapshot predates the field — null, not 0", () => {
+        assert.equal(powerStockPoint({ rooms: { W1N1: {}, W2N2: {} } }), null);
+    });
+    test("no pw anywhere but pba present is a genuine zero — the bot published both together", () => {
+        assert.deepEqual(powerStockPoint({ pba: 0, rooms: { W1N1: {}, W2N2: {} } }), { stock: 0, processing: 0 });
+    });
+    test("the series keeps the row beside each point so a blank left edge stays plottable", () => {
+        const series = powerStockSeries([{ rooms: { W1N1: {} } }, { pba: 1, rooms: { W1N1: { pw: [5, 0, 0, 0] } } }]);
+        assert.deepEqual(series.map(s => s.point?.stock ?? null), [null, 5]);
     });
 });

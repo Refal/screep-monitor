@@ -363,10 +363,83 @@ function demoAr(i, n, f) {
         });
     }
     routes.push({ home: "E27S41", target: "E28S41", kind: "manual", sq: [{ id: 9, st: "engaged", n: [0, 0, 1, 0], at: [0, 0, 1] }] });
+    // The power-harvest armies behind demoPb's `sq` entries — kind 'offense',
+    // and the only thing the power table's Squads column can join against for
+    // a status. The E45N35 route ends with the bank, so late in the window
+    // that bank's squads have no route record at all — the join-miss branch.
+    routes.push({
+        home: "E15S57", target: "E15N5", kind: "offense",
+        sq: [{ id: 21, st: "engaged", n: [0, 0, 4, 0], at: [0, 4, 0], b: 1 },
+             { id: 22, st: "engaged", n: [0, 0, 2, 0], at: [0, 2, 0] }],
+    });
+    if (i < Math.floor(n * 0.8)) {
+        routes.push({ home: "E27S41", target: "E45N35", kind: "offense", sq: [{ id: 31, st: "engaged", n: [0, 0, 4, 1], at: [0, 0, 4] }] });
+    }
     if (i >= Math.floor(n * 0.5)) {
         routes.push({ home: "E21S41", target: "E22S41", sq: [{ id: 11, st: "engaged", n: [0, 0, 1, 1], at: [1, 0, 0], hold: 1 }] });
     }
     return routes.length ? routes : null;
+}
+
+// Per-room power stock (pw): [storage, terminal, power spawn, processing 0|1].
+// Only the first two rooms hold power, and only from the window's midpoint —
+// a room with no power spawn and no power in store publishes no `pw` at all,
+// and a snapshot where NO room does predates the field entirely. That first
+// half is the blank left edge the stock chart must draw instead of a zero
+// line, and it is the only way to see it in a browser.
+function demoPw(k, i, n, f) {
+    if (i < Math.floor(n * 0.5) || k > 1) return null;  // see synthDemo's prePower note
+    const g = (i - Math.floor(n * 0.5)) / (n - Math.floor(n * 0.5));
+    // k === 0 owns a power spawn and is processing; k === 1 is a vault holding
+    // stray power with no spawn, which must read as NOT processing.
+    return k === 0
+        ? [Math.round(4000 + 26000 * g), 2000, Math.round(80 * (1 - g)), 1]
+        : [Math.round(1500 * g), 0, 0, 0];
+}
+
+// Live power banks (pb). One case per branch the renderers distinguish:
+//
+//   - E15N5: committed by one home, contested by a rival, squads and haulers
+//     already on it — the fully-engaged case, and the only one with `dps`, so
+//     the "dead before it decays" badge has something to render;
+//   - E25N15: a fresh sighting nothing has decided on yet — no `pl` at all
+//     (the planner's cache is heap state), no squads, no haulers;
+//   - E35N25: a retry pending on one home and a committed skip on another,
+//     stale intel (the room has gone dark) and only one free tile.
+function demoPb(i, n, f) {
+    const banks = [{
+        rm: "E15N5", p: 4800, hits: Math.round(2_000_000 * (1 - f * 0.6)), dec: 4200 - i * 8,
+        age: i % 7, ft: 4, con: [2, 340, 120], dps: 1180,
+        pl: [{ h: "E15S57", k: "committed", m: "fight" }, { h: "E18S59", k: "skip", r: "too_far" }],
+        sq: [{ id: 21, home: "E15S57", w: 1 }, { id: 22, home: "E15S57", f: 1 }],
+        // still spawning (min ttl 0) for the first stretch, then out on the road
+        hl: i > Math.floor(n * 0.6) ? [2, 2400, 890] : [2, 0, 0],
+    }];
+    banks.push({ rm: "E25N15", p: 2600, hits: 2_000_000, dec: 3000 - i * 5, age: 2, ft: 6, dps: 0 });
+    banks.push({
+        rm: "E35N25", p: 6400, hits: 1_400_000, dec: 5000 - i * 6, age: 340 + i, ft: 1, dps: 0,
+        pl: [{ h: "E21S41", k: "retry", in: 200 - i * 3, r: "no_pairs" }, { h: "E23S44", k: "skip", r: "bank_too_tough" }],
+    });
+    // The bank our own squad finishes late in the window — it leaves the list
+    // exactly when demoPh starts publishing its haulers, which is the sequence
+    // `ph` exists for.
+    if (i < Math.floor(n * 0.8)) {
+        banks.push({
+            rm: "E45N35", p: 5200, hits: Math.round(900_000 * (1 - i / (n * 0.8))), dec: 2600 - i * 4,
+            age: 1, ft: 3, dps: 940,
+            pl: [{ h: "E27S41", k: "committed", m: "loot" }],
+            sq: [{ id: 31, home: "E27S41", w: 2 }],
+            hl: [2, 1200, 640],
+        });
+    }
+    return banks;
+}
+
+// Haulers whose bank record is already gone (ph) — the loot leg home. Appears
+// exactly when demoPb drops E15N5, which is the sequence this field exists
+// for: our own kill deletes the intel record while the haulers are loading.
+function demoPh(i, n) {
+    return i >= Math.floor(n * 0.8) ? [{ rm: "E45N35", hl: [2, 5200, 760] }] : null;
 }
 
 // One contiguous stretch mid-window where the published payload outgrew its
@@ -392,6 +465,10 @@ export function degradeLatest(rows) {
     }
     delete last.rt;
     delete last.ar;
+    // pb/ph ride the same degradation step; `pba` does NOT and must survive,
+    // or the section reads "gate off"/"no banks" instead of "degraded away".
+    delete last.pb;
+    delete last.ph;
     return [...rows.slice(0, -1), last];
 }
 
@@ -431,6 +508,7 @@ export function synthDemo(rangeHours, maxPoints) {
             const nuk = demoNuk(k, i, n, f);
             const nukes = demoNukes(k, i, n);
             const rq = demoRq(k, i, n, f);
+            const pw = demoPw(k, i, n, f);
             const roles = degraded ? null : demoRoles(k);
             const thr = degraded ? undefined : demoThr(k, i, n, f);
             const gained = spec.totalGain * f + spec.oscAmp * Math.sin(i / spec.oscPeriod + k);
@@ -468,11 +546,20 @@ export function synthDemo(rangeHours, maxPoints) {
                 ...(nuk ? { nuk } : {}),
                 ...(nukes ? { nukes } : {}),
                 ...(rq ? { rq } : {}),
+                ...(pw ? { pw } : {}),
             };
         });
         const gpl = demoGpl(i, n);
         const rt = degraded ? null : demoRt(i, n, f);
         const ar = degraded ? null : demoAr(i, n, f);
+        // The first quarter of the window predates the power fields entirely —
+        // snapshots the collector stored before it began persisting them. That
+        // is the only way to see the chart's blank left edge, and the only way
+        // to tell it apart from the stretch that follows, where `pba` is
+        // present and no room holds power: a genuine empire-wide zero.
+        const prePower = i < Math.floor(n * 0.25);
+        const pb = degraded || prePower ? null : demoPb(i, n, f);
+        const ph = degraded || prePower ? null : demoPh(i, n);
         rows.push({
             ts: { toDate: () => date }, date, tick: 76680000 + i * 120,
             // mild oscillation on top of the upward trend so the GCL/tick chart
@@ -488,6 +575,13 @@ export function synthDemo(rangeHours, maxPoints) {
             rooms,
             ...(rt ? { rt } : {}),
             ...(ar ? { ar } : {}),
+            ...(pb?.length ? { pb } : {}),
+            ...(ph?.length ? { ph } : {}),
+            // Always published and never degraded — that is the whole point of
+            // the scalar, so it stays outside the `degraded` branch above. It
+            // is absent only in the pre-power stretch, where the bot had no
+            // such field at all.
+            ...(prePower ? {} : { pba: 1 }),
             bmax: {
                 UH: 3000, UH2O: 1000, XUH2O: 500,
                 KO: 3000, KHO2: 1000,

@@ -178,6 +178,8 @@ h2 { font-size: 15px; margin: 24px 0 10px; color: var(--text-secondary); font-we
 .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
 .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; min-width: 0; }
 .card h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+/* Heading for a second table inside one section (the power section's hauler list). */
+.sub-head { margin: 20px 0 8px; font-size: 13px; font-weight: 600; color: var(--text-secondary); }
 .card .plot { position: relative; height: 220px; }
 
 /* ---------- tables: two modes ----------

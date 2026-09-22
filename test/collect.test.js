@@ -216,6 +216,45 @@ describe("buildSnapshotDoc", () => {
         assert.equal(full.b30, true);
         assert.equal(full.b120, true);
     });
+
+    test("power harvesting: pb/ph omit-on-empty, pba persists even as 0", () => {
+        const bare = buildSnapshotDoc({ ...entry(100), tsMs: 0 });
+        // `pb`/`ph` ride the bot's first degradation step alongside rt/ar, so
+        // they follow the same contract: absent, never `[]`.
+        assert.equal("pb" in bare, false);
+        assert.equal("ph" in bare, false);
+        assert.equal("pb" in buildSnapshotDoc({ ...entry(100), tsMs: 0, pb: [] }), false);
+        assert.equal("ph" in buildSnapshotDoc({ ...entry(100), tsMs: 0, ph: [] }), false);
+        // A ring entry published before the bot emitted `pba` carries none —
+        // the field has to stay absent rather than become `undefined`, which
+        // firebase-admin rejects outright.
+        assert.equal("pba" in bare, false);
+
+        // The trap: `pba: 0` is "autoHarvest gate is off", the single reading
+        // this scalar exists to keep apart from "no live banks". A truthiness
+        // test here would drop exactly that state.
+        const gateOff = buildSnapshotDoc({ ...entry(100), tsMs: 0, pba: 0 });
+        assert.equal(gateOff.pba, 0);
+
+        const pb = [{
+            rm: "W5N5", p: 4200, hits: 1_800_000, dec: 3100, age: 12, ft: 3,
+            con: [2, 300, 120], dps: 600,
+            pl: [{ h: "W1N1", k: "committed", m: "loot" }],
+            sq: [{ id: 1, home: "W1N1", w: 2 }],
+            hl: [2, 1600, 0],
+        }];
+        const ph = [{ rm: "W6N6", hl: [1, 800, 940] }];
+        const full = buildSnapshotDoc({ ...entry(100), tsMs: 0, pb, ph, pba: 1 });
+        assert.deepEqual(full.pb, pb);
+        assert.deepEqual(full.ph, ph);
+        assert.equal(full.pba, 1);
+    });
+
+    test("per-room pw rides through `rooms` with no collector change", () => {
+        const pwRoom = { ...room, pw: [12_000, 3000, 80, 1] };
+        const doc = buildSnapshotDoc({ ...entry(100), tsMs: 0, rooms: { W1N1: pwRoom } });
+        assert.deepEqual(doc.rooms.W1N1.pw, [12_000, 3000, 80, 1]);
+    });
 });
 
 describe("firestore.indexes.json", () => {

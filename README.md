@@ -84,6 +84,51 @@ hostiles cached" when the truth is "never collected". Like `gpl`, `rt` can't be 
 so the remote activity log under-reports incursions in any range still reaching back past
 that deploy, and ages out of the problem on its own after `RETENTION_DAYS`.
 
+`pb` / `ph` / `pba` / `pw` (power harvesting) are the fourth family on that degradation step,
+and the answer to "are we taking power banks, and how is it going?". `pb` lists every live
+bank in the bot's highway intel with its power, hits, ticks to decay, free adjacent tiles,
+contestant totals, the summed dps of our attackers standing in the bank room, the planner's
+decision per home (`pl`), the harvest waves and fight squads on it (`sq`) and its haulers
+(`hl`). Five traps, all of them load-bearing:
+
+- **`pba` is a scalar, not a list, and never degrades.** It is the bot's `autoHarvest` gate,
+  and it is the only thing separating "harvesting is switched off" from "the gate is on and
+  no bank is live" from "the detail was degraded away". `buildSnapshotDoc` therefore persists
+  it with an `!== undefined` guard rather than the `?.length` test `rt`/`ar`/`pb`/`ph` use —
+  a truthiness test would drop exactly the `0` that means "off". `powerGateState` and
+  `powerBanksOrAbsence` in `public/calc.js` own the four-way reading, and the Power tiles
+  show "unknown", never a calm zero, on a degraded snapshot.
+- **`pl` is the planner's cached verdict, not a fresh evaluation.** The cache is heap state,
+  so the first publish after a global reset legitimately carries no `pl` at all — the table
+  says "undecided" there, which is a different thing from "no home in range".
+- **`age` is intel staleness, not the snapshot's.** `StatsManager` never reads the bank room,
+  so hits and power only refresh while something of ours has vision there; past
+  `POWER_BANK_STALE_AGE_TICKS` the row is a memory of a room gone dark, and can outlive the
+  real structure until `dec` runs out. Same de-emphasis as a stale `rt` row.
+- **`hl`'s min ttl is `0` while every hauler is still spawning.** Rendered as the word
+  "spawning": printing "0t" would say the opposite of what it means.
+- **`sq` carries only the wave number and the fight flag.** Status and member counts come
+  from joining back to `ar` on home + bank room + squad id (harvest armies are
+  `kind: 'offense'`), and the join is made per *squad*, not per route — one harvest route
+  carries both the wave and its fight squad. A miss reads "no army record", never a phase.
+
+`ph` exists because our own kill deletes the bank's intel record exactly while the haulers
+are loading, so the loot leg home would otherwise vanish from the payload mid-trip. It gets
+its own table under the banks for that reason.
+
+`pw` is per-room — `[storage power, terminal power, power-spawn power, processing 0|1]` — and
+needs no collector change at all: `buildSnapshotDoc` copies `rooms` wholesale, so per-room
+fields ride along (the bot's `docs/stats-history-ring.md` says otherwise; the code is the
+authority). `processing` is 1 only when the room owns a power spawn *and* the bot's energy
+gate holds, so a spawn-less vault holding stray power reads 0. Like `gpl` it is in no
+degradation step, so its history is complete going forward; the only gap is the stretch
+before the collector began persisting it, which cannot be backfilled. A snapshot where *no*
+room carries `pw` is ambiguous on its own — an empire genuinely holding no power looks
+identical to one stored before the field existed — and `powerStockPoint` resolves it with
+`pba` the same way `hasThreatDetail` resolves a missing `rt`: the bot added both fields in
+one payload, so `pba` present with no `pw` anywhere is a real zero, and neither present is
+"not collected". `?demo=1` covers all three stretches in one window.
+
 `gpl` (power level) is the opposite case: it's not in any `DEGRADATION_STEPS` step, so its
 history coverage in `snapshots` is always complete going forward. The only gap is time-based,
 not size-based — it only exists in payloads published after the collector started persisting
@@ -122,6 +167,12 @@ ever urgent is "is anything on fire?".
   first open. Below 1100px only Defense ships `open` (tiles plus a table, no charts), so a
   phone builds no charts at all until the reader opens a section, against 16 for the whole
   page. From 1100px up everything opens by default.
+- **Power harvesting** is a latest-snapshot section built from `pb`/`ph`/`pba`, modelled on
+  the bot's own `debugPowerBanks()` console command — gate tiles, one row per live bank with
+  its planner verdicts and squads, and a second table for the haulers whose bank is already
+  gone. The empire-wide power *stock* over time is a chart in the Empire section instead,
+  since `pw` (unlike everything else here) has complete history. Bank rooms are highway
+  rooms, so their names link out to screeps.com rather than to a per-room view.
 - **The per-room view is a hash route**, not a tail on the same page — `#/room/E23S45`, with
   the time range as `?range=`. `public/route.js` owns the grammar (and rejects a range with
   no `LOD_BY_RANGE` flag behind it, which would otherwise run an unflagged full-resolution

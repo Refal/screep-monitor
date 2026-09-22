@@ -4,7 +4,7 @@
  * locally.
  *
  * Payload shape: segment SEGMENT holds a manifest+head snapshot
- * (t, gcl, gpl, cpu, cr, rooms, bmax?, rt?, ar?, buckets), where `buckets`
+ * (t, gcl, gpl, cpu, cr, rooms, bmax?, rt?, ar?, pb?, ph?, pba, buckets), where `buckets`
  * is how many history bucket segments the bot keeps, at
  * SEGMENT+1 .. SEGMENT+buckets. Each bucket is a JSON array of the snapshots
  * published during one fixed window of game ticks (oldest first); the bot
@@ -31,7 +31,8 @@
  *                                    not separately configured)
  *
  * Firestore layout:
- *   snapshots/<autoId>  { ts, tick, gcl, gpl?, cpu, cr, rooms, bmax?, rt?, ar?, b5?, b30?, b120? }
+ *   snapshots/<autoId>  { ts, tick, gcl, gpl?, cpu, cr, rooms, bmax?, rt?, ar?, pb?, ph?, pba?,
+ *                         b5?, b30?, b120? }
  *   meta/latest         same shape, plus `lod` (bucket-tracking state); also
  *                       used to dedup by tick and to trigger the once-a-day
  *                       retention sweep
@@ -216,6 +217,18 @@ export function buildSnapshotDoc(entry) {
         // Same contract as `rt`: the bot omits `ar` when no army exists and
         // drops it under degradation, so it must never persist as `[]`.
         ...(entry.ar?.length ? { ar: entry.ar } : {}),
+        // Power harvesting, same omit-on-empty contract as `rt`/`ar`: both ride
+        // the bot's first degradation step, so absence has to keep meaning
+        // "nothing live, or degraded away" rather than "an empty table".
+        ...(entry.pb?.length ? { pb: entry.pb } : {}),
+        ...(entry.ph?.length ? { ph: entry.ph } : {}),
+        // NOT the `?.length`/truthiness pattern: `pba` is a scalar 0|1 (the bot's
+        // autoHarvest gate) and `0` is the load-bearing value — dropping it
+        // collapses "gate off" into "no banks", which is the one distinction this
+        // field exists to keep. The undefined guard is still needed: firebase-admin
+        // rejects `undefined` values, and ring entries published before the bot
+        // started emitting `pba` carry none.
+        ...(entry.pba !== undefined ? { pba: entry.pba } : {}),
     };
     for (const flag of Object.keys(LOD_BUCKET_MS)) if (entry[flag]) doc[flag] = true;
     return doc;
