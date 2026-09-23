@@ -1089,6 +1089,22 @@ export function bankSquads(latest, bank) {
     }).sort((a, b) => a.home.localeCompare(b.home) || a.id - b.id);
 }
 
+// One row per unit of ours on the power pipeline: every squad on a live bank
+// (via bankSquads, so the `ar` join stays in one place) plus the `ph` haulers
+// whose bank record is already gone. Live-bank haulers are not here — they
+// stay a column on the bank itself. `pb`/`ph` share a degradation step, so a
+// snapshot missing `pb` for any reason can still carry `ph` rows, and does.
+export function powerFleetRows(latest) {
+    const banks = latest?.pb ?? [];
+    const squads = banks.flatMap(bank => bankSquads(latest, bank).map(s => ({
+        kind: "squad", rm: bank.rm, live: true, ...s,
+    })));
+    const gone = (latest?.ph ?? []).map(h => ({ kind: "haulers", rm: h.rm, live: false, hl: h.hl }));
+    // bankSquads already orders one bank's squads by (home, id); the stable
+    // sort keeps that order within a room.
+    return [...squads, ...gone].sort((a, b) => a.rm.localeCompare(b.rm) || Number(b.live) - Number(a.live));
+}
+
 // `hl` is [count, carried power, min ticksToLive]. The min ttl is 0 while
 // EVERY hauler is still spawning — the one reading a caller must not print as
 // a number, since "0" there says "about to die" when it means the opposite.

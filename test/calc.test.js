@@ -15,7 +15,7 @@ import {
     squadSummary, routeSummary, routePhase, routeStatusText, armyRoutes, armyRouteFor, armyRoutesForHome,
     excludeRoutedGuards, routeOrAbsence, routesOrAbsence,
     powerGateState, powerBanksOrAbsence, bankEta, bankContest, bankStale, bankPlans,
-    bankSquads, haulerSummary, powerStockPoint, powerStockSeries,
+    bankSquads, powerFleetRows, haulerSummary, powerStockPoint, powerStockSeries,
     POWER_BANK_STALE_AGE_TICKS,
 } from "../public/calc.js";
 
@@ -1637,6 +1637,40 @@ describe("bankSquads", () => {
         assert.equal(s.status, null);
         assert.equal(s.fight, true);
         assert.equal(s.wave, null);
+    });
+});
+
+describe("powerFleetRows", () => {
+    const latest = (over = {}) => ({
+        ar: [{ home: "W1N1", target: "W5N5", kind: "offense", sq: [sq({ id: 7 })] }],
+        rooms: { W1N1: { thr: thr() } },
+        ...over,
+    });
+    test("each squad on a live bank is its own row, with the ar join carried through", () => {
+        const rows = powerFleetRows(latest({ pb: [bank({ hl: [2, 0, 0], sq: [{ id: 7, home: "W1N1", w: 2 }, { id: 8, home: "W1N1", f: 1 }] })] }));
+        assert.deepEqual(rows.map(r => [r.kind, r.rm, r.id, r.live]), [["squad", "W5N5", 7, true], ["squad", "W5N5", 8, true]]);
+        assert.equal(rows[0].status, "engaged");
+        assert.equal(rows[1].fight, true);
+        assert.equal(rows[1].squad, null);
+    });
+    test("a ph entry becomes a gone hauler row; live-bank haulers stay on the bank", () => {
+        const rows = powerFleetRows(latest({ pb: [bank({ hl: [2, 0, 0] })], ph: [{ rm: "W6N6", hl: [1, 800, 400] }] }));
+        assert.deepEqual(rows, [{ kind: "haulers", rm: "W6N6", live: false, hl: [1, 800, 400] }]);
+    });
+    test("sorted by room, live before gone, then squads by (home, id)", () => {
+        const rows = powerFleetRows(latest({
+            pb: [
+                bank({ rm: "W7N7", sq: [{ id: 3, home: "W2N2" }, { id: 1, home: "W1N1" }] }),
+                bank({ rm: "W5N5", sq: [{ id: 7, home: "W1N1" }] }),
+            ],
+            ph: [{ rm: "W5N5", hl: [1, 0, 0] }, { rm: "W6N6", hl: [1, 0, 0] }],
+        }));
+        assert.deepEqual(rows.map(r => `${r.rm}:${r.kind === "squad" ? `${r.home}#${r.id}` : "gone"}`),
+            ["W5N5:W1N1#7", "W5N5:gone", "W6N6:gone", "W7N7:W1N1#1", "W7N7:W2N2#3"]);
+    });
+    test("no pb still yields the ph rows", () => {
+        assert.deepEqual(powerFleetRows({ ph: [{ rm: "W6N6", hl: [1, 0, 0] }] }).map(r => r.rm), ["W6N6"]);
+        assert.deepEqual(powerFleetRows({}), []);
     });
 });
 

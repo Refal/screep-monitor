@@ -364,13 +364,20 @@ function demoAr(i, n, f) {
     }
     routes.push({ home: "E27S41", target: "E28S41", kind: "manual", sq: [{ id: 9, st: "engaged", n: [0, 0, 1, 0], at: [0, 0, 1] }] });
     // The power-harvest armies behind demoPb's `sq` entries — kind 'offense',
-    // and the only thing the power table's Squads column can join against for
+    // and the only thing the squads table can join against for
     // a status. The E45N35 route ends with the bank, so late in the window
     // that bank's squads have no route record at all — the join-miss branch.
     routes.push({
         home: "E15S57", target: "E15N5", kind: "offense",
         sq: [{ id: 21, st: "engaged", n: [0, 0, 4, 0], at: [0, 4, 0], b: 1 },
              { id: 22, st: "engaged", n: [0, 0, 2, 0], at: [0, 2, 0] }],
+    });
+    // A second home on the same bank — four squads in all, the case that used
+    // to push the bank table past the viewport.
+    routes.push({
+        home: "E18S59", target: "E15N5", kind: "offense",
+        sq: [{ id: 41, st: "engaged", n: [0, 0, 3, 0], at: [0, 0, 3] },
+             { id: 42, st: "forming", n: [2, 0, 0, 0], at: [2, 0, 0] }],
     });
     if (i < Math.floor(n * 0.8)) {
         routes.push({ home: "E27S41", target: "E45N35", kind: "offense", sq: [{ id: 31, st: "engaged", n: [0, 0, 4, 1], at: [0, 0, 4] }] });
@@ -399,7 +406,8 @@ function demoPw(k, i, n, f) {
 
 // Live power banks (pb). One case per branch the renderers distinguish:
 //
-//   - E15N5: committed by one home, contested by a rival, squads and haulers
+//   - E15N5: committed by two homes (four squads between them) with a third
+//     home's skip folded into "+1 other", contested by a rival, haulers
 //     already on it — the fully-engaged case, and the only one with `dps`, so
 //     the "dead before it decays" badge has something to render;
 //   - E25N15: a fresh sighting nothing has decided on yet — no `pl` at all
@@ -410,8 +418,10 @@ function demoPb(i, n, f) {
     const banks = [{
         rm: "E15N5", p: 4800, hits: Math.round(2_000_000 * (1 - f * 0.6)), dec: 4200 - i * 8,
         age: i % 7, ft: 4, con: [2, 340, 120], dps: 1180,
-        pl: [{ h: "E15S57", k: "committed", m: "fight" }, { h: "E18S59", k: "skip", r: "too_far" }],
-        sq: [{ id: 21, home: "E15S57", w: 1 }, { id: 22, home: "E15S57", f: 1 }],
+        pl: [{ h: "E15S57", k: "committed", m: "fight" }, { h: "E18S59", k: "committed", m: "race" },
+             { h: "E21S41", k: "skip", r: "too_far" }],
+        sq: [{ id: 21, home: "E15S57", w: 1 }, { id: 22, home: "E15S57", f: 1 },
+             { id: 41, home: "E18S59", w: 1 }, { id: 42, home: "E18S59", w: 2 }],
         // still spawning (min ttl 0) for the first stretch, then out on the road
         hl: i > Math.floor(n * 0.6) ? [2, 2400, 890] : [2, 0, 0],
     }];

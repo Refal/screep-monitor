@@ -100,7 +100,9 @@ decision per home (`pl`), the harvest waves and fight squads on it (`sq`) and it
   show "unknown", never a calm zero, on a degraded snapshot.
 - **`pl` is the planner's cached verdict, not a fresh evaluation.** The cache is heap state,
   so the first publish after a global reset legitimately carries no `pl` at all — the table
-  says "undecided" there, which is a different thing from "no home in range".
+  says "undecided" there, which is a different thing from "no home in range". The bank
+  table's **Committed** column shows one chip per committed home and folds every skip/retry
+  verdict into a single muted chip, so a bank several homes can reach stays one column wide.
 - **`age` is intel staleness, not the snapshot's.** `StatsManager` never reads the bank room,
   so hits and power only refresh while something of ours has vision there; past
   `POWER_BANK_STALE_AGE_TICKS` the row is a memory of a room gone dark, and can outlive the
@@ -113,8 +115,10 @@ decision per home (`pl`), the harvest waves and fight squads on it (`sq`) and it
   carries both the wave and its fight squad. A miss reads "no army record", never a phase.
 
 `ph` exists because our own kill deletes the bank's intel record exactly while the haulers
-are loading, so the loot leg home would otherwise vanish from the payload mid-trip. It gets
-its own table under the banks for that reason.
+are loading, so the loot leg home would otherwise vanish from the payload mid-trip. Its rows
+share the table under the banks with the squads (`powerFleetRows`): one row per squad, plus
+one "gone" hauler row per `ph` entry, so four squads on one bank are four short rows rather
+than one cell that widens the bank table past the viewport.
 
 `pw` is per-room — `[storage power, terminal power, power-spawn power, processing 0|1]` — and
 needs no collector change at all: `buildSnapshotDoc` copies `rooms` wholesale, so per-room
@@ -169,8 +173,8 @@ ever urgent is "is anything on fire?".
   page. From 1100px up everything opens by default.
 - **Power harvesting** is a latest-snapshot section built from `pb`/`ph`/`pba`, modelled on
   the bot's own `debugPowerBanks()` console command — gate tiles, one row per live bank with
-  its planner verdicts and squads, and a second table for the haulers whose bank is already
-  gone. The empire-wide power *stock* over time is a chart in the Empire section instead,
+  its committed homes, and a second table with one row per squad plus the haulers whose bank
+  is already gone. The empire-wide power *stock* over time is a chart in the Empire section instead,
   since `pw` (unlike everything else here) has complete history. Bank rooms are highway
   rooms, so their names link out to screeps.com rather than to a per-room view.
 - **The per-room view is a hash route**, not a tail on the same page — `#/room/E23S45`, with

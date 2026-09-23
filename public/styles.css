@@ -218,6 +218,9 @@ tbody td { font-variant-numeric: tabular-nums; }
 /* These three right-align inside a table cell; in a card they start-align
    with the value they belong to. */
 .table-wrap td .chips, .table-wrap td .nuker-fill, .table-wrap td .def-fill { justify-content: flex-start; }
+/* Badges one per line (the power table's Committed column), start-aligned in a
+   card and right-aligned in a table like every other chips cell. */
+.table-wrap td.chips-stack .chips { flex-direction: column; align-items: flex-start; gap: 3px; }
 /* Chip colours alone can't carry a number, and there is no hover on a phone. */
 .table-wrap td .chip-values { margin-left: 8px; font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .table-wrap td:has(.chip-values) { grid-template-columns: 9.5em auto 1fr; }
@@ -256,6 +259,7 @@ tbody td { font-variant-numeric: tabular-nums; }
     .table-wrap .row-expand-toggle { display: none; }
     .table-wrap td[data-tier="3"] { display: table-cell; }
     .table-wrap td .chips, .table-wrap td .nuker-fill, .table-wrap td .def-fill { justify-content: flex-end; }
+    .table-wrap td.chips-stack .chips { align-items: flex-end; }
     .table-wrap td .chip-values { display: none; }
     /* Qualified with .table-wrap on purpose: the card-mode `.table-wrap td`
        rule above is (0,1,1) and a media query adds no specificity, so a bare

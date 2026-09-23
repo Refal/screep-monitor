@@ -23,7 +23,7 @@ import {
     armyRoutesForHome, routeStatusText, excludeRoutedGuards, routeOrAbsence, routesOrAbsence,
     REMOTE_STALE_AGE_TICKS, MAX_REMOTE_THREATS,
     powerGateState, powerBanksOrAbsence, bankEta, bankContest, bankStale, bankPlans,
-    bankSquads, haulerSummary, powerStockPoint, POWER_BANK_STALE_AGE_TICKS,
+    powerFleetRows, haulerSummary, powerStockPoint, POWER_BANK_STALE_AGE_TICKS,
     MANIFEST_GUARD_ROLE, SHARD, roomUrl, roomHistoryUrl,
     NUKER_GHODIUM_CAPACITY, NUKER_ENERGY_CAPACITY, NUKER_COOLDOWN,
 } from "./calc.js";
@@ -1354,8 +1354,8 @@ function renderRemoteLog() {
 // ---------- power harvesting ----------
 // The dashboard's version of the bot's debugPowerBanks() console command:
 // autoHarvest gate, every live bank with the planner's cached decision per
-// home, the squads and haulers already on it, and the loot-leg haulers whose
-// bank record is already gone. calc.js owns the readings; this owns the
+// home and the haulers already on it, then one row per squad plus the
+// loot-leg haulers whose bank record is already gone. calc.js owns the readings; this owns the
 // wording and the absence branches.
 
 const POWER_ABSENCE = {
@@ -1486,49 +1486,58 @@ function bankDpsCell(bank) {
 
 const PLAN_COLOR = { committed: "--status-good", skip: "--text-muted", retry: "--status-warning" };
 
-// One chip per home holding a cached verdict. An empty list is "not decided
-// yet" (the verdict cache is heap state and empties on a global reset), which
-// is a different thing from "no home in range" — neither of which may read as
-// a decision the planner actually made.
+// One chip per committed home. Skip and retry verdicts fold into a single
+// muted chip: a chip per home in range is what pushed this table past the
+// viewport, and "who is going" is the one verdict a reader scans for. Card
+// mode still lists every verdict through chipsCell's text. An empty list is
+// "not decided yet" (the verdict cache is heap state and empties on a global
+// reset), which is a different thing from "no home in range" — neither of
+// which may read as a decision the planner actually made.
 function bankPlanCell(bank) {
     const plans = bankPlans(bank);
     if (!plans.length) return naCell("undecided", "the planner holds no cached verdict for this bank — its cache is heap state and empties on a global reset");
-    const chips = plans.map(p => {
-        const badge = makeBadge(cssVar(PLAN_COLOR[p.kind] ?? "--text-muted"), `${p.home} ${p.kind}`);
+    const committed = plans.filter(p => p.kind === "committed");
+    const others = plans.filter(p => p.kind !== "committed");
+    const chips = committed.map(p => {
+        const badge = makeBadge(cssVar(PLAN_COLOR.committed), `${p.home} ${p.mode ?? "go"}`);
         badge.title = `${p.home}: ${p.text}`;
         return badge;
     });
-    return chipsCell(chips, plans.map(p => `${p.home} ${p.text}`).join(" · "));
+    if (others.length) {
+        // Beside a committed chip "+N other" is enough; alone it would read
+        // as "other than what?", so it names what it holds instead.
+        const counts = ["skip", "retry"]
+            .map(kind => [kind, others.filter(p => p.kind === kind).length])
+            .filter(([, n]) => n)
+            .map(([kind, n]) => `${n} ${kind}`);
+        // planText passes unknown kinds through, so the label must still add up.
+        const unknown = others.filter(p => p.kind !== "skip" && p.kind !== "retry").length;
+        if (unknown) counts.push(`${unknown} other`);
+        const badge = makeBadge(cssVar(PLAN_COLOR.skip),
+            committed.length ? `+${others.length} other` : counts.join(" · "));
+        badge.title = others.map(p => `${p.home}: ${p.text}`).join(" · ");
+        chips.push(badge);
+    }
+    const td = chipsCell(chips, plans.map(p => `${p.home} ${p.text}`).join(" · "));
+    // Stacked, not side by side: two committed homes plus the fold chip in a
+    // row were the widest thing left in this table.
+    td.classList.add("chips-stack");
+    return td;
 }
 
 // One squad's own state, not its route's: a harvest route carries both the
 // wave and its fight squad, so routeStatusText would describe the pair. A
 // squad's dead count is a permanent loss — engaged squads never respawn — so
 // it is named "lost" and never folded into a shortfall.
-function squadStatusText(s) {
-    if (!s.squad) return "no army record in this snapshot";
-    const { status, alive, dead, atTarget, inTransit, atHome, boosted } = s.squad;
+// The status itself goes in its own column, so this is everything after it.
+function squadDetailText(squad) {
+    const { dead, atTarget, inTransit, atHome, boosted } = squad;
     const where = atTarget ? `${atTarget} at the bank`
         : inTransit ? `${inTransit} en route`
         : atHome ? `${atHome} at home`
         : "nobody alive";
-    return [`${status} · ${where}`, dead ? `${dead} lost` : null, boosted ? "boosted" : null]
+    return [where, dead ? `${dead} lost` : null, boosted ? "boosted" : null]
         .filter(Boolean).join(" · ");
-}
-
-// `sq` carries only the wave number and the fight flag; status comes from the
-// join back to `ar`. A miss there is normal, so it says so rather than
-// inventing a phase.
-function bankSquadsCell(bank) {
-    const squads = bankSquads(latest, bank);
-    if (!squads.length) return naCell("none", "no harvest wave or fight squad is assigned to this bank");
-    const td = document.createElement("td");
-    td.textContent = squads.map(s => s.fight ? `${s.home} fight` : `${s.home} w${s.wave ?? "?"}`).join(", ");
-    td.title = squads.map(s => {
-        const label = s.fight ? `${s.home} #${s.id} fight squad` : `${s.home} #${s.id} wave ${s.wave ?? "?"}`;
-        return `${label}: ${squadStatusText(s)}`;
-    }).join(" · ");
-    return td;
 }
 
 // [count, carried power, min ttl]. A min ttl of 0 means every hauler is still
@@ -1538,9 +1547,13 @@ function haulerCell(hl) {
     if (!h) return naCell("none", "no hauler is assigned to this bank yet");
     const td = document.createElement("td");
     td.textContent = h.spawning ? `${h.count} spawning` : `${h.count} · ${compact(h.carrying)}`;
-    td.title = `${pluralCount(h.count, "hauler")} · carrying ${fmtInt.format(h.carrying)} power · `
-        + (h.spawning ? "all still spawning" : `shortest life left ${fmtInt.format(h.minTtl)}t`);
+    td.title = haulerDetailText(h);
     return td;
+}
+
+function haulerDetailText(h) {
+    return `${pluralCount(h.count, "hauler")} · carrying ${fmtInt.format(h.carrying)} power · `
+        + (h.spawning ? "all still spawning" : `shortest life left ${fmtInt.format(h.minTtl)}t`);
 }
 
 // `age` is intel staleness, not the snapshot's: StatsManager never reads the
@@ -1569,12 +1582,9 @@ const POWER_COLUMNS = [
       hint: "other players sighted racing or fighting us for this bank, with their summed damage and heal",
       cell: bankContestCell },
     { key: "dps", label: "Our dps", tier: 3, hint: "summed attack damage per tick of our creeps standing in the bank room", cell: bankDpsCell },
-    { key: "plan", label: "Plan",
-      hint: "the planner's cached decision per home: committed (a go, loot or fight), skip, or retry awaiting re-evaluation. It is a cache, not a fresh evaluation, and is empty after a global reset",
+    { key: "plan", label: "Committed",
+      hint: "homes the planner has committed to this bank, with the mode (loot, fight, race); skip and retry verdicts from other homes fold into one muted chip. It is the planner's cache, not a fresh evaluation, and is empty after a global reset. The squads themselves are in the table below",
       cell: bankPlanCell },
-    { key: "squads", label: "Squads", tier: 3,
-      hint: "harvest waves and fight squads assigned to this bank; their status comes from the bot's army records",
-      cell: bankSquadsCell },
     { key: "haulers", label: "Haulers", cell: b => haulerCell(b.hl),
       hint: "haulers assigned to this bank, and the power they are already carrying; “spawning” means none has left home yet" },
     { key: "age", label: "Last seen", tier: 3,
@@ -1589,25 +1599,74 @@ function renderPowerTable() {
         absent ? POWER_ABSENCE[absent] : undefined);
 }
 
-const POWER_HAUL_COLUMNS = [
-    { key: "room", label: "Bank room", primary: true,
-      cell: h => { const td = document.createElement("td"); td.append(roomLink({ href: roomUrl(h.rm), text: h.rm, title: `${h.rm} is a highway room — open it on screeps.com` })); return td; } },
-    { key: "haulers", label: "Haulers", cell: h => haulerCell(h.hl),
-      hint: "haulers still assigned to a bank the bot no longer has a record for, and the power they carry" },
+function fleetRoomCell(row) {
+    const td = document.createElement("td");
+    td.append(roomLink({ href: roomUrl(row.rm), text: row.rm, title: `${row.rm} is a highway room — open it on screeps.com` }));
+    if (!row.live) {
+        const badge = makeBadge(cssVar("--text-muted"), "gone");
+        badge.title = "our kill deleted the bank's intel record; these haulers are still loading or on the way home";
+        td.append(" ", badge);
+    }
+    return td;
+}
+
+function fleetUnitCell(row) {
+    if (row.kind === "haulers") return textCell("haulers");
+    const td = textCell(row.fight ? "fight" : `w${row.wave ?? "?"}`);
+    td.title = row.fight ? `squad #${row.id} · fight squad` : `squad #${row.id} · harvest wave ${row.wave ?? "?"}`;
+    return td;
+}
+
+// `sq` carries only the wave number and the fight flag; status comes from the
+// join back to `ar`. A miss there is normal, so it says so rather than
+// inventing a phase.
+function fleetStatusCell(row) {
+    if (row.kind === "haulers") {
+        const h = haulerSummary(row.hl);
+        if (!h) return naCell("none", "no hauler count in this snapshot");
+        return textCell(`${h.count} ${h.spawning ? "spawning" : "hauling"}`);
+    }
+    if (!row.squad) return naCell("no army record", "no army record for this squad in this snapshot — the two are built from different sources within one tick");
+    return textCell(row.status);
+}
+
+function fleetDetailCell(row) {
+    if (row.kind === "haulers") {
+        const h = haulerSummary(row.hl);
+        return h ? textCell(haulerDetailText(h)) : naCell("none");
+    }
+    return row.squad ? textCell(squadDetailText(row.squad)) : naCell("unknown", "no army record to read positions or losses from");
+}
+
+const POWER_FLEET_COLUMNS = [
+    { key: "room", label: "Bank room", primary: true, cell: fleetRoomCell },
+    { key: "home", label: "Home",
+      hint: "the home room that fielded the squad; hauler counts are published per bank, not per home",
+      cell: r => r.kind === "squad" ? textCell(r.home) : naCell("per bank", "hauler counts are published per bank, not per home") },
+    { key: "unit", label: "Unit",
+      hint: "w<n> is a harvest wave, fight is its fight squad; haulers are the loot leg of a bank that is already gone",
+      cell: fleetUnitCell },
+    { key: "status", label: "Status",
+      hint: "the squad's own status from the bot's army records (not its route's); for haulers, how many are out and whether they have left home yet",
+      cell: fleetStatusCell },
+    { key: "detail", label: "Detail", tier: 3,
+      hint: "where the squad's members are, and how many are lost for good (engaged squads never respawn); for haulers, the power they carry and the shortest life left",
+      cell: fleetDetailCell },
 ];
 
-// A separate table rather than rows in the one above, because these rooms have
-// no bank left to describe: our own kill deletes the intel record exactly
-// while the haulers are loading, so without `ph` the loot leg home would
-// vanish from the payload mid-trip.
-function renderPowerHaulTable() {
+// One row per unit of ours, so four squads on one bank become four short rows
+// here rather than one ever-wider cell in the bank table. It also carries the
+// haulers of banks that are already gone: our own kill deletes the intel
+// record exactly while they are loading, so without `ph` the loot leg home
+// would vanish from the payload mid-trip.
+function renderPowerFleetTable() {
     const gate = powerGateState(latest);
-    const rows = latest.ph ?? [];
-    renderTable("power-haul-table", POWER_HAUL_COLUMNS, rows,
+    const rows = powerFleetRows(latest);
+    renderTable("power-fleet-table", POWER_FLEET_COLUMNS, rows,
         rows.length ? undefined
             : gate === "uncollected" ? POWER_ABSENCE.uncollected
             : hasThreatDetail(latest)
-                ? { text: "no haulers in flight", why: "every hauler the bot has out is attached to a bank still in the list above" }
+                ? { text: "no squads out", why: "no harvest wave or fight squad is assigned to a live bank, and no hauler is carrying loot from a bank that is gone" }
                 : POWER_ABSENCE.unknown);
 }
 
@@ -2481,7 +2540,7 @@ const SECTIONS = [
     { id: "attacks",    render: renderAttackLog },
     { id: "remote",     render: () => { renderRemoteTiles(); renderRemoteTable(); } },
     { id: "remote-log", render: renderRemoteLog },
-    { id: "power",      render: () => { renderPowerTiles(); renderPowerTable(); renderPowerHaulTable(); } },
+    { id: "power",      render: () => { renderPowerTiles(); renderPowerTable(); renderPowerFleetTable(); } },
     { id: "rooms",      render: renderRoomsTable },
     { id: "boosts",     render: renderBoostMatrix },
     { id: "labs",       render: renderLabsTable },

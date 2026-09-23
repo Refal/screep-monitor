@@ -121,18 +121,18 @@
                 <tbody></tbody>
             </table>
         </div>
-        <h3 class="sub-head">Haulers in flight · bank already gone</h3>
+        <h3 class="sub-head">Squads out · haulers from gone banks</h3>
         <div class="table-wrap">
-            <table id="power-haul-table">
+            <table id="power-fleet-table">
                 <thead></thead>
                 <tbody></tbody>
             </table>
         </div>
         <div class="viz-legend">
             <span>a bank room is a highway room — the name links to screeps.com, not to a per-room view</span>
-            <span>“Plan” is the planner’s cached decision per home, not a fresh evaluation; after a global reset it is empty until the planner runs again</span>
+            <span>“Committed” is the planner’s cached decision per home, not a fresh evaluation; after a global reset it is empty until the planner runs again</span>
             <span>“Last seen” is how stale the hits/power reading is — the bot only refreshes a bank while something of ours has vision there</span>
-            <span>the second table exists because our own kill deletes the bank’s intel record while the haulers are still loading</span>
+            <span>the second table has one row per squad; rows marked “gone” are banks our own kill already removed from intel while the haulers are still loading or on the way home</span>
         </div>
         </details>
 
