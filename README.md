@@ -103,6 +103,9 @@ decision per home (`pl`), the harvest waves and fight squads on it (`sq`) and it
   says "undecided" there, which is a different thing from "no home in range". The bank
   table's **Committed** column shows one chip per committed home and folds every skip/retry
   verdict into a single muted chip, so a bank several homes can reach stays one column wide.
+  A `contested` verdict may carry `ab` (why the planner abandoned: `dark` / `undefendable` /
+  `holding` / `late` / `unreachable`) and `abt` (`[fleet ETA, rival kill]` in ticks, either side
+  `null`); `planText` spells both out, and a lone folded verdict puts the reason on the chip.
 - **`age` is intel staleness, not the snapshot's.** `StatsManager` never reads the bank room,
   so hits and power only refresh while something of ours has vision there; past
   `POWER_BANK_STALE_AGE_TICKS` the row is a memory of a room gone dark, and can outlive the

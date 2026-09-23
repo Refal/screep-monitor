@@ -1606,6 +1606,26 @@ describe("bankPlans", () => {
         assert.deepEqual(plans.map(p => p.text),
             ["committed loot", "retry in 40t (no_pairs)", "skip · too_far"]);
     });
+    for (const [name, p, text, fields] of [
+        ["a late abandon names both sides of the clock",
+            { h: "W1N1", k: "retry", in: 40, r: "contested", ab: "late", abt: [400, 316] },
+            "retry in 40t (contested: late, fleet 400t > kill 316t)", { abandon: "late", fleetIn: 400, killIn: 316 }],
+        ["an unreachable abandon has only the rival's kill",
+            { h: "W1N1", k: "skip", r: "contested", ab: "unreachable", abt: [null, 50] },
+            "skip · contested: unreachable, rival kills in 50t", { abandon: "unreachable", fleetIn: null, killIn: 50 }],
+        ["a clockless abandon names just the reason",
+            { h: "W1N1", k: "retry", in: 10, r: "contested", ab: "dark" },
+            "retry in 10t (contested: dark)", { abandon: "dark", fleetIn: null, killIn: null }],
+        ["a skip without ab is unchanged",
+            { h: "W1N1", k: "skip", r: "energy-low" },
+            "skip · energy-low", { abandon: null, fleetIn: null, killIn: null }],
+    ]) {
+        test(name, () => {
+            const [plan] = bankPlans(bank({ pl: [p] }));
+            assert.equal(plan.text, text);
+            assert.deepEqual({ abandon: plan.abandon, fleetIn: plan.fleetIn, killIn: plan.killIn }, fields);
+        });
+    }
     test("a due retry says so rather than printing a non-positive countdown", () => {
         assert.equal(bankPlans(bank({ pl: [{ h: "W1N1", k: "retry", in: -12 }] }))[0].text, "retry due");
     });

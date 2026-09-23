@@ -1513,8 +1513,11 @@ function bankPlanCell(bank) {
         // planText passes unknown kinds through, so the label must still add up.
         const unknown = others.filter(p => p.kind !== "skip" && p.kind !== "retry").length;
         if (unknown) counts.push(`${unknown} other`);
+        // A lone verdict names its reason — "why is nobody going" is the question it answers.
+        const lone = !committed.length && others.length === 1 ? others[0] : null;
+        const loneWhy = lone ? lone.abandon ?? lone.reason : null;
         const badge = makeBadge(cssVar(PLAN_COLOR.skip),
-            committed.length ? `+${others.length} other` : counts.join(" · "));
+            committed.length ? `+${others.length} other` : [...counts, ...(loneWhy ? [loneWhy] : [])].join(" · "));
         badge.title = others.map(p => `${p.home}: ${p.text}`).join(" · ");
         chips.push(badge);
     }

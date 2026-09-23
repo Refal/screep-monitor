@@ -1041,6 +1041,10 @@ export function bankStale(bank) {
 // ticks to go (≤ 0 once due). The cache is heap state, so the first publish
 // after a global reset legitimately carries no `pl` at all — an empty list is
 // "not decided yet", not "no home in range".
+// A `contested` skip/retry may carry `ab`, why the planner abandoned
+// (dark / undefendable / holding / late / unreachable), and `abt`, the
+// [our fight fleet ETA, rival's kill] clock in ticks from `t` — either side
+// null when that abandon had no such number (`unreachable` has only the kill).
 export function bankPlans(bank) {
     return (bank.pl ?? []).map(p => ({
         home: p.h,
@@ -1048,17 +1052,30 @@ export function bankPlans(bank) {
         mode: p.m ?? null,
         reason: p.r ?? null,
         retryIn: p.in ?? null,
+        abandon: p.ab ?? null,
+        fleetIn: p.abt?.[0] ?? null,
+        killIn: p.abt?.[1] ?? null,
         text: planText(p),
     })).sort((a, b) => a.home.localeCompare(b.home));
 }
 
+function reasonText(p) {
+    if (!p.r) return null;
+    if (!p.ab) return p.r;
+    const [fleet, kill] = p.abt ?? [null, null];
+    const clock = fleet != null && kill != null ? `, fleet ${fleet}t > kill ${kill}t`
+        : kill != null ? `, rival kills in ${kill}t` : "";
+    return `${p.r}: ${p.ab}${clock}`;
+}
+
 function planText(p) {
+    const why = reasonText(p);
     switch (p.k) {
         case "committed": return `committed ${p.m ?? "go"}`;
-        case "skip": return `skip · ${p.r ?? "no reason given"}`;
+        case "skip": return `skip · ${why ?? "no reason given"}`;
         case "retry": {
-            const why = p.r ? ` (${p.r})` : "";
-            return (p.in ?? 0) > 0 ? `retry in ${p.in}t${why}` : `retry due${why}`;
+            const suffix = why ? ` (${why})` : "";
+            return (p.in ?? 0) > 0 ? `retry in ${p.in}t${suffix}` : `retry due${suffix}`;
         }
         default: return p.k;
     }

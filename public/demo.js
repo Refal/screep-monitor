@@ -413,7 +413,9 @@ function demoPw(k, i, n, f) {
 //   - E25N15: a fresh sighting nothing has decided on yet — no `pl` at all
 //     (the planner's cache is heap state), no squads, no haulers;
 //   - E35N25: a retry pending on one home and a committed skip on another,
-//     stale intel (the room has gone dark) and only one free tile.
+//     stale intel (the room has gone dark) and only one free tile;
+//   - E55N45: a rival wins the race — the lone home abandons `late`, so the
+//     fold chip names the reason and its tooltip the fleet-vs-kill clock.
 function demoPb(i, n, f) {
     const banks = [{
         rm: "E15N5", p: 4800, hits: Math.round(2_000_000 * (1 - f * 0.6)), dec: 4200 - i * 8,
@@ -429,6 +431,11 @@ function demoPb(i, n, f) {
     banks.push({
         rm: "E35N25", p: 6400, hits: 1_400_000, dec: 5000 - i * 6, age: 340 + i, ft: 1, dps: 0,
         pl: [{ h: "E21S41", k: "retry", in: 200 - i * 3, r: "no_pairs" }, { h: "E23S44", k: "skip", r: "bank_too_tough" }],
+    });
+    banks.push({
+        rm: "E55N45", p: 3280, hits: Math.round(1_100_000 * (1 - f * 0.5)), dec: 2500 - i * 4,
+        age: 1, ft: 4, con: [1, 2520, 1104], dps: 0,
+        pl: [{ h: "E21S49", k: "retry", in: 100 - (i % 100), r: "contested", ab: "late", abt: [400, 316] }],
     });
     // The bank our own squad finishes late in the window — it leaves the list
     // exactly when demoPh starts publishing its haulers, which is the sequence
