@@ -11,7 +11,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-lite.js";
 import {
     compact, pct, rateSeries, observedMsPerTick, windowRate, stockRate,
-    netRateSeries, netWindowRate, netEta,
+    netRateSeries, netWindowRate, netEta, average,
     levelEta, fmtDuration, downsample, detectGaps, rampLevel, boostFillLevel, boostFloor,
     PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, RAW_INTERVAL_MS, bucketId, LOD_BY_RANGE,
     fmtHits, roomPosture, defenderSummary, barrierTarget, barrierLevel, isCriticalBarrier,
@@ -304,13 +304,15 @@ const gapBandPlugin = {
 // dashed line at the window average, so the current rate reads against the
 // range's trend. The avg is omitted (and with it the legend, per
 // baseOptions) when `wr` is null.
+function avgLineDataset(label, value) {
+    const ds = lineDataset(label, history.map(() => value), "--series-2");
+    Object.assign(ds, { borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 0, tension: 0 });
+    return ds;
+}
+
 function rateLineDatasets(label, series, wr) {
     const datasets = [lineDataset(label, series, "--series-1")];
-    if (wr) {
-        const avg = lineDataset(`avg ${compact(wr.rate)}/tick`, history.map(() => wr.rate), "--series-2");
-        Object.assign(avg, { borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 0, tension: 0 });
-        datasets.push(avg);
-    }
+    if (wr) datasets.push(avgLineDataset(`avg ${compact(wr.rate)}/tick`, wr.rate));
     return datasets;
 }
 
@@ -675,9 +677,11 @@ function renderEmpireCharts() {
             { yMax: 100, unit: "%" });
         renderLine("gplRate", "c-gpl-rate", rateDatasets("GPL/tick", r => r.gpl));
     }
-    renderLine("cpu", "c-cpu",
-        [lineDataset("CPU used", history.map(r => r.cpu.u), "--series-1")],
-        { yMax: latest.cpu.l });
+    const cpuSeries = history.map(r => r.cpu.u);
+    const cpuAvg = average(cpuSeries);
+    const cpuDatasets = [lineDataset("CPU used", cpuSeries, "--series-1")];
+    if (cpuAvg != null) cpuDatasets.push(avgLineDataset(`avg ${compact(cpuAvg)}`, cpuAvg));
+    renderLine("cpu", "c-cpu", cpuDatasets, { yMax: latest.cpu.l });
     renderLine("bucket", "c-bucket",
         [lineDataset("Bucket", history.map(r => r.cpu.b), "--series-1")],
         { yMax: 10000 });

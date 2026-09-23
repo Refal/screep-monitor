@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
     compact, pct, progressDelta, rateSeries, observedMsPerTick, windowRate, stockRate,
-    netRateSeries, netWindowRate, netEta,
+    netRateSeries, netWindowRate, netEta, average,
     levelEta, fmtDuration, downsample, detectGaps, rampLevel, boostFillLevel, boostFloor,
     PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, LOD_BY_RANGE, RETENTION_DAYS,
     RANGES, DEFAULT_RANGE,
@@ -234,6 +234,19 @@ describe("netWindowRate", () => {
             { tick: 300, bar: 1000 },
         ];
         assert.equal(netWindowRate(r => r.bar, history).rate, 5); // 500 / 100
+    });
+});
+
+describe("average", () => {
+    test("returns the arithmetic mean of the values", () => {
+        assert.equal(average([10, 20, 30]), 20);
+    });
+    test("ignores null/undefined entries rather than counting them as 0", () => {
+        assert.equal(average([10, null, 20, undefined, 30]), 20);
+    });
+    test("returns null for an empty or all-null series", () => {
+        assert.equal(average([]), null);
+        assert.equal(average([null, undefined]), null);
     });
 });
 

@@ -200,6 +200,15 @@ export function netWindowRate(sel, history) {
     return { rate: delta / ticks, msPerTick: observedMsPerTick(history) };
 }
 
+// Plain arithmetic mean over non-null values — the flat avg reference line
+// for a chart like CPU used that's a plain per-tick value, not a
+// progress/rate field, so windowRate/netWindowRate don't apply.
+export function average(values) {
+    const nums = values.filter(v => v != null);
+    if (!nums.length) return null;
+    return nums.reduce((a, b) => a + b, 0) / nums.length;
+}
+
 // Shared {rate, etaTicks, etaMs} construction behind netEta/levelEta.
 function etaFromRate(wr, etaTicks) {
     return { rate: wr.rate, etaTicks, etaMs: wr.msPerTick ? etaTicks * wr.msPerTick : null };
