@@ -1679,25 +1679,25 @@ function renderPowerFleetTable() {
 
 // Stat strip for the selected room's controller: level, progress, upgrade
 // throughput and ETA to the next level — the per-room analogue of the GCL
-// tile in renderTiles().
+// tile in renderTiles(). At max level (!pt) there's no next level, and
+// rcl.p is gone too, so progress/rate/ETA would only be "max"/"—" filler:
+// the strip collapses to the single RCL tile.
 function renderRoomTiles(room) {
     const rclOf = r => r.rooms[room]?.rcl ?? null;
     const cur = latest.rooms[room]?.rcl;
+    if (!cur?.pt) {
+        renderTileRow("room-tiles", [{ label: "RCL", value: cur?.l ?? "—", delta: "max level" }]);
+        return;
+    }
     const rangeLabel = $("range-group").querySelector('[aria-pressed="true"]')?.textContent ?? "range";
-    const maxed = !cur?.pt;
     const wr = windowRate(rclOf, history);
     const eta = levelEta(rclOf, cur, history);
     const tiles = [
-        {
-            label: "RCL", value: cur?.l ?? "—",
-            delta: maxed ? "max level" : `${compact(cur.p)} / ${compact(cur.pt)}`,
-        },
-        maxed
-            ? { label: "Controller", value: "max", delta: `level ${cur?.l ?? "—"}` }
-            : { label: `To level ${cur.l + 1}`, value: `${pct(cur.p, cur.pt).toFixed(1)}%`, delta: `${compact(cur.pt - cur.p)} left` },
+        { label: "RCL", value: cur.l, delta: `${compact(cur.p)} / ${compact(cur.pt)}` },
+        { label: `To level ${cur.l + 1}`, value: `${pct(cur.p, cur.pt).toFixed(1)}%`, delta: `${compact(cur.pt - cur.p)} left` },
         { label: "Upgrade", value: wr ? `${compact(wr.rate)}/tick` : "—", delta: `over ${rangeLabel}` },
         { label: "ETA", value: eta ? (eta.etaMs != null ? `~${fmtDuration(eta.etaMs)}` : `~${compact(eta.etaTicks)} ticks`) : "—",
-          delta: eta ? `${compact(eta.rate)}/tick` : (maxed ? "at max level" : "no gain in range") },
+          delta: eta ? `${compact(eta.rate)}/tick` : "no gain in range" },
     ];
     renderTileRow("room-tiles", tiles);
 }
@@ -1930,9 +1930,21 @@ function renderRoomCharts() {
             [lineDataset("RCL progress", of(r => pct(r.rcl.p, r.rcl.pt)), "--series-1")],
             { yMax: 100, unit: "%" });
     }
-    const rclDatasets = rateDatasets("RCL/tick", r => r.rooms[room]?.rcl ?? null);
-    rclDatasets.push(lineDataset("UPW", of(r => r.upw ?? null), "--series-3"));
-    renderLine("rclRate", "c-rcl-rate", rclDatasets);
+    // At max level the RCL/tick series has nothing to difference (rcl.p is
+    // undefined), so only UPW — which still feeds GCL — is worth plotting.
+    // No UPW either means an empty chart, so the card goes like rcl-card's.
+    const upw = of(r => r.upw ?? null);
+    const rclRateShown = !rclMaxed || upw.some(v => v != null);
+    $("rcl-rate-card").hidden = !rclRateShown;
+    $("rcl-rate-title").textContent = rclMaxed ? "Controller upgrade · UPW" : "RCL gain · points per tick";
+    if (!rclRateShown) {
+        charts.rclRate?.destroy();
+        delete charts.rclRate;
+    } else {
+        const rclDatasets = rclMaxed ? [] : rateDatasets("RCL/tick", r => r.rooms[room]?.rcl ?? null);
+        rclDatasets.push(lineDataset("UPW", upw, "--series-3"));
+        renderLine("rclRate", "c-rcl-rate", rclDatasets);
+    }
     renderLine("energy", "c-energy", [
         lineDataset("Storage", of(r => r.se), "--series-1"),
         lineDataset("Terminal", of(r => r.te), "--series-2"),
@@ -2490,12 +2502,17 @@ function roomsColumns() {
     // at all once some room actually has one, so a normal day doesn't carry a
     // column of "none" cells nobody needs to see.
     const anyNukes = Object.values(latest.rooms).some(hasIncomingNuke);
+    // Same idea for controller progress: once every room is at max level
+    // (!pt), Progress and ETA would be a whole column of "max" each.
+    const anyLeveling = Object.values(latest.rooms).some(r => r.rcl?.pt);
     return [
         { key: "room", label: "Room", primary: true, cell: ([n]) => roomLinkCell(n) },
         { key: "rcl", label: "RCL", cell: ([, r]) => textCell(String(r.rcl.l)) },
-        { key: "progress", label: "Progress",
-          cell: ([, r]) => textCell(!r.rcl.pt ? "max" : `${pct(r.rcl.p, r.rcl.pt).toFixed(1)}%`) },
-        { key: "eta", label: "ETA → next", cell: ([n, r]) => textCell(etaFor(n, r.rcl)) },
+        ...(anyLeveling ? [
+            { key: "progress", label: "Progress",
+              cell: ([, r]) => textCell(!r.rcl.pt ? "max" : `${pct(r.rcl.p, r.rcl.pt).toFixed(1)}%`) },
+            { key: "eta", label: "ETA → next", cell: ([n, r]) => textCell(etaFor(n, r.rcl)) },
+        ] : []),
         { key: "spawns", label: "Spawns",
           hint: "STRUCTURE_SPAWN count — 0 means the room's spawn was destroyed and cannot rebuild lost creeps",
           cell: ([, r]) => textCell(r.sp ?? "—", hasNoSpawn(r) ? "critical" : undefined) },
