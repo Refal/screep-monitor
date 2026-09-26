@@ -360,13 +360,19 @@ function etaText(eta) {
 // target, a genuinely shrinking/flat trend (a dropping zone is real
 // signal, not silence — must not read the same as "no data"), and a normal
 // positive ETA.
+// Past a year an ETA is noise (a trickle against RCL8's 300M target gives
+// six-digit day counts), so it reads as a plain "over a year" instead.
+const ZONE_ETA_HORIZON_MS = 365 * 24 * 3600e3;
+
 function zoneGrowthTile(label, sel, cur, target, history) {
     if (cur == null) return { label, value: ZONE_ABSENT.word, delta: ZONE_ABSENT.why };
     const wr = netWindowRate(sel, history);
     const atTarget = target != null && cur >= target;
+    const eta = netEta(cur, target, wr);
     const delta = atTarget ? "at target"
         : wr && wr.rate < 0 ? "shrinking — no ETA"
-        : etaText(netEta(cur, target, wr));
+        : eta?.etaMs > ZONE_ETA_HORIZON_MS ? "ETA over a year"
+        : etaText(eta);
     return { label, value: wr ? `${compact(wr.rate)}/tick` : "—", delta };
 }
 
@@ -1821,7 +1827,7 @@ function renderPowerFleetTable() {
 // throughput and ETA to the next level — the per-room analogue of the GCL
 // tile in renderTiles(). At max level (!pt) there's no next level, and
 // rcl.p is gone too, so progress/rate/ETA would only be "max"/"—" filler:
-// the strip becomes renderMaxedRoomTiles' status summary instead.
+// the strip becomes renderMaxedRoomTiles' short summary instead.
 function renderRoomTiles(room) {
     const rclOf = r => r.rooms[room]?.rcl ?? null;
     const r = latest.rooms[room];
@@ -1849,8 +1855,8 @@ function renderRoomTiles(room) {
 // The defender zone as the summary views colour it: `hits` from the latest
 // snapshot, `rate` its net hits/tick over the range (null with no trend, or
 // with no zone at all), and `tone` critical under the CRITICAL_RAMPART_HITS
-// cliff, short while shrinking. Shared by the room strip, the glance row and
-// the watch line, so the three can't colour one wall differently.
+// cliff, short while shrinking. Shared by the glance row and the watch line,
+// so the two can't colour one wall differently.
 function zoneState(room) {
     const hits = latest.rooms[room]?.thr?.defRmp ?? null;
     const wr = hits != null ? netWindowRate(row => row.rooms[room]?.thr?.defRmp ?? null, history) : null;
@@ -1859,58 +1865,24 @@ function zoneState(room) {
     return { hits, rate, shrinking, tone: isCriticalZone(hits) ? "critical" : shrinking ? "short" : undefined };
 }
 
-// A max-level room has no progress left to report, so its headline strip is
-// the things that can still go wrong: the defender zone (the one structural
-// weakness the threat board's posture never sees), safe mode, the nuker, labs
-// and stored energy. Every value comes from the same helpers the sections
-// below use, so the strip can't disagree with them.
+// A max-level room has no progress left to report, and orderRoomView puts
+// Defense and Nuker directly below this strip — so it carries only what has
+// no section of its own: the level (with UPW, still feeding GCL), labs and
+// stored energy. Zone, safe mode and nuker status live in those sections
+// once, in full, instead of twice within one screen.
 function renderMaxedRoomTiles(room) {
     const r = latest.rooms[room];
-    const thr = r?.thr;
     const upw = r?.upw;
-    const tiles = [
+    const lab = r?.lab;
+    renderTileRow("room-tiles", [
         { label: "RCL", value: r?.rcl?.l ?? "—", delta: "max level",
           sub: upw != null ? `UPW ${compact(upw)}/tick` : "" },
-    ];
-    if (thr) {
-        // Rate only: at a 300M target the ETA is years out and says nothing.
-        // The Defense section's Zone growth tile still carries it.
-        const zone = zoneState(room);
-        tiles.push({
-            label: "Defender zone",
-            value: zone.hits == null ? ZONE_ABSENT.word : fmtHits(zone.hits),
-            delta: `of ${fmtHits(zoneTarget(r.rcl.l))} target`,
-            sub: zone.hits == null ? "" : zone.rate != null ? `${compact(zone.rate)}/tick${zone.shrinking ? " · shrinking" : ""}` : "no trend in range",
-            tone: zone.tone,
-        });
-        const smActive = thr.sm !== undefined;
-        tiles.push({
-            label: "Safe mode",
-            // The count alone, so the value fits one line in a narrow tile.
-            value: smActive ? "active" : String(thr.smAvail),
-            delta: smActive ? "" : thr.smAvail ? `${thr.smAvail === 1 ? "charge" : "charges"} available` : "no charges left",
-            tone: !smActive && thr.smAvail === 0 ? "critical" : undefined,
-        });
-    } else {
-        tiles.push({ label: "Defense", value: "unknown", delta: DEGRADED_TITLE });
-    }
-    const nuk = nukerStatus(r?.nuk);
-    const cd = r?.nuk?.[2] ?? 0;
-    const ms = observedMsPerTick(history);
-    tiles.push(!nuk ? { label: "Nuker", value: "not built", delta: "" }
-        : { label: "Nuker", value: nuk.word,
-            delta: nuk.ready ? "armed"
-                : cd > 0 ? `cooldown ${ms != null ? `~${fmtDuration(cd * ms)}` : `~${compact(cd)} ticks`}`
-                : `G ${nuk.gPct}% · E ${nuk.ePct}%` });
-    const lab = r?.lab;
-    tiles.push({
-        label: "Labs",
-        value: lab ? labStatusWord(lab.s) : "no labs",
-        delta: lab?.o ? `→ ${lab.o}` : "",
-        tone: labTone(lab?.s),
-    });
-    tiles.push({ label: "Storage", value: compact(r?.se ?? 0), delta: `terminal ${compact(r?.te ?? 0)}` });
-    renderTileRow("room-tiles", tiles);
+        { label: "Labs",
+          value: lab ? labStatusWord(lab.s) : "no labs",
+          delta: lab?.o ? `→ ${lab.o}` : "",
+          tone: labTone(lab?.s) },
+        { label: "Storage", value: compact(r?.se ?? 0), delta: `terminal ${compact(r?.te ?? 0)}` },
+    ]);
 }
 
 // Status of a nuker triple [ghodium, energy, cooldown], or null when the room
@@ -2079,10 +2051,15 @@ function renderRoomDefense(room) {
           sub: thr.h ? `melee ${fmtInt.format(thr.melee ?? 0)} · ranged ${fmtInt.format(thr.ranged ?? 0)} · heal ${fmtInt.format(thr.heal ?? 0)} per tick` : "" },
         { label: "Towers", value: `${thr.twrArmed}/${thr.twrTotal}`, delta: thr.h ? `${fmtInt.format(thr.dps)} dps on weakest-hit hostile` : "no hostiles",
           sub: thr.h ? (netDps < 0 ? `heal exceeds tower dps by ${fmtInt.format(-netDps)}` : `towers out-damage heal by ${fmtInt.format(netDps)}`) : "" },
-        { label: "Safe mode", value: smValue, delta: smActive ? "active" : "available", sub: smSub },
+        // The count alone for charges, so the value fits one line in a narrow tile.
+        { label: "Safe mode", value: smActive ? smValue : String(thr.smAvail),
+          delta: smActive ? "active" : thr.smAvail ? `${thr.smAvail === 1 ? "charge" : "charges"} available` : "no charges left",
+          sub: smSub, tone: !smActive && thr.smAvail === 0 ? "critical" : undefined },
+        // Target in the delta line: "3.5K/300.0M" at tile size overflows.
         { label: "Defender zone",
-          value: `${fmtHits(thr.defRmp)}/${fmtHits(zoneTarget(r.rcl.l))}`,
-          delta: `at RCL ${r.rcl.l}` },
+          value: thr.defRmp == null ? ZONE_ABSENT.word : fmtHits(thr.defRmp),
+          delta: thr.defRmp == null ? ZONE_ABSENT.why : `of ${fmtHits(zoneTarget(r.rcl.l))} target at RCL ${r.rcl.l}`,
+          tone: isCriticalZone(thr.defRmp) ? "critical" : undefined },
         { ...zoneGrowthTile("Zone growth", r2 => r2.rooms[room]?.thr?.defRmp ?? null,
             thr.defRmp, zoneTarget(r.rcl.l), history), sub: zoneSub },
         { label: "Storage class", value: scInfo?.word ?? "unknown", delta: scInfo?.why ?? SC_ABSENT_WHY },

@@ -192,8 +192,9 @@ ever urgent is "is anything on fire?".
   identical cards.
 - **The room view reorders by room class** (`orderRoomView` in `public/app.js`, which moves
   the DOM nodes so tab order matches). A levelling room leads with RCL progress tiles and
-  the economy charts; a max-level room leads with a status strip (zone, safe mode, nuker,
-  labs, storage), then Defense and Nuker, with the economy charts last. Incoming nukes lead
+  the economy charts; a max-level room leads with a short strip (RCL/UPW, labs, storage),
+  then Defense and Nuker — which own the zone, safe-mode and nuker tiles, so nothing is
+  shown twice — with the economy charts last. Incoming nukes lead
   both.
 - **Power harvesting** is a latest-snapshot section built from `pb`/`ph`/`pba`, modelled on
   the bot's own `debugPowerBanks()` console command — gate tiles, one row per live bank with
