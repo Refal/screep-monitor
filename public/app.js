@@ -18,7 +18,7 @@ import {
     RANGES, DEFAULT_RANGE,
     empireVerdict, threatItems, clearRooms, isOutgunned, hasNoSpawn,
     hasIncomingNuke, incomingNukes,
-    netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, TOWER_DPS_PER_ARMED,
+    netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS,
     remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes, remoteDeployPhase,
     armyRoutesForHome, routeStatusText, excludeRoutedGuards, routeOrAbsence, routesOrAbsence,
     REMOTE_STALE_AGE_TICKS, MAX_REMOTE_THREATS,
@@ -725,7 +725,10 @@ function renderDefenseTiles() {
 
     const armedSum = withThr.reduce((a, [, r]) => a + r.thr.twrArmed, 0);
     const totalSum = withThr.reduce((a, [, r]) => a + r.thr.twrTotal, 0);
-    const dpsSum = withThr.reduce((a, [, r]) => a + r.thr.dps, 0);
+    // thr.dps is 0 in a clear room (the bot only prices towers against live
+    // hostiles), so the sum only means something across rooms with hostiles.
+    const contested = withThr.filter(([, r]) => r.thr.h > 0);
+    const dpsSum = contested.reduce((a, [, r]) => a + r.thr.dps, 0);
     const noArmedTower = withThr.filter(([, r]) => r.thr.twrArmed === 0 && r.thr.twrTotal > 0).length;
 
     // Same predicate the threat board ranks on (calc.js), so this tile can't
@@ -756,7 +759,7 @@ function renderDefenseTiles() {
         },
         {
             label: "Towers", value: `${armedSum}/${totalSum}`, delta: noArmedTower ? `${noArmedTower} room${noArmedTower === 1 ? "" : "s"} with no armed tower` : "all armed",
-            sub: `worst-case ${fmtInt.format(dpsSum)} dps`,
+            sub: contested.length ? `${fmtInt.format(dpsSum)} dps vs hostiles` : undefined,
         },
         {
             label: "Outgunned", value: outgunned.length, delta: outgunned.length ? "heal beats tower dps" : "—",
@@ -783,7 +786,7 @@ function defenseColumns() {
           cell: ([, r]) => raahCell(r.thr) },
         { key: "towers", label: "Towers", hint: "towers with energy / built", cell: ([, r]) => towersCell(r.thr) },
         { key: "netDps", label: "Net dps",
-          hint: "worst-case tower dps minus hostile heal/tick — negative means towers alone cannot break the heal",
+          hint: "tower dps on the hostile the towers hit weakest (at its actual range) minus hostile heal/tick — negative means towers alone cannot break the heal",
           cell: ([, r]) => netDpsCell(r.thr) },
         { key: "safeMode", label: "Safe mode", cell: ([, r]) => safeModeCell(r.thr) },
         { key: "zone", label: "Zone",
@@ -1817,7 +1820,7 @@ function renderRoomDefense(room) {
         { label: "Posture", value: posture.label,
           delta: thr.h === 0 ? "no hostiles" : [`${fmtInt.format(thr.h)} hostiles`, ...(thr.owners ?? []), ...posture.reasons].join(" · "),
           sub: thr.h ? `melee ${fmtInt.format(thr.melee ?? 0)} · ranged ${fmtInt.format(thr.ranged ?? 0)} · heal ${fmtInt.format(thr.heal ?? 0)} per tick` : "" },
-        { label: "Towers", value: `${thr.twrArmed}/${thr.twrTotal}`, delta: `worst-case ${fmtInt.format(thr.dps)} dps`,
+        { label: "Towers", value: `${thr.twrArmed}/${thr.twrTotal}`, delta: thr.h ? `${fmtInt.format(thr.dps)} dps on weakest-hit hostile` : "no hostiles",
           sub: thr.h ? (netDps < 0 ? `heal exceeds tower dps by ${fmtInt.format(-netDps)}` : `towers out-damage heal by ${fmtInt.format(netDps)}`) : "" },
         { label: "Safe mode", value: smValue, delta: smActive ? "active" : "available", sub: smSub },
         { label: "Defender zone",
@@ -2158,7 +2161,7 @@ function towersCell(thr) {
     td.textContent = `${thr.twrArmed}/${thr.twrTotal}`;
     if (thr.twrArmed === 0) td.className = "critical";
     else if (thr.twrArmed < thr.twrTotal) td.className = "short";
-    td.title = `worst-case ${fmtInt.format(thr.dps)} dps`;
+    if (thr.h) td.title = `${fmtInt.format(thr.dps)} dps on the weakest-hit hostile`;
     return td;
 }
 
@@ -2167,11 +2170,11 @@ function towersCell(thr) {
 function netDpsCell(thr) {
     if (!thr) return naCell("unknown", DEGRADED_TITLE);
     const td = document.createElement("td");
-    if (thr.h === 0) { td.textContent = fmtInt.format(thr.dps); td.className = "na"; return td; }
+    if (thr.h === 0) return naCell("—", "no hostiles — the bot only prices towers against live hostiles");
     const net = netTowerDps(thr);
     td.textContent = `${net >= 0 ? "+" : ""}${fmtInt.format(net)}`;
     if (net < 0) td.className = "critical";
-    td.title = `tower dps ${fmtInt.format(thr.dps)} (${thr.twrArmed} armed × ${TOWER_DPS_PER_ARMED}) `
+    td.title = `tower dps ${fmtInt.format(thr.dps)} on the weakest-hit hostile `
         + `− hostile heal ${fmtInt.format(thr.heal ?? 0)}/t`;
     return td;
 }

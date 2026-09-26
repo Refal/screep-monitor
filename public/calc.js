@@ -341,9 +341,6 @@ export function boostFloor(raw) {
 // be under-observed during a real fight (the payload gets big when there's a
 // lot going on).
 
-// towerDamageAtRange(TOWER_FALLOFF_RANGE) — screeps2 fleetSizing.ts:83-87.
-export const TOWER_DPS_PER_ARMED = 150;
-
 // CRITICAL_RAMPAT_SAFE — screeps2 config/config.buildPriority.ts:33. Ramparts
 // under this get repair priority 0 in the bot itself, so it's an absolute
 // cliff, not a fraction-of-target ramp level.
@@ -527,7 +524,8 @@ export function sortByPosture(entries) {
     });
 }
 
-// thr.dps is already worst-case armed-tower damage; heal is the hostiles'
+// thr.dps is the bot's getSupportTowerDamage: every armed tower on the hostile
+// they hit weakest, at its actual range (0 when the room is clear); heal is the hostiles'
 // boost-folded healing per tick. Named (rather than left inline) so the
 // table cell, the empire tile, and the balance chart can't drift apart on
 // what "net" means.

@@ -152,7 +152,7 @@ function demoThr(k, i, n, f) {
     switch (k) {
         case 0: // quiet, healthy
             return {
-                h: 0, twrArmed: 3, twrTotal: 3, dps: 450, smAvail: 1,
+                h: 0, twrArmed: 3, twrTotal: 3, dps: 0, smAvail: 1,
                 defRmp: Math.round(42_000_000 * (0.9 + 0.1 * f)), def: [],
             };
         case 1: // boosted attack, towers holding
