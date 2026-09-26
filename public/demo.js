@@ -146,20 +146,20 @@ function demoRq(k, i, n, f) {
 // read as exposed here — the active mode is the fallback); and thr dropped
 // entirely (payload degradation — the caller must also drop `roles`
 // alongside it, see DEGRADATION_STEPS in StatsManager.ts, so this demo row
-// never teaches a shape that can't occur in the real payload). Barrier hits
+// never teaches a shape that can't occur in the real payload). Zone hits
 // drift gently with f so they don't look frozen across a range switch.
 function demoThr(k, i, n, f) {
     switch (k) {
         case 0: // quiet, healthy
             return {
                 h: 0, twrArmed: 3, twrTotal: 3, dps: 450, smAvail: 1,
-                bar: Math.round(1_900_000 * (0.9 + 0.1 * f)), defRmp: 42_000_000, def: [],
+                defRmp: Math.round(42_000_000 * (0.9 + 0.1 * f)), def: [],
             };
         case 1: // boosted attack, towers holding
             return {
                 h: 4, owners: ["Kasami"], melee: 480, ranged: 300, heal: 720, boosted: 26,
                 twrArmed: 3, twrTotal: 3, dps: 450, smAvail: 1,
-                bar: Math.round(180_000 * (0.7 + 0.3 * f)), defRmp: 3_100_000,
+                defRmp: Math.round(3_100_000 * (0.7 + 0.3 * f)),
                 def: [{ role: "home_defender", cur: 3, des: 3 }, { role: "home_melee_defender", cur: 1, des: 1 }],
             };
         case 2: // towers dry, no defense plan at all (defenderSummary's "no-plan" — the one bad empty def[])
@@ -168,14 +168,11 @@ function demoThr(k, i, n, f) {
                 twrArmed: 0, twrTotal: 2, dps: 0, smAvail: 1, def: [],
             };
         case 3: { // defender deficit + no safe mode + critical defender-zone rampart, recovering over the window.
-            // Only the defender zone can go critical now — the outside-zone
-            // barrier is secondary/informational, so it stays a plain low
-            // reading (never red) even while the zone value is critical.
             const cur = Math.max(1, Math.floor(4 * f));
             return {
                 h: 6, melee: 640, ranged: 420, heal: 200, boosted: 12,
                 twrArmed: 2, twrTotal: 3, dps: 300, smAvail: 0, smCd: 42000,
-                defRmp: Math.round(3200 * (0.9 + 0.2 * f)), bar: 40_000,
+                defRmp: Math.round(3200 * (0.9 + 0.2 * f)),
                 def: [{ role: "home_defender", cur, des: 4 }, { role: "home_melee_defender", cur: 0, des: 2 }],
             };
         }

@@ -7,7 +7,7 @@ import {
     levelEta, fmtDuration, downsample, detectGaps, rampLevel, boostFillLevel, boostFloor,
     PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, LOD_BY_RANGE, RETENTION_DAYS,
     RANGES, DEFAULT_RANGE,
-    fmtHits, barrierTarget, barrierLevel, isCriticalBarrier, roomPosture, defenderSummary,
+    fmtHits, zoneTarget, zoneLevel, isCriticalZone, roomPosture, defenderSummary,
     netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, MANIFEST_GUARD_ROLE,
     SHARD, roomUrl, roomHistoryUrl,
     remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes, remoteDeployPhase,
@@ -176,40 +176,40 @@ describe("stockRate", () => {
 
 describe("netRateSeries", () => {
     test("first point is always null (no predecessor)", () => {
-        assert.deepEqual(netRateSeries(r => r.bar, [{ tick: 0, bar: 100 }]), [null]);
+        assert.deepEqual(netRateSeries(r => r.hits, [{ tick: 0, hits: 100 }]), [null]);
     });
     test("a drop yields a negative rate, not null — unlike stockRate", () => {
         const history = [
-            { tick: 0, bar: 1000 },
-            { tick: 100, bar: 4000 }, // +3000/100 ticks
-            { tick: 200, bar: 0 },    // combat drop — real signal, not skipped
+            { tick: 0, hits: 1000 },
+            { tick: 100, hits: 4000 }, // +3000/100 ticks
+            { tick: 200, hits: 0 },    // combat drop — real signal, not skipped
         ];
-        assert.deepEqual(netRateSeries(r => r.bar, history), [null, 30, -40]);
+        assert.deepEqual(netRateSeries(r => r.hits, history), [null, 30, -40]);
     });
     test("returns null for an interval touching a null reading", () => {
         const history = [
-            { tick: 0, bar: null },
-            { tick: 100, bar: 500 },
+            { tick: 0, hits: null },
+            { tick: 100, hits: 500 },
         ];
-        assert.deepEqual(netRateSeries(r => r.bar, history), [null, null]);
+        assert.deepEqual(netRateSeries(r => r.hits, history), [null, null]);
     });
     test("returns null for a non-positive dTick", () => {
         const history = [
-            { tick: 0, bar: 100 },
-            { tick: 0, bar: 500 },
+            { tick: 0, hits: 100 },
+            { tick: 0, hits: 500 },
         ];
-        assert.deepEqual(netRateSeries(r => r.bar, history), [null, null]);
+        assert.deepEqual(netRateSeries(r => r.hits, history), [null, null]);
     });
 });
 
 describe("netWindowRate", () => {
     test("a window that nets a decrease overall returns a negative rate, not null", () => {
         const history = [
-            { tick: 0, bar: 1000 },
-            { tick: 100, bar: 1500 }, // +500/100 ticks
-            { tick: 200, bar: 700 },  // -800/100 ticks — net decrease over the window
+            { tick: 0, hits: 1000 },
+            { tick: 100, hits: 1500 }, // +500/100 ticks
+            { tick: 200, hits: 700 },  // -800/100 ticks — net decrease over the window
         ];
-        const wr = netWindowRate(r => r.bar, history);
+        const wr = netWindowRate(r => r.hits, history);
         assert.equal(wr.rate, -1.5); // (500 - 800) / 200 ticks
     });
     test("aggregates net change including a drop — same input as stockRate's launch fixture, different result", () => {
@@ -223,17 +223,17 @@ describe("netWindowRate", () => {
         assert.equal(wr.rate, 0); // (3000 - 4000 + 1000) / 300 ticks
     });
     test("returns null with fewer than 2 history rows", () => {
-        assert.equal(netWindowRate(r => r.bar, []), null);
-        assert.equal(netWindowRate(r => r.bar, [{ tick: 0, bar: 100 }]), null);
+        assert.equal(netWindowRate(r => r.hits, []), null);
+        assert.equal(netWindowRate(r => r.hits, [{ tick: 0, hits: 100 }]), null);
     });
     test("skips only intervals touching a null reading or a non-positive dTick", () => {
         const history = [
-            { tick: 0, bar: null },
-            { tick: 100, bar: null },
-            { tick: 200, bar: 500 },
-            { tick: 300, bar: 1000 },
+            { tick: 0, hits: null },
+            { tick: 100, hits: null },
+            { tick: 200, hits: 500 },
+            { tick: 300, hits: 1000 },
         ];
-        assert.equal(netWindowRate(r => r.bar, history).rate, 5); // 500 / 100
+        assert.equal(netWindowRate(r => r.hits, history).rate, 5); // 500 / 100
     });
 });
 
@@ -252,19 +252,19 @@ describe("average", () => {
 
 describe("netEta", () => {
     const growing = [
-        { tick: 0, date: new Date(0), bar: 100 },
-        { tick: 100, date: new Date(1000), bar: 200 },
+        { tick: 0, date: new Date(0), hits: 100 },
+        { tick: 100, date: new Date(1000), hits: 200 },
     ];
     const shrinking = [
-        { tick: 0, bar: 1000 },
-        { tick: 100, bar: 1500 },
-        { tick: 200, bar: 700 },
+        { tick: 0, hits: 1000 },
+        { tick: 100, hits: 1500 },
+        { tick: 200, hits: 700 },
     ];
     // netEta takes an already-computed netWindowRate result rather than
-    // sel/history — every real caller (barrierGrowthTile) already has `wr`
+    // sel/history — every real caller (zoneGrowthTile) already has `wr`
     // in scope, so these fixtures compute it once here too.
-    const growingWr = netWindowRate(r => r.bar, growing);
-    const shrinkingWr = netWindowRate(r => r.bar, shrinking);
+    const growingWr = netWindowRate(r => r.hits, growing);
+    const shrinkingWr = netWindowRate(r => r.hits, shrinking);
     test("returns null when already at or above target", () => {
         assert.equal(netEta(500, 500, growingWr), null);
         assert.equal(netEta(600, 500, growingWr), null);
@@ -463,46 +463,39 @@ describe("fmtHits", () => {
     });
 });
 
-describe("barrierTarget", () => {
-    test("resolves the RCL-scaled ladder per kind", () => {
-        assert.equal(barrierTarget("barrier", 1), 2000);
-        assert.equal(barrierTarget("barrier", 8), 2_000_000);
-        assert.equal(barrierTarget("defenderZone", 8), 300_000_000); // not a copy of the plain barrier ladder
+describe("zoneTarget", () => {
+    test("resolves the RCL-scaled defender-zone ladder", () => {
+        assert.equal(zoneTarget(1), 2000);
+        assert.equal(zoneTarget(8), 300_000_000);
     });
     test("falls back to the ladder's default outside RCL 1-8", () => {
-        assert.equal(barrierTarget("barrier", 0), 10_000);
-        assert.equal(barrierTarget("barrier", 9), 10_000);
-    });
-    test("returns null for an unknown barrier kind", () => {
-        assert.equal(barrierTarget("moat", 5), null);
+        assert.equal(zoneTarget(0), 10_000);
+        assert.equal(zoneTarget(9), 10_000);
     });
 });
 
-describe("barrierLevel", () => {
+describe("zoneLevel", () => {
     test("returns null when hits are absent (unknown, never good)", () => {
-        assert.equal(barrierLevel(null, "barrier", 1), null);
+        assert.equal(zoneLevel(null, 1), null);
     });
     test("ramps against the RCL target", () => {
-        assert.equal(barrierLevel(2000, "barrier", 1), 5);  // at target
-        assert.equal(barrierLevel(200, "barrier", 1), 1);   // 10% of target
+        assert.equal(zoneLevel(2000, 1), 5);  // at target
+        assert.equal(zoneLevel(200, 1), 1);   // 10% of target
     });
     test("clamps above-target hits to the top bucket instead of overflowing", () => {
-        assert.equal(barrierLevel(4000, "barrier", 1), 5);  // 2x target
+        assert.equal(zoneLevel(4000, 1), 5);  // 2x target
     });
 });
 
-describe("isCriticalBarrier", () => {
+describe("isCriticalZone", () => {
     test("flags a defender zone just under the absolute critical-repair floor", () => {
-        assert.equal(isCriticalBarrier(CRITICAL_RAMPART_HITS - 1, "defenderZone"), true);
+        assert.equal(isCriticalZone(CRITICAL_RAMPART_HITS - 1), true);
     });
     test("does not flag a defender zone at or above the floor", () => {
-        assert.equal(isCriticalBarrier(CRITICAL_RAMPART_HITS, "defenderZone"), false);
-    });
-    test("never flags the outside-zone barrier (secondary/informational only, only the zone is critical)", () => {
-        assert.equal(isCriticalBarrier(100, "barrier"), false);
+        assert.equal(isCriticalZone(CRITICAL_RAMPART_HITS), false);
     });
     test("does not flag an absent reading", () => {
-        assert.equal(isCriticalBarrier(null, "defenderZone"), false);
+        assert.equal(isCriticalZone(null), false);
     });
 });
 

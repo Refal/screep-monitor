@@ -14,7 +14,7 @@ import {
     netRateSeries, netWindowRate, netEta, average,
     levelEta, fmtDuration, downsample, detectGaps, rampLevel, boostFillLevel, boostFloor,
     PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, RAW_INTERVAL_MS, bucketId, LOD_BY_RANGE,
-    fmtHits, roomPosture, defenderSummary, barrierTarget, barrierLevel, isCriticalBarrier,
+    fmtHits, roomPosture, defenderSummary, zoneTarget, zoneLevel, isCriticalZone,
     RANGES, DEFAULT_RANGE,
     empireVerdict, threatItems, clearRooms, isOutgunned, hasNoSpawn,
     hasIncomingNuke, incomingNukes,
@@ -324,8 +324,8 @@ function rateDatasets(label, sel) {
 }
 
 // The netRateSeries/netWindowRate analogue of rateDatasets, for plain
-// (non {l,p,pt}) numeric fields such as barrier hits, where the avg line can
-// legitimately sit at or below zero — that's the shrinking signal this
+// (non {l,p,pt}) numeric fields such as defender-zone rampart hits, where the
+// avg line can legitimately sit at or below zero — that's the shrinking signal this
 // chart exists to show, not a "no data" state to omit like rateDatasets does
 // for windowRate's null case.
 function netRateDatasets(label, sel) {
@@ -353,17 +353,15 @@ function etaText(eta) {
 
 // Growth-rate + ETA tile for a plain (non {l,p,pt}) numeric field tracked
 // against an explicit target — the netWindowRate/netEta analogue of the RCL
-// tile's Upgrade/ETA pair. `kind` is one of calc.js's BARRIER_TARGETS keys
-// ("defenderZone"/"barrier"), same as barrierCell, so a null `cur` (no
-// rampart there at all — a real, page-wide-recognized state, see
-// BARRIER_ABSENT below) reads the same way here as it does in the barrier
-// table, instead of showing a stale historical rate next to a contradictory
+// tile's Upgrade/ETA pair. A null `cur` (no rampart in the defender zone at
+// all — a real, page-wide-recognized state, see ZONE_ABSENT below) reads the
+// same way here as it does in the zone column, instead of showing a stale historical rate next to a contradictory
 // "no gain in range". Once `cur` is known, three branches: already at/above
-// target, a genuinely shrinking/flat trend (a dropping barrier is real
+// target, a genuinely shrinking/flat trend (a dropping zone is real
 // signal, not silence — must not read the same as "no data"), and a normal
 // positive ETA.
-function barrierGrowthTile(label, sel, cur, target, kind, history) {
-    if (cur == null) return { label, value: BARRIER_ABSENT[kind].word, delta: BARRIER_ABSENT[kind].why };
+function zoneGrowthTile(label, sel, cur, target, history) {
+    if (cur == null) return { label, value: ZONE_ABSENT.word, delta: ZONE_ABSENT.why };
     const wr = netWindowRate(sel, history);
     const atTarget = target != null && cur >= target;
     const delta = atTarget ? "at target"
@@ -500,14 +498,9 @@ function roomThreatCard(item) {
         thr.sm === undefined && thr.smAvail === 0 ? "critical" : undefined));
     card.append(boardRow("Defender zone",
         thr.defRmp != null
-            ? `${fmtHits(thr.defRmp)} of ${fmtHits(barrierTarget("defenderZone", item.rcl.l))} target at RCL ${item.rcl.l}`
-            : BARRIER_ABSENT.defenderZone.why,
-        thr.defRmp == null ? "na" : isCriticalBarrier(thr.defRmp, "defenderZone") ? "critical" : undefined));
-    card.append(boardRow("Barrier",
-        thr.bar != null
-            ? `${fmtHits(thr.bar)} of ${fmtHits(barrierTarget("barrier", item.rcl.l))} target at RCL ${item.rcl.l} — buys time for a defender to spawn`
-            : BARRIER_ABSENT.barrier.why,
-        thr.bar == null ? "na" : isCriticalBarrier(thr.bar, "barrier") ? "critical" : undefined));
+            ? `${fmtHits(thr.defRmp)} of ${fmtHits(zoneTarget(item.rcl.l))} target at RCL ${item.rcl.l}`
+            : ZONE_ABSENT.why,
+        thr.defRmp == null ? "na" : isCriticalZone(thr.defRmp) ? "critical" : undefined));
     const def = defenderSummary(thr, item.roles);
     card.append(boardRow("Defenders",
         def.des ? `${def.cur} of ${def.des} fielded` : DEF_STATE_EXPLAIN[def.state] ?? def.state,
@@ -753,9 +746,7 @@ function renderDefenseTiles() {
 
     const defRmpEntries = rcl8.filter(([, r]) => r.thr.defRmp != null);
     const weakestDefRmp = defRmpEntries.length ? defRmpEntries.reduce((a, b) => a[1].thr.defRmp < b[1].thr.defRmp ? a : b) : null;
-    const bars = rcl8.map(([, r]) => r.thr.bar).filter(v => v != null);
-    const minBar = bars.length ? Math.min(...bars) : null;
-    const criticalZoneCount = rcl8.filter(([, r]) => isCriticalBarrier(r.thr.defRmp, "defenderZone")).length;
+    const criticalZoneCount = rcl8.filter(([, r]) => isCriticalZone(r.thr.defRmp)).length;
 
     const tiles = [
         {
@@ -777,7 +768,7 @@ function renderDefenseTiles() {
         },
         {
             label: "Weakest defender zone (RCL8)", value: weakestDefRmp ? fmtHits(weakestDefRmp[1].thr.defRmp) : "—", delta: weakestDefRmp ? weakestDefRmp[0] : "—",
-            sub: `barrier ${fmtHits(minBar)} · ${criticalZoneCount} zone${criticalZoneCount === 1 ? "" : "s"} under ${fmtHits(CRITICAL_RAMPART_HITS)}`,
+            sub: `${criticalZoneCount} zone${criticalZoneCount === 1 ? "" : "s"} under ${fmtHits(CRITICAL_RAMPART_HITS)}`,
         },
     ];
     renderTileRow("defense-tiles", tiles);
@@ -797,10 +788,7 @@ function defenseColumns() {
         { key: "safeMode", label: "Safe mode", cell: ([, r]) => safeModeCell(r.thr) },
         { key: "zone", label: "Zone",
           hint: "weakest rampart inside the configured defender zone — the one you actually fight behind",
-          cell: ([, r]) => barrierCell(r.thr?.defRmp, "defenderZone", r.rcl.l) },
-        { key: "barrier", label: "Barrier", tier: 3,
-          hint: "weakest own rampart or wall outside the defender zone — buys time for a defender to spawn, not a final line",
-          cell: ([, r]) => barrierCell(r.thr?.bar, "barrier", r.rcl.l) },
+          cell: ([, r]) => zoneCell(r.thr?.defRmp, r.rcl.l) },
         { key: "defenders", label: "Defenders",
           hint: "home defense fleet from the live spawn manifest, plus this room's standing remote guards; on-demand squads are in Squads out",
           cell: ([, r]) => defCell(r.thr, r.roles) },
@@ -1823,8 +1811,8 @@ function renderRoomDefense(room) {
         : pluralCount(thr.smAvail, "charge");
     const smSub = smActive ? "" : (thr.smCd ? `cooldown ${ms != null ? fmtDuration(thr.smCd * ms) : `~${compact(thr.smCd)} ticks`}` : "");
 
-    const barrierCovered = history.filter(row => row.rooms[room]?.thr).length;
-    const barrierSub = barrierCovered < history.length ? `${barrierCovered}/${history.length} snapshots had barrier detail` : "";
+    const zoneCovered = history.filter(row => row.rooms[room]?.thr).length;
+    const zoneSub = zoneCovered < history.length ? `${zoneCovered}/${history.length} snapshots had zone detail` : "";
     renderTileRow("defense-room-tiles", [
         { label: "Posture", value: posture.label,
           delta: thr.h === 0 ? "no hostiles" : [`${fmtInt.format(thr.h)} hostiles`, ...(thr.owners ?? []), ...posture.reasons].join(" · "),
@@ -1832,13 +1820,11 @@ function renderRoomDefense(room) {
         { label: "Towers", value: `${thr.twrArmed}/${thr.twrTotal}`, delta: `worst-case ${fmtInt.format(thr.dps)} dps`,
           sub: thr.h ? (netDps < 0 ? `heal exceeds tower dps by ${fmtInt.format(-netDps)}` : `towers out-damage heal by ${fmtInt.format(netDps)}`) : "" },
         { label: "Safe mode", value: smValue, delta: smActive ? "active" : "available", sub: smSub },
-        { label: "Barriers",
-          value: `Zone: ${fmtHits(thr.defRmp)}/${fmtHits(barrierTarget("defenderZone", r.rcl.l))} at RCL ${r.rcl.l}`,
-          delta: `Barrier: ${fmtHits(thr.bar)}/${fmtHits(barrierTarget("barrier", r.rcl.l))}` },
-        { ...barrierGrowthTile("Zone growth", r2 => r2.rooms[room]?.thr?.defRmp ?? null,
-            thr.defRmp, barrierTarget("defenderZone", r.rcl.l), "defenderZone", history), sub: barrierSub },
-        { ...barrierGrowthTile("Barrier growth", r2 => r2.rooms[room]?.thr?.bar ?? null,
-            thr.bar, barrierTarget("barrier", r.rcl.l), "barrier", history), sub: barrierSub },
+        { label: "Defender zone",
+          value: `${fmtHits(thr.defRmp)}/${fmtHits(zoneTarget(r.rcl.l))}`,
+          delta: `at RCL ${r.rcl.l}` },
+        { ...zoneGrowthTile("Zone growth", r2 => r2.rooms[room]?.thr?.defRmp ?? null,
+            thr.defRmp, zoneTarget(r.rcl.l), history), sub: zoneSub },
     ]);
 
     // Defense fleet card: def[] home-defender slots, standing army_member
@@ -1892,26 +1878,22 @@ function renderRoomDefense(room) {
     }
 }
 
-// Barrier hits-per-tick growth for the two watched fields — the
+// Defender-zone rampart hits-per-tick growth — the
 // netRateSeries/netWindowRate analogue of the RCL-rate chart, for a plain
 // non-monotonic numeric field. Separate from renderRoomDefense so that
 // function stays about the *current* ratios while this one is about *trend*;
-// does its own thr check since it owns different DOM (two chart cards, not
+// does its own thr check since it owns different DOM (a chart card, not
 // the tile row) than renderRoomDefense's own !thr early return.
-function renderBarrierRates(room) {
+function renderZoneRate(room) {
     const thr = latest.rooms[room]?.thr;
+    $("zone-rate-card").hidden = !thr;
     if (!thr) {
-        for (const key of ["barrierZoneRate", "barrierRate"]) { charts[key]?.destroy(); delete charts[key]; }
-        $("barrier-zone-rate-card").hidden = true;
-        $("barrier-rate-card").hidden = true;
+        charts.zoneRate?.destroy();
+        delete charts.zoneRate;
         return;
     }
-    $("barrier-zone-rate-card").hidden = false;
-    $("barrier-rate-card").hidden = false;
-    renderLine("barrierZoneRate", "c-barrier-zone-rate",
+    renderLine("zoneRate", "c-zone-rate",
         netRateDatasets("Zone hits/tick", r => r.rooms[room]?.thr?.defRmp ?? null));
-    renderLine("barrierRate", "c-barrier-rate",
-        netRateDatasets("Barrier hits/tick", r => r.rooms[room]?.thr?.bar ?? null));
 }
 
 function renderRoomCharts() {
@@ -1965,7 +1947,7 @@ function renderRoomCharts() {
     renderNukes(room);
     renderNuker(room, of);
     renderRoomDefense(room);
-    renderBarrierRates(room);
+    renderZoneRate(room);
 }
 
 // Shared horizontal-bar recipe for "current vs desired"-style charts — roles,
@@ -2207,22 +2189,18 @@ function safeModeCell(thr) {
     return td;
 }
 
-// `kind` is one of calc.js's BARRIER_TARGETS keys ("defenderZone"/"barrier");
 // `rcl` resolves the RCL-scaled repair target the hits are ramped against, so
 // a healthy low-RCL rampart and a neglected high-RCL one never read the same
 // color.
-const BARRIER_ABSENT = {
-    defenderZone: { word: "no zone",    why: "no rampart inside the configured defender zone" },
-    barrier:      { word: "no barrier", why: "no own rampart or wall outside the configured defender zone" },
-};
+const ZONE_ABSENT = { word: "no zone", why: "no rampart inside the configured defender zone" };
 
-function barrierCell(hits, kind, rcl) {
+function zoneCell(hits, rcl) {
     const td = document.createElement("td");
-    if (hits == null) return naCell(BARRIER_ABSENT[kind].word, BARRIER_ABSENT[kind].why);
-    const level = barrierLevel(hits, kind, rcl);
-    const critical = isCriticalBarrier(hits, kind);
+    if (hits == null) return naCell(ZONE_ABSENT.word, ZONE_ABSENT.why);
+    const level = zoneLevel(hits, rcl);
+    const critical = isCriticalZone(hits);
     td.append(makeBadge(cssVar(critical ? "--status-critical" : `--fill-${level}`), fmtHits(hits)));
-    td.title = `${fmtHits(hits)} / target ${fmtHits(barrierTarget(kind, rcl))} at RCL ${rcl}`;
+    td.title = `${fmtHits(hits)} / target ${fmtHits(zoneTarget(rcl))} at RCL ${rcl}`;
     return td;
 }
 
