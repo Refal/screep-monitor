@@ -172,14 +172,29 @@ ever urgent is "is anything on fire?".
   `degraded` for that, and the board headlines it instead of a posture. There is a unit test
   pinning this, and `?demo=degraded` reaches it in a browser. A room with an incoming nuke
   (`nukes`) surfaces here too, ranked above even `spawnless`, using the same "overrides the
-  posture, shows even on a clear room" mechanism.
+  posture, shows even on a clear room" mechanism. Below the cards, a **watch** line
+  (`watchItems`) names clear RCL8 rooms whose defender zone is under `CRITICAL_RAMPART_HITS`
+  — the bot's posture only judges rooms with hostiles in them, so it never sees a decaying
+  wall. It never feeds `empireVerdict`; a watch room is named there instead of in the clear line.
+- **Rooms at a glance** (below the empire tiles, never collapsed): one line per owned room,
+  split by class. Levelling rooms get an RCL progress bar and ETA, sorted soonest first;
+  max-level rooms get zone / nuker / labs / storage / spawn, anything coloured first.
 - **Sections** are native `<details data-section="…">` accordions. A collapsed one is
   `display: none`, and a Chart.js chart built inside a zero-sized container bakes a wrong
   `devicePixelRatio` it does not recover from, so `SECTIONS` in `public/app.js` renders
   lazily: new data marks every section dirty, only the open ones render, the rest render on
   first open. Below 1100px only Defense ships `open` (tiles plus a table, no charts), so a
   phone builds no charts at all until the reader opens a section, against 16 for the whole
-  page. From 1100px up everything opens by default.
+  page. From 1100px up every section opens by default except the two activity logs
+  (`history: true` in `SECTIONS`). Order is live state first (Defense, Power, Boosts, Labs,
+  Rooms), then Empire charts and Remote threats, then the logs. On a phone the Defense table
+  folds its clear rooms behind a "+ N clear rooms" toggle, so a quiet empire isn't ten
+  identical cards.
+- **The room view reorders by room class** (`orderRoomView` in `public/app.js`, which moves
+  the DOM nodes so tab order matches). A levelling room leads with RCL progress tiles and
+  the economy charts; a max-level room leads with a status strip (zone, safe mode, nuker,
+  labs, storage), then Defense and Nuker, with the economy charts last. Incoming nukes lead
+  both.
 - **Power harvesting** is a latest-snapshot section built from `pb`/`ph`/`pba`, modelled on
   the bot's own `debugPowerBanks()` console command — gate tiles, one row per live bank with
   its committed homes, and a second table with one row per squad plus the haulers whose bank

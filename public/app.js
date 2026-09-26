@@ -16,7 +16,7 @@ import {
     PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, RAW_INTERVAL_MS, bucketId, LOD_BY_RANGE,
     fmtHits, roomPosture, defenderSummary, zoneTarget, zoneLevel, isCriticalZone, storageClassInfo,
     RANGES, DEFAULT_RANGE,
-    empireVerdict, threatItems, clearRooms, isOutgunned, hasNoSpawn,
+    empireVerdict, threatItems, watchItems, quietRooms, isOutgunned, hasNoSpawn,
     hasIncomingNuke, incomingNukes,
     netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS,
     remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes, remoteDeployPhase,
@@ -374,6 +374,9 @@ function renderTileRow(containerId, tiles) {
     $(containerId).replaceChildren(...tiles.map(t => {
         const el = document.createElement("div");
         el.className = "tile";
+        // Optional status colour for the value — the same critical/serious/
+        // short vocabulary the table cells use.
+        if (t.tone) el.classList.add(t.tone);
         const rows = [["label", t.label], ["value", t.value], ["delta", t.delta]];
         if (t.sub) rows.push(["sub", t.sub]);
         for (const [cls, text] of rows) {
@@ -417,7 +420,10 @@ const THREAT_KIND_LABEL = {
     unknown: "unknown",
 };
 
-function verdictSubtitle(v) {
+// `quiet` and `watched` are the counts of quietRooms and watchItems — the
+// clear rooms split the same way the lines below the board split them, so
+// the subtitle can't disagree with them.
+function verdictSubtitle(v, { quiet, watched }) {
     const parts = [];
     if (v.counts.nuked) parts.push(`${pluralCount(v.counts.nuked, "room")} facing an incoming nuke`);
     if (v.counts.spawnless) parts.push(`${pluralCount(v.counts.spawnless, "room")} with no spawn`);
@@ -426,8 +432,9 @@ function verdictSubtitle(v) {
     if (v.counts.engaged) parts.push(`${v.counts.engaged} engaged`);
     if (v.strongholds) parts.push(pluralCount(v.strongholds, "armed stronghold"));
     if (v.counts.unknown) parts.push(`${pluralCount(v.counts.unknown, "room")} unknown`);
-    if (!parts.length) return `${pluralCount(v.counts.clear, "room")} clear`;
-    if (v.counts.clear) parts.push(`${v.counts.clear} clear`);
+    // Nothing else to say: the clear count carries its own noun.
+    if (quiet || (!parts.length && !watched)) parts.push(parts.length ? `${quiet} clear` : `${pluralCount(quiet, "room")} clear`);
+    if (watched) parts.push(`${watched} to watch`);
     return parts.join(" · ");
 }
 
@@ -583,12 +590,17 @@ function renderThreatBoard() {
     const title = document.createElement("strong");
     title.className = "verdict-title";
     title.textContent = tone.headline;
+    // Computed once and shared by the subtitle, the watch line and the clear
+    // line. A degraded payload has no clear rooms, so both are empty there.
+    const watch = v.degraded ? [] : watchItems(latest);
+    const quiet = v.degraded ? [] : quietRooms(latest);
     const sub = document.createElement("span");
     sub.className = "verdict-sub";
     sub.textContent = v.degraded
         ? "this snapshot had its threat detail dropped (payload degradation) — the board below is not an all-clear"
-        : verdictSubtitle(v);
+        : verdictSubtitle(v, { quiet: quiet.length, watched: watch.length });
     head.replaceChildren(title, sub);
+    renderWatchLine(watch);
 
     $("threat-list").replaceChildren(
         ...items.map(item => item.scope === "remote" ? strongholdCard(item) : roomThreatCard(item)));
@@ -599,10 +611,27 @@ function renderThreatBoard() {
             + Object.keys(latest.rooms).sort().join(" ");
         return;
     }
-    const clear = clearRooms(latest);
-    $("clear-line").textContent = clear.length
-        ? `${pluralCount(clear.length, "room")} clear · ${clear.join(" ")}`
+    // A watch room is named on the watch line instead, so no room is listed twice.
+    $("clear-line").textContent = quiet.length
+        ? `${pluralCount(quiet.length, "room")} clear · ${quiet.join(" ")}`
         : "";
+}
+
+// One line, not cards: nothing here is an emergency, and a card would read
+// as one. Each room links to its view, where the zone tile and chart are.
+function renderWatchLine(watch) {
+    const line = $("watch-line");
+    line.hidden = watch.length === 0;
+    if (!watch.length) { line.replaceChildren(); return; }
+    const label = document.createElement("strong");
+    label.textContent = "Watch";
+    const parts = [label];
+    for (const w of watch) {
+        const zone = zoneState(w.room);
+        const trend = zone.shrinking ? `, shrinking ${compact(zone.rate)}/tick` : "";
+        parts.push(" · ", roomNameLink(w.room), ` defender zone ${fmtHits(w.hits)}${trend}`);
+    }
+    line.replaceChildren(...parts);
 }
 
 function renderTiles() {
@@ -628,6 +657,100 @@ function renderTiles() {
         // judgment, named per room and impossible to miss.
     );
     renderTileRow("tiles", tiles);
+}
+
+// ---------- rooms at a glance ----------
+// Two groups because the two room classes are watched for different things.
+// Levelling rooms sort by ETA (the next level-up first); max-level rooms put
+// anything needing a look first, then by name. Values come from the same
+// helpers as the room view's headline strip, so the two can't disagree.
+
+function glanceStat(text, tone, title) {
+    const el = document.createElement("span");
+    el.className = "glance-stat" + (tone ? ` ${tone}` : "");
+    el.textContent = text;
+    if (title) el.title = title;
+    return el;
+}
+
+function glanceRow(room, body) {
+    const row = document.createElement("div");
+    row.className = "glance-row";
+    const name = document.createElement("span");
+    name.className = "glance-name";
+    name.append(roomNameLink(room));
+    const rest = document.createElement("span");
+    rest.className = "glance-body";
+    rest.append(...body);
+    row.append(name, rest);
+    return row;
+}
+
+function glanceGroup(title, rows) {
+    const card = document.createElement("section");
+    card.className = "card glance-group";
+    const h = document.createElement("h3");
+    h.textContent = title;
+    card.append(h, ...rows);
+    return card;
+}
+
+function growingGlanceRow([room, r]) {
+    const eta = levelEta(row => row.rooms[room]?.rcl ?? null, r.rcl, history);
+    const p = pct(r.rcl.p, r.rcl.pt);
+    const bar = document.createElement("span");
+    bar.className = "glance-bar";
+    bar.setAttribute("role", "img");
+    bar.setAttribute("aria-label", `${p.toFixed(1)}% to level ${r.rcl.l + 1}`);
+    const fill = document.createElement("span");
+    fill.style.width = `${Math.min(100, p)}%`;
+    bar.append(fill);
+    return {
+        eta,
+        el: glanceRow(room, [
+            glanceStat(`RCL ${r.rcl.l}`),
+            bar,
+            glanceStat(`${p.toFixed(1)}%`),
+            glanceStat(eta ? `→ ${r.rcl.l + 1} in ${etaCellText(eta, false)}` : "no gain in range", eta ? undefined : "na"),
+        ]),
+    };
+}
+
+function maxedGlanceRow([room, r]) {
+    const thr = r.thr;
+    const zone = zoneState(room);
+    const nuk = nukerStatus(r.nuk);
+    const lab = r.lab;
+    const labWarn = labTone(lab?.s);
+    const body = [
+        !thr ? glanceStat("zone unknown", "na", DEGRADED_TITLE)
+            : zone.hits == null ? glanceStat(`zone: ${ZONE_ABSENT.word}`, "na", ZONE_ABSENT.why)
+            : glanceStat(`zone ${fmtHits(zone.hits)}${zone.shrinking ? " ↓" : ""}`, zone.tone,
+                `${fmtHits(zone.hits)} / target ${fmtHits(zoneTarget(r.rcl.l))}${zone.rate != null ? ` · ${compact(zone.rate)}/tick` : ""}`),
+        glanceStat(nuk ? `nuker ${nuk.word}` : "no nuker", nuk ? undefined : "na"),
+        glanceStat(lab ? `labs ${labStatusWord(lab.s)}` : "no labs", lab ? labWarn : "na"),
+        glanceStat(`storage ${compact(r.se ?? 0)}`),
+        glanceStat(`spawn ${Math.round(pct(r.e, r.ec))}%`, undefined, `${fmtInt.format(r.e)} / ${fmtInt.format(r.ec)}`),
+    ];
+    // 0 = look at this first; only states the stats above already colour or
+    // mute. A room with no threat data ranks above a healthy one, the same
+    // "silence is not safety" call POSTURE_RANK makes in calc.js. A room with
+    // no zone at all stays at 2, as watchItems treats it: its own state, not
+    // a thin wall.
+    const attention = zone.tone === "critical" ? 0 : !thr || zone.tone || labWarn ? 1 : 2;
+    return { attention, el: glanceRow(room, body) };
+}
+
+function renderRoomsGlance() {
+    const entries = Object.entries(latest.rooms);
+    const growing = entries.filter(([, r]) => r.rcl?.pt).map(e => ({ room: e[0], ...growingGlanceRow(e) }))
+        .sort((a, b) => (a.eta?.etaTicks ?? Infinity) - (b.eta?.etaTicks ?? Infinity) || a.room.localeCompare(b.room));
+    const maxed = entries.filter(([, r]) => !r.rcl?.pt).map(e => ({ room: e[0], ...maxedGlanceRow(e) }))
+        .sort((a, b) => a.attention - b.attention || a.room.localeCompare(b.room));
+    const groups = [];
+    if (maxed.length) groups.push(glanceGroup(`Max level · ${pluralCount(maxed.length, "room")}`, maxed.map(x => x.el)));
+    if (growing.length) groups.push(glanceGroup(`Levelling · ${pluralCount(growing.length, "room")}`, growing.map(x => x.el)));
+    $("rooms-glance").replaceChildren(...groups);
 }
 
 // One line above every chart, naming any collection outage in the current
@@ -830,7 +953,27 @@ function squadsOutCell(room) {
 }
 
 function renderDefenseTable() {
-    renderTable("defense-table", defenseColumns(), sortByPosture(Object.entries(latest.rooms)));
+    const rows = sortByPosture(Object.entries(latest.rooms));
+    // A room with nothing to look at: the same quietRooms the threat board's
+    // clear line names. Only card mode acts on it (see styles.css) — the
+    // desktop table is dense enough to keep every row.
+    const quiet = quietRooms(latest);
+    const quietSet = new Set(quiet);
+    renderTable("defense-table", defenseColumns(), rows, undefined,
+        ([name]) => quietSet.has(name) ? ["data-quiet"] : []);
+    const table = $("defense-table");
+    table.toggleAttribute("data-all-quiet", rows.length > 0 && quiet.length === rows.length);
+    const toggle = $("defense-show-all");
+    toggle.hidden = quiet.length === 0;
+    const syncToggle = () => {
+        const all = table.hasAttribute("data-show-all");
+        toggle.setAttribute("aria-expanded", String(all));
+        toggle.textContent = all
+            ? "Hide clear rooms"
+            : `+ ${pluralCount(quiet.length, "clear room")} · ${quiet.join(" ")}`;
+    };
+    toggle.onclick = () => { table.toggleAttribute("data-show-all"); syncToggle(); };
+    syncToggle();
 }
 
 const ATTACK_LOG_MAX_ROWS = 20;
@@ -927,7 +1070,9 @@ function renderColumnHints(table, spec) {
 
 // `empty` is {text, why} — the callers distinguish several empty states from
 // each other (degraded vs genuinely quiet), so the wording stays theirs.
-function renderTable(tableId, spec, rows, empty) {
+// `rowAttrs(row)` optionally names boolean attributes to set on that row's
+// <tr>, so a caller can mark rows without pairing <tr>s back to rows itself.
+function renderTable(tableId, spec, rows, empty, rowAttrs) {
     const table = $(tableId);
     table.querySelector("thead").replaceChildren(buildHead(spec));
     renderColumnHints(table, spec);
@@ -941,6 +1086,7 @@ function renderTable(tableId, spec, rows, empty) {
     const expandable = spec.some(c => c.tier === 3);
     tbody.replaceChildren(...rows.map(row => {
         const tr = document.createElement("tr");
+        for (const attr of rowAttrs?.(row) ?? []) tr.setAttribute(attr, "");
         for (const col of spec) {
             const td = col.cell(row);
             applyColMeta(td, col);
@@ -1675,12 +1821,13 @@ function renderPowerFleetTable() {
 // throughput and ETA to the next level — the per-room analogue of the GCL
 // tile in renderTiles(). At max level (!pt) there's no next level, and
 // rcl.p is gone too, so progress/rate/ETA would only be "max"/"—" filler:
-// the strip collapses to the single RCL tile.
+// the strip becomes renderMaxedRoomTiles' status summary instead.
 function renderRoomTiles(room) {
     const rclOf = r => r.rooms[room]?.rcl ?? null;
-    const cur = latest.rooms[room]?.rcl;
+    const r = latest.rooms[room];
+    const cur = r?.rcl;
     if (!cur?.pt) {
-        renderTileRow("room-tiles", [{ label: "RCL", value: cur?.l ?? "—", delta: "max level" }]);
+        renderMaxedRoomTiles(room);
         return;
     }
     const rangeLabel = $("range-group").querySelector('[aria-pressed="true"]')?.textContent ?? "range";
@@ -1692,8 +1839,114 @@ function renderRoomTiles(room) {
         { label: "Upgrade", value: wr ? `${compact(wr.rate)}/tick` : "—", delta: `over ${rangeLabel}` },
         { label: "ETA", value: eta ? (eta.etaMs != null ? `~${fmtDuration(eta.etaMs)}` : `~${compact(eta.etaTicks)} ticks`) : "—",
           delta: eta ? `${compact(eta.rate)}/tick` : "no gain in range" },
+        // Stored energy is what a levelling room upgrades with; spawn capacity
+        // is what the next level unlocks.
+        { label: "Storage", value: compact(r.se ?? 0), delta: `spawn ${fmtInt.format(r.e)} / ${fmtInt.format(r.ec)}` },
     ];
     renderTileRow("room-tiles", tiles);
+}
+
+// The defender zone as the summary views colour it: `hits` from the latest
+// snapshot, `rate` its net hits/tick over the range (null with no trend, or
+// with no zone at all), and `tone` critical under the CRITICAL_RAMPART_HITS
+// cliff, short while shrinking. Shared by the room strip, the glance row and
+// the watch line, so the three can't colour one wall differently.
+function zoneState(room) {
+    const hits = latest.rooms[room]?.thr?.defRmp ?? null;
+    const wr = hits != null ? netWindowRate(row => row.rooms[room]?.thr?.defRmp ?? null, history) : null;
+    const rate = wr?.rate ?? null;
+    const shrinking = rate != null && rate < 0;
+    return { hits, rate, shrinking, tone: isCriticalZone(hits) ? "critical" : shrinking ? "short" : undefined };
+}
+
+// A max-level room has no progress left to report, so its headline strip is
+// the things that can still go wrong: the defender zone (the one structural
+// weakness the threat board's posture never sees), safe mode, the nuker, labs
+// and stored energy. Every value comes from the same helpers the sections
+// below use, so the strip can't disagree with them.
+function renderMaxedRoomTiles(room) {
+    const r = latest.rooms[room];
+    const thr = r?.thr;
+    const upw = r?.upw;
+    const tiles = [
+        { label: "RCL", value: r?.rcl?.l ?? "—", delta: "max level",
+          sub: upw != null ? `UPW ${compact(upw)}/tick` : "" },
+    ];
+    if (thr) {
+        // Rate only: at a 300M target the ETA is years out and says nothing.
+        // The Defense section's Zone growth tile still carries it.
+        const zone = zoneState(room);
+        tiles.push({
+            label: "Defender zone",
+            value: zone.hits == null ? ZONE_ABSENT.word : fmtHits(zone.hits),
+            delta: `of ${fmtHits(zoneTarget(r.rcl.l))} target`,
+            sub: zone.hits == null ? "" : zone.rate != null ? `${compact(zone.rate)}/tick${zone.shrinking ? " · shrinking" : ""}` : "no trend in range",
+            tone: zone.tone,
+        });
+        const smActive = thr.sm !== undefined;
+        tiles.push({
+            label: "Safe mode",
+            // The count alone, so the value fits one line in a narrow tile.
+            value: smActive ? "active" : String(thr.smAvail),
+            delta: smActive ? "" : thr.smAvail ? `${thr.smAvail === 1 ? "charge" : "charges"} available` : "no charges left",
+            tone: !smActive && thr.smAvail === 0 ? "critical" : undefined,
+        });
+    } else {
+        tiles.push({ label: "Defense", value: "unknown", delta: DEGRADED_TITLE });
+    }
+    const nuk = nukerStatus(r?.nuk);
+    const cd = r?.nuk?.[2] ?? 0;
+    const ms = observedMsPerTick(history);
+    tiles.push(!nuk ? { label: "Nuker", value: "not built", delta: "" }
+        : { label: "Nuker", value: nuk.word,
+            delta: nuk.ready ? "armed"
+                : cd > 0 ? `cooldown ${ms != null ? `~${fmtDuration(cd * ms)}` : `~${compact(cd)} ticks`}`
+                : `G ${nuk.gPct}% · E ${nuk.ePct}%` });
+    const lab = r?.lab;
+    tiles.push({
+        label: "Labs",
+        value: lab ? labStatusWord(lab.s) : "no labs",
+        delta: lab?.o ? `→ ${lab.o}` : "",
+        tone: labTone(lab?.s),
+    });
+    tiles.push({ label: "Storage", value: compact(r?.se ?? 0), delta: `terminal ${compact(r?.te ?? 0)}` });
+    renderTileRow("room-tiles", tiles);
+}
+
+// Status of a nuker triple [ghodium, energy, cooldown], or null when the room
+// has none. Shared by the room's headline strip and its Nuker section.
+function nukerStatus(nuk) {
+    if (!nuk) return null;
+    const [g, e, cd] = nuk;
+    const ready = cd === 0 && g >= NUKER_GHODIUM_CAPACITY && e >= NUKER_ENERGY_CAPACITY;
+    return {
+        ready,
+        word: ready ? "ready" : cd > 0 ? "cooling" : "filling",
+        gPct: Math.round(Math.min(1, g / NUKER_GHODIUM_CAPACITY) * 100),
+        ePct: Math.round(Math.min(1, e / NUKER_ENERGY_CAPACITY) * 100),
+    };
+}
+
+// Room-view block order by room class. The section head, tiles and gap note
+// always lead; these follow in the listed order. Incoming nukes come first
+// for both, since a scheduled hit outranks everything else about a room.
+const ROOM_BLOCK_ORDER = {
+    growing: ["nukes-section", "room-economy", "room-boosts", "defense-section", "nuker-section"],
+    maxed:   ["nukes-section", "defense-section", "nuker-section", "room-boosts", "room-economy"],
+};
+
+// Moves the DOM nodes rather than using CSS `order`, so tab order and
+// screen-reader order match what is on screen. Only touches the DOM when the
+// layout actually changes, so a refresh doesn't shuffle live charts.
+function orderRoomView(maxed) {
+    const view = $("view-room");
+    const layout = maxed ? "maxed" : "growing";
+    if (view.dataset.layout === layout) return;
+    view.dataset.layout = layout;
+    for (const id of ROOM_BLOCK_ORDER[layout]) view.append($(id));
+    // At max level the economy charts sit below defense and need a heading
+    // of their own; while levelling they follow the RCL tiles directly.
+    $("room-economy-title").hidden = !maxed;
 }
 
 // Shared by the threat-board card and the per-room nukes section — ticksToLand
@@ -1739,7 +1992,8 @@ function renderNuker(room, of) {
     }
     const [g, e, cd] = nuk;
     const gFull = g >= NUKER_GHODIUM_CAPACITY, eFull = e >= NUKER_ENERGY_CAPACITY;
-    const ready = cd === 0 && gFull && eFull;
+    const status = nukerStatus(nuk);
+    const ready = status.ready;
 
     // Ticks until armed: whichever of cooldown and the two independent fill
     // legs (ghodium via reactions, energy via a gated hauler trickle, see
@@ -1768,11 +2022,10 @@ function renderNuker(room, of) {
         ? (ms != null ? `~${fmtDuration(cd * ms)}` : `~${compact(cd)} ticks`)
         : "off cooldown";
     renderTileRow("nuker-tiles", [
-        { label: "Status", value: ready ? "ready" : cd > 0 ? "cooling" : "filling",
-          delta: ready ? "armed" : "" },
-        { label: "Ghodium", value: `${Math.round(Math.min(1, g / NUKER_GHODIUM_CAPACITY) * 100)}%`,
+        { label: "Status", value: status.word, delta: ready ? "armed" : "" },
+        { label: "Ghodium", value: `${status.gPct}%`,
           delta: `${fmtInt.format(g)} / ${fmtInt.format(NUKER_GHODIUM_CAPACITY)}` },
-        { label: "Energy", value: `${Math.round(Math.min(1, e / NUKER_ENERGY_CAPACITY) * 100)}%`,
+        { label: "Energy", value: `${status.ePct}%`,
           delta: `${fmtInt.format(e)} / ${fmtInt.format(NUKER_ENERGY_CAPACITY)}` },
         { label: "Cooldown", value: cooldownLabel,
           delta: cd > 0 ? `${fmtInt.format(cd)} / ${fmtInt.format(NUKER_COOLDOWN)}` : "" },
@@ -1908,9 +2161,11 @@ function renderRoomCharts() {
     const room = selectedRoom;
     $("room-title").replaceChildren(`Room ${room} `, screepsRoomLink(room));
     const of = fn => history.map(r => (r.rooms[room] ? fn(r.rooms[room]) : null));
-    renderRoomTiles(room);
     const curRcl = latest.rooms[room]?.rcl;
     const rclMaxed = !curRcl?.pt;
+    // Before any chart is drawn, so none is built and then moved.
+    orderRoomView(rclMaxed);
+    renderRoomTiles(room);
     $("rcl-card").hidden = rclMaxed;
     if (rclMaxed) {
         charts.rcl?.destroy();
@@ -2288,17 +2543,22 @@ function defCell(thr, roles) {
     return td;
 }
 
+// The bot's lab states, with its two internal names spelled for a reader.
+const LAB_STATUS_LABEL = { resource_check: "resources", boost: "boosting" };
+const labStatusWord = s => LAB_STATUS_LABEL[s] ?? s;
+// Stalled between reactions. The badge's warning colour and the "short" tone
+// of the room strip and glance row all come from this one list.
+const LAB_WARNING_STATES = new Set(["prepare", "resource_check", "finished"]);
+const labTone = s => LAB_WARNING_STATES.has(s) ? "short" : undefined;
+
 function labStatusBadge(s) {
     const colors = {
         reaction: cssVar("--status-good"),
-        prepare: cssVar("--status-warning"),
-        resource_check: cssVar("--status-warning"),
-        finished: cssVar("--status-warning"),
         boost: cssVar("--series-1"),
         idle: cssVar("--text-muted"),
     };
-    const labels = { resource_check: "resources", boost: "boosting" };
-    return makeBadge(colors[s] ?? cssVar("--text-muted"), labels[s] ?? s);
+    const color = LAB_WARNING_STATES.has(s) ? cssVar("--status-warning") : colors[s];
+    return makeBadge(color ?? cssVar("--text-muted"), labStatusWord(s));
 }
 
 function labStatusCell(lab) {
@@ -2554,16 +2814,19 @@ function renderRoomSelect() {
 // marks every section dirty, only the open ones render now, and the rest
 // render when they are opened. On a phone with one section open that is 2-3
 // charts instead of 16.
+// Page order, matching index.html: live state an RCL8 empire acts on first,
+// trend charts after it, and the two activity logs — history, not state —
+// last. `history: true` keeps a section collapsed even on a wide screen.
 const SECTIONS = [
     { id: "defense",    render: () => { renderDefenseTiles(); renderDefenseTable(); } },
-    { id: "empire",     render: renderEmpireCharts },
-    { id: "attacks",    render: renderAttackLog },
-    { id: "remote",     render: () => { renderRemoteTiles(); renderRemoteTable(); } },
-    { id: "remote-log", render: renderRemoteLog },
     { id: "power",      render: () => { renderPowerTiles(); renderPowerTable(); renderPowerFleetTable(); } },
-    { id: "rooms",      render: renderRoomsTable },
     { id: "boosts",     render: renderBoostMatrix },
     { id: "labs",       render: renderLabsTable },
+    { id: "rooms",      render: renderRoomsTable },
+    { id: "empire",     render: renderEmpireCharts },
+    { id: "remote",     render: () => { renderRemoteTiles(); renderRemoteTable(); } },
+    { id: "attacks",    render: renderAttackLog, history: true },
+    { id: "remote-log", render: renderRemoteLog, history: true },
 ];
 const dirtySections = new Set();
 const sectionEl = id => document.querySelector(`details[data-section="${id}"]`);
@@ -2591,15 +2854,17 @@ document.addEventListener("toggle", e => {
     else resizeChartsIn(el);
 }, true);
 
-// A wide screen shows the whole document at once, so nothing is worth hiding
-// there. Narrower than that, the one section index.html ships `open` (Defense,
-// the per-room board the threat board points at) stands on its own — which is
-// what keeps the default phone view short.
+// A wide screen has room for every live section at once, so those open
+// there; the two activity logs stay one click away, since ~1,300px of
+// Invader sightings would otherwise sit between the state sections and the
+// bottom of the page. Narrower than that, the one section index.html ships
+// `open` (Defense, the per-room board the threat board points at) stands on
+// its own — which is what keeps the default phone view short.
 function applySectionDefaults() {
     if (!matchMedia("(min-width: 1100px)").matches) return;
     for (const s of SECTIONS) {
         const el = sectionEl(s.id);
-        if (el) el.open = true;
+        if (el && !s.history) el.open = true;
     }
 }
 
@@ -2613,6 +2878,7 @@ function renderAll() {
     applyRoute();
     renderThreatBoard();
     renderTiles();
+    renderRoomsGlance();
     renderDataGapNote();
     renderRoomSelect();
     for (const s of SECTIONS) dirtySections.add(s.id);

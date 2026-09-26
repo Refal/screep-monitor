@@ -535,6 +535,28 @@ export function clearRooms(latest) {
         .map(([name]) => name)
         .sort();
 }
+// The threat board's quiet tier: rooms the bot calls clear that a reader
+// should still look at. Today that is one condition — an RCL8 room whose
+// defender zone sits under the CRITICAL_RAMPART_HITS cliff, which the bot's
+// posture never considers because it only judges rooms with hostiles in them.
+// Deliberately never feeds empireVerdict: a watch item must not turn the
+// headline red or claim the room is under threat. Weakest zone first.
+export function watchItems(latest) {
+    const clear = new Set(clearRooms(latest));
+    return Object.entries(latest?.rooms ?? {})
+        .filter(([name, r]) => clear.has(name) && r.rcl?.l === 8 && isCriticalZone(r.thr?.defRmp))
+        .map(([room, r]) => ({ room, kind: "zone", hits: r.thr.defRmp }))
+        .sort((a, b) => a.hits - b.hits || a.room.localeCompare(b.room));
+}
+
+// The clear rooms left once the watch line has taken its own: the rooms the
+// page names as plainly "clear". The single place that split is made, so the
+// verdict subtitle, the clear line and the phone Defense fold always agree.
+export function quietRooms(latest) {
+    const watched = new Set(watchItems(latest).map(w => w.room));
+    return clearRooms(latest).filter(name => !watched.has(name));
+}
+
 export function sortByPosture(entries) {
     return [...entries].sort(([nameA, roomA], [nameB, roomB]) => {
         const rankA = POSTURE_RANK[roomPosture(roomA.thr).level];

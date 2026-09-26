@@ -30,11 +30,20 @@
         <section id="threat-board" aria-live="polite">
             <div id="verdict" class="verdict"></div>
             <div id="threat-list"></div>
+            <!-- Rooms the bot calls clear but a reader should still look at
+                 (see watchItems in calc.js). Never changes the verdict. -->
+            <p id="watch-line" class="watch-line" hidden></p>
             <p id="clear-line" class="clear-line"></p>
         </section>
 
         <div class="tiles" id="tiles"></div>
         <p id="data-gap-note" class="viz-legend"></p>
+
+        <!-- Every owned room on one line, split by what its class needs: a
+             levelling room is a progress bar and an ETA, a max-level room is
+             the handful of things that can still go wrong. Never collapsed —
+             this is the per-room summary the rest of the page details. -->
+        <div class="glance" id="rooms-glance"></div>
 
         <details class="section" data-section="defense" open>
             <summary>Defense · all rooms (latest snapshot)</summary>
@@ -45,6 +54,9 @@
                 <tbody></tbody>
             </table>
         </div>
+        <!-- Phone only: card mode folds the quiet rooms away behind this, so
+             ten identical "clear" cards don't bury the rest of the page. -->
+        <button id="defense-show-all" class="show-all-toggle" type="button" aria-controls="defense-table" hidden></button>
         <div class="viz-legend">
             <span class="ramp">
                 <span class="swatch" style="background: var(--fill-1)"></span>
@@ -57,59 +69,6 @@
             <span>“unknown” = this snapshot had its threat detail dropped (payload degradation), not “clear”</span>
             <span>Defenders covers home_defender / home_melee_defender plus standing remote guards; Squads out lists on-demand squads from the bot’s army records</span>
         </div>
-        </details>
-
-        <details class="section" data-section="empire">
-            <summary>Empire</summary>
-        <div class="charts">
-            <div class="card"><h3>GCL progress · % to level <span id="gcl-next"></span></h3><div class="plot"><canvas id="c-gcl"></canvas></div></div>
-            <div class="card"><h3>GCL gain · points per tick</h3><div class="plot"><canvas id="c-gcl-rate"></canvas></div></div>
-            <div class="card" id="card-gpl"><h3>GPL progress · % to level <span id="gpl-next"></span></h3><div class="plot"><canvas id="c-gpl"></canvas></div></div>
-            <div class="card" id="card-gpl-rate"><h3>GPL gain · points per tick</h3><div class="plot"><canvas id="c-gpl-rate"></canvas></div></div>
-            <div class="card"><h3>CPU used · limit <span id="cpu-limit"></span></h3><div class="plot"><canvas id="c-cpu"></canvas></div></div>
-            <div class="card"><h3>CPU bucket</h3><div class="plot"><canvas id="c-bucket"></canvas></div></div>
-            <div class="card"><h3>Reaction uptime · % of lab rooms reacting</h3><div class="plot"><canvas id="c-uptime"></canvas></div></div>
-            <div class="card" id="card-power-stock"><h3>Power held · storage + terminal + power spawn</h3><div class="plot"><canvas id="c-power-stock"></canvas></div></div>
-        </div>
-        </details>
-
-        <details class="section" data-section="attacks">
-            <summary>Recent hostile activity</summary>
-        <div class="table-wrap">
-            <table id="attack-log">
-                <thead></thead>
-                <tbody></tbody>
-            </table>
-        </div>
-        <p id="attack-log-note" class="viz-legend"></p>
-        </details>
-
-        <details class="section" data-section="remote">
-            <summary>Remote threats · non-owned rooms (latest snapshot)</summary>
-        <div class="tiles" id="remote-tiles"></div>
-        <div class="table-wrap">
-            <table id="remote-table">
-                <thead></thead>
-                <tbody></tbody>
-            </table>
-        </div>
-        <div class="viz-legend">
-            <span>“keepers” is an SK room’s standing guards — routine, and excluded from Recent remote activity below</span>
-            <span>a level-0 core is a harmless reserving core; the bot keeps farming next to it</span>
-            <span>“Last seen” past 300 ticks is a memory of a room that has gone dark, not a live reading</span>
-            <span>a row carried from the bot’s persisted memory has no vision — its hostile count is unknown, not zero</span>
-        </div>
-        </details>
-
-        <details class="section" data-section="remote-log">
-            <summary>Recent remote activity</summary>
-        <div class="table-wrap">
-            <table id="remote-log">
-                <thead></thead>
-                <tbody></tbody>
-            </table>
-        </div>
-        <p id="remote-log-note" class="viz-legend"></p>
         </details>
 
         <details class="section" data-section="power">
@@ -133,16 +92,6 @@
             <span>“Committed” is the planner’s cached decision per home, not a fresh evaluation; after a global reset it is empty until the planner runs again</span>
             <span>“Last seen” is how stale the hits/power reading is — the bot only refreshes a bank while something of ours has vision there</span>
             <span>the second table has one row per squad; rows marked “gone” are banks our own kill already removed from intel while the haulers are still loading or on the way home</span>
-        </div>
-        </details>
-
-        <details class="section" data-section="rooms">
-            <summary>Rooms (latest snapshot)</summary>
-        <div class="table-wrap">
-            <table id="rooms-table">
-                <thead></thead>
-                <tbody></tbody>
-            </table>
         </div>
         </details>
 
@@ -179,6 +128,69 @@
             </table>
         </div>
         </details>
+
+        <details class="section" data-section="rooms">
+            <summary>Rooms (latest snapshot)</summary>
+        <div class="table-wrap">
+            <table id="rooms-table">
+                <thead></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        </details>
+
+        <details class="section" data-section="empire">
+            <summary>Empire</summary>
+        <div class="charts">
+            <div class="card"><h3>GCL progress · % to level <span id="gcl-next"></span></h3><div class="plot"><canvas id="c-gcl"></canvas></div></div>
+            <div class="card"><h3>GCL gain · points per tick</h3><div class="plot"><canvas id="c-gcl-rate"></canvas></div></div>
+            <div class="card" id="card-gpl"><h3>GPL progress · % to level <span id="gpl-next"></span></h3><div class="plot"><canvas id="c-gpl"></canvas></div></div>
+            <div class="card" id="card-gpl-rate"><h3>GPL gain · points per tick</h3><div class="plot"><canvas id="c-gpl-rate"></canvas></div></div>
+            <div class="card"><h3>CPU used · limit <span id="cpu-limit"></span></h3><div class="plot"><canvas id="c-cpu"></canvas></div></div>
+            <div class="card"><h3>CPU bucket</h3><div class="plot"><canvas id="c-bucket"></canvas></div></div>
+            <div class="card"><h3>Reaction uptime · % of lab rooms reacting</h3><div class="plot"><canvas id="c-uptime"></canvas></div></div>
+            <div class="card" id="card-power-stock"><h3>Power held · storage + terminal + power spawn</h3><div class="plot"><canvas id="c-power-stock"></canvas></div></div>
+        </div>
+        </details>
+
+        <details class="section" data-section="remote">
+            <summary>Remote threats · non-owned rooms (latest snapshot)</summary>
+        <div class="tiles" id="remote-tiles"></div>
+        <div class="table-wrap">
+            <table id="remote-table">
+                <thead></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div class="viz-legend">
+            <span>“keepers” is an SK room’s standing guards — routine, and excluded from Recent remote activity below</span>
+            <span>a level-0 core is a harmless reserving core; the bot keeps farming next to it</span>
+            <span>“Last seen” past 300 ticks is a memory of a room that has gone dark, not a live reading</span>
+            <span>a row carried from the bot’s persisted memory has no vision — its hostile count is unknown, not zero</span>
+        </div>
+        </details>
+
+        <details class="section" data-section="attacks">
+            <summary>Recent hostile activity</summary>
+        <div class="table-wrap">
+            <table id="attack-log">
+                <thead></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <p id="attack-log-note" class="viz-legend"></p>
+        </details>
+
+        <details class="section" data-section="remote-log">
+            <summary>Recent remote activity</summary>
+        <div class="table-wrap">
+            <table id="remote-log">
+                <thead></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <p id="remote-log-note" class="viz-legend"></p>
+        </details>
         </div>
 
         <div id="view-room" hidden>
@@ -192,6 +204,17 @@
         </div>
         <div class="tiles" id="room-tiles"></div>
         <p id="room-data-gap-note" class="viz-legend"></p>
+        <!-- The blocks below are reordered by orderRoomView() in app.js: a room
+             still levelling leads with its controller/economy charts, a
+             max-level room with defense and nuker. Source order here is the
+             levelling one, which is also the no-JS order. -->
+        <div id="nukes-section" hidden>
+            <h2 id="nukes-title">Incoming Nukes</h2>
+            <div class="tiles" id="nukes-tiles"></div>
+        </div>
+
+        <div id="room-economy">
+        <h2 id="room-economy-title">Economy</h2>
         <div class="charts">
             <div class="card" id="rcl-card"><h3>RCL progress · % to next level</h3><div class="plot"><canvas id="c-rcl"></canvas></div></div>
             <div class="card" id="rcl-rate-card"><h3 id="rcl-rate-title">RCL gain · points per tick</h3><div class="plot"><canvas id="c-rcl-rate"></canvas></div></div>
@@ -201,7 +224,9 @@
             <div class="card"><h3>Boost stock · top compounds</h3><div class="plot"><canvas id="c-bst"></canvas></div></div>
             <div class="card"><h3>Repair queue · queued repairs</h3><div class="plot"><canvas id="c-repair-queue"></canvas></div></div>
         </div>
+        </div>
 
+        <div id="room-boosts">
         <h2 id="room-boosts-title">Boosts</h2>
         <div class="table-wrap compact">
             <table id="boost-grid">
@@ -210,6 +235,7 @@
                 </tr></thead>
                 <tbody></tbody>
             </table>
+        </div>
         </div>
 
         <div id="defense-section">
@@ -229,11 +255,6 @@
                     <div class="plot"><canvas id="c-zone-rate"></canvas></div>
                 </div>
             </div>
-        </div>
-
-        <div id="nukes-section" hidden>
-            <h2 id="nukes-title">Incoming Nukes</h2>
-            <div class="tiles" id="nukes-tiles"></div>
         </div>
 
         <div id="nuker-section" hidden>

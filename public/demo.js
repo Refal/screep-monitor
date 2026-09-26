@@ -55,6 +55,8 @@ function demoNuk(k, i, n, f) {
             return [NUKER_GHODIUM_CAPACITY, NUKER_ENERGY_CAPACITY, Math.round(NUKER_COOLDOWN * (1 - f) * 0.4)];
         case 4: // no nuker in this room
             return null;
+        case 6: case 7: // the two RCL8 extras: armed and idle
+            return [NUKER_GHODIUM_CAPACITY, NUKER_ENERGY_CAPACITY, 0];
         case 5: { // nuker starts publishing partway through the window
             const appearAt = Math.floor(n * 0.3);
             if (i < appearAt) return null;
@@ -146,8 +148,11 @@ function demoRq(k, i, n, f) {
 // read as exposed here — the active mode is the fallback); and thr dropped
 // entirely (payload degradation — the caller must also drop `roles`
 // alongside it, see DEGRADATION_STEPS in StatsManager.ts, so this demo row
-// never teaches a shape that can't occur in the real payload). Zone hits
-// drift gently with f so they don't look frozen across a range switch.
+// never teaches a shape that can't occur in the real payload). Two RCL8
+// extras follow with no threat at all: one healthy, and one whose defender
+// zone decays under CRITICAL_RAMPART_HITS — the state the threat board's
+// "watch" line exists for. Zone hits drift gently with f so they don't look
+// frozen across a range switch.
 function demoThr(k, i, n, f) {
     switch (k) {
         case 0: // quiet, healthy
@@ -183,6 +188,17 @@ function demoThr(k, i, n, f) {
             };
         case 5: // thr dropped entirely (payload degradation)
             return undefined;
+        case 6: // RCL8, quiet, healthy, well-walled — the common real state
+            return {
+                h: 0, twrArmed: 6, twrTotal: 6, dps: 0, smAvail: 7,
+                defRmp: Math.round(180_000_000 * (0.95 + 0.05 * f)), def: [],
+            };
+        case 7: // RCL8, no hostiles, but the defender zone decaying under the
+                // critical cliff — "clear" to the bot's posture, not to a reader
+            return {
+                h: 0, twrArmed: 6, twrTotal: 6, dps: 0, smAvail: 6,
+                defRmp: Math.round(40_000 - 37_300 * f), def: [],
+            };
         default:
             return undefined;
     }
@@ -204,6 +220,8 @@ function demoSc(k) {
         case 2: return { sc: "vault", scm: "pin" };
         case 3: return { sc: "outpost", scm: "config" };
         case 5: return {};
+        case 6: return { sc: "vault" };
+        case 7: return { sc: "vault", scm: "pin" };
         default: return { sc: "outpost" };
     }
 }
@@ -501,10 +519,12 @@ export function degradeLatest(rows) {
 }
 
 export function synthDemo(rangeHours, maxPoints) {
-    const roomNames = ["E15S57", "E18S59", "E21S41", "E21S55", "E23S44", "E27S41"];
+    // The last two are RCL8 extras with no threat at all (see demoThr 6/7), so
+    // the "N rooms clear" paths have something to fold.
+    const roomNames = ["E15S57", "E18S59", "E21S41", "E21S55", "E23S44", "E27S41", "E19S54", "E22S42"];
     // Per-room fill band for the boosts matrix — spans empty/low/mid/high/full,
     // last room deliberately empty (mirrors a freshly-claimed room with no stock at all).
-    const fillFrac = [0.08, 0.92, 0.45, 0.68, 0.28, 0];
+    const fillFrac = [0.08, 0.92, 0.45, 0.68, 0.28, 0, 0.8, 0.55];
     // Per-room RCL trajectory over the visible window: starting {level, progress},
     // total points gained by the last row, and an oscillation so the rate chart
     // has real shape (same reasoning as the gcl series below). E18S59 is seeded
@@ -521,6 +541,8 @@ export function synthDemo(rangeHours, maxPoints) {
         { level: 8, progress: 5000000, totalGain: 200000, oscAmp: 1400, oscPeriod: 6 },
         { level: 4, progress: 150000, totalGain: 200000, oscAmp: 2300, oscPeriod: 10 },
         { level: 6, progress: 400000, totalGain: 250000, oscAmp: 3200, oscPeriod: 11 },
+        { level: 8, progress: 0, totalGain: 300000, oscAmp: 1800, oscPeriod: 7 },
+        { level: 8, progress: 0, totalGain: 150000, oscAmp: 1200, oscPeriod: 9 },
     ];
     const now = Date.now();
     const n = Math.min(maxPoints, rangeHours * 6);

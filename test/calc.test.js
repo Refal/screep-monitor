@@ -11,7 +11,7 @@ import {
     netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, MANIFEST_GUARD_ROLE,
     SHARD, roomUrl, roomHistoryUrl,
     remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes, remoteDeployPhase,
-    empireVerdict, threatItems, clearRooms, isOutgunned, hasIncomingNuke, incomingNukes,
+    empireVerdict, threatItems, clearRooms, watchItems, quietRooms, isOutgunned, hasIncomingNuke, incomingNukes,
     squadSummary, routeSummary, routePhase, routeStatusText, armyRoutes, armyRouteFor, armyRoutesForHome,
     excludeRoutedGuards, routeOrAbsence, routesOrAbsence,
     powerGateState, powerBanksOrAbsence, bankEta, bankContest, bankStale, bankPlans,
@@ -1331,6 +1331,69 @@ describe("clearRooms", () => {
     test("a nuked room is never counted as clear, even with a calm thr reading", () => {
         const snap = { rooms: { Nuked: room({ nukes: [[500, "W1N1", 1, 1]], thr: thr() }) } };
         assert.deepEqual(clearRooms(snap), []);
+    });
+});
+
+describe("watchItems", () => {
+    const rcl8 = (over = {}) => room({ rcl: { l: 8 }, ...over });
+
+    test("names clear RCL8 rooms under the critical zone cliff, weakest first", () => {
+        const snap = { rooms: {
+            Thin: rcl8({ thr: thr({ defRmp: 3000 }) }),
+            Thinner: rcl8({ thr: thr({ defRmp: 1200 }) }),
+            Walled: rcl8({ thr: thr({ defRmp: 50_000_000 }) }),
+        } };
+        assert.deepEqual(watchItems(snap).map(i => i.room), ["Thinner", "Thin"]);
+        assert.equal(watchItems(snap)[0].hits, 1200);
+    });
+
+    test("a room already on the threat board is not repeated as a watch item", () => {
+        const snap = { rooms: { Hot: rcl8({ thr: thr({ h: 3, defRmp: 100 }) }) } };
+        assert.deepEqual(watchItems(snap), []);
+    });
+
+    test("below RCL8 a small zone is just a young room", () => {
+        const snap = { rooms: { Young: room({ thr: thr({ defRmp: 100 }) }) } };
+        assert.deepEqual(watchItems(snap), []);
+    });
+
+    test("no zone at all and no thr at all are not watch items", () => {
+        // "no zone" is its own page-wide state, and a missing thr is the
+        // threat board's "unknown" — neither is a measured thin wall.
+        const snap = { rooms: { NoZone: rcl8({ thr: thr() }), Dark: rcl8() } };
+        assert.deepEqual(watchItems(snap), []);
+    });
+
+    test("never changes the verdict", () => {
+        const snap = { rooms: { Thin: rcl8({ thr: thr({ defRmp: 10 }) }) } };
+        assert.equal(empireVerdict(snap).level, "clear");
+    });
+});
+
+describe("quietRooms", () => {
+    const rcl8 = (over = {}) => room({ rcl: { l: 8 }, ...over });
+    const snap = { rooms: {
+        Calm: rcl8({ thr: thr({ defRmp: 50_000_000 }) }),
+        Thin: rcl8({ thr: thr({ defRmp: 1000 }) }),
+        Young: room({ thr: thr() }),
+        Hot: rcl8({ thr: thr({ h: 2 }) }),
+        NoSpawn: rcl8({ sp: 0, thr: thr({ defRmp: 50_000_000 }) }),
+        Nuked: rcl8({ nukes: [[500, "W1N1", 1, 1]], thr: thr({ defRmp: 50_000_000 }) }),
+    } };
+
+    test("never shares a room with watchItems", () => {
+        const watched = new Set(watchItems(snap).map(w => w.room));
+        assert.ok(quietRooms(snap).every(name => !watched.has(name)));
+    });
+
+    test("together with watchItems it is exactly clearRooms", () => {
+        const both = [...quietRooms(snap), ...watchItems(snap).map(w => w.room)].sort();
+        assert.deepEqual(both, clearRooms(snap));
+    });
+
+    test("spawnless, nuked and hostile rooms are in neither", () => {
+        assert.deepEqual(quietRooms(snap), ["Calm", "Young"]);
+        assert.deepEqual(watchItems(snap).map(w => w.room), ["Thin"]);
     });
 });
 
