@@ -7,7 +7,7 @@ import {
     levelEta, fmtDuration, downsample, detectGaps, rampLevel, boostFillLevel, boostFloor,
     PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, LOD_BY_RANGE, RETENTION_DAYS,
     RANGES, DEFAULT_RANGE,
-    fmtHits, zoneTarget, zoneLevel, isCriticalZone, roomPosture, defenderSummary,
+    fmtHits, zoneTarget, zoneLevel, isCriticalZone, storageClassInfo, roomPosture, defenderSummary,
     netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, MANIFEST_GUARD_ROLE,
     SHARD, roomUrl, roomHistoryUrl,
     remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes, remoteDeployPhase,
@@ -471,6 +471,25 @@ describe("zoneTarget", () => {
     test("falls back to the ladder's default outside RCL 1-8", () => {
         assert.equal(zoneTarget(0), 10_000);
         assert.equal(zoneTarget(9), 10_000);
+    });
+});
+
+describe("storageClassInfo", () => {
+    test("returns null for a snapshot that predates sc", () => {
+        assert.equal(storageClassInfo({ rcl: { l: 8 } }), null);
+        assert.equal(storageClassInfo(undefined), null);
+    });
+    test("automatic class explains the rule that picked it", () => {
+        assert.deepEqual(storageClassInfo({ rcl: { l: 5 }, sc: "outpost" }),
+            { word: "outpost", why: "RCL ≤ 6 — always outpost" });
+        assert.deepEqual(storageClassInfo({ rcl: { l: 8 }, sc: "vault" }),
+            { word: "vault", why: "auto: zone ≥ 5.0M graduates to vault, < 3.0M reverts" });
+    });
+    test("an override that decided the class is named in word and reason", () => {
+        assert.deepEqual(storageClassInfo({ rcl: { l: 7 }, sc: "vault", scm: "pin" }),
+            { word: "vault (pinned)", why: "pinned via console setStorageClass" });
+        assert.deepEqual(storageClassInfo({ rcl: { l: 8 }, sc: "outpost", scm: "config" }),
+            { word: "outpost (config)", why: "STORAGE_CLASS_BY_SHARD_AND_ROOM override" });
     });
 });
 

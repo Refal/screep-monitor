@@ -194,6 +194,20 @@ function demoThr(k, i, n, f) {
 // Room 2 ("towers dry, no defense plan") is the one picked to also have lost
 // its spawn — a raid that broke through the towers plausibly took the spawn
 // with it — proving the highlight doesn't depend on a fresh `thr` reading.
+// Storage class per room (k), only shapes the real payload can take: RCL ≤ 6
+// rooms (0, 1, 4) are always an automatic outpost with no `scm`; room 2
+// (RCL7, no zone at all) is a console-pinned vault — a pin beats the rampart
+// latch; room 3 (RCL8, critical zone) is outpost by config override (config
+// can only ever say outpost); room 5 omits `sc` like a pre-sc snapshot.
+function demoSc(k) {
+    switch (k) {
+        case 2: return { sc: "vault", scm: "pin" };
+        case 3: return { sc: "outpost", scm: "config" };
+        case 5: return {};
+        default: return { sc: "outpost" };
+    }
+}
+
 function demoSpawns(k) {
     return k === 2 ? 0 : 1;
 }
@@ -530,6 +544,7 @@ export function synthDemo(rangeHours, maxPoints) {
                 rcl: advanceRcl(spec.level, spec.progress, Math.max(0, gained)),
                 upw: Math.max(0, (spec.totalGain / n + (spec.oscAmp / spec.oscPeriod) * Math.cos(i / spec.oscPeriod + k)) / 120),
                 sp: demoSpawns(k),
+                ...demoSc(k),
                 e: 1200 + Math.round(600 * Math.sin(i / 5 + k)), ec: 1800,
                 se: 200000 + f * 80000 + 20000 * Math.sin(i / 9 + k), te: k * 40000,
                 q: (i + k) % 9,

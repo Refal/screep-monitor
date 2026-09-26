@@ -14,7 +14,7 @@ import {
     netRateSeries, netWindowRate, netEta, average,
     levelEta, fmtDuration, downsample, detectGaps, rampLevel, boostFillLevel, boostFloor,
     PARTS_PER_BOOST, MIN_RAW_STOCK, LOD_BUCKET_MS, RAW_INTERVAL_MS, bucketId, LOD_BY_RANGE,
-    fmtHits, roomPosture, defenderSummary, zoneTarget, zoneLevel, isCriticalZone,
+    fmtHits, roomPosture, defenderSummary, zoneTarget, zoneLevel, isCriticalZone, storageClassInfo,
     RANGES, DEFAULT_RANGE,
     empireVerdict, threatItems, clearRooms, isOutgunned, hasNoSpawn,
     hasIncomingNuke, incomingNukes,
@@ -792,6 +792,9 @@ function defenseColumns() {
         { key: "zone", label: "Zone",
           hint: "weakest rampart inside the configured defender zone — the one you actually fight behind",
           cell: ([, r]) => zoneCell(r.thr?.defRmp, r.rcl.l) },
+        { key: "sc", label: "Class",
+          hint: "storage class — a vault holds the empire's war chest, an outpost keeps only what its own defense consumes; above RCL 6 a room graduates to vault at 5.0M zone hits and reverts below 3.0M, unless pinned or overridden in config",
+          cell: ([, r]) => storageClassCell(r) },
         { key: "defenders", label: "Defenders",
           hint: "home defense fleet from the live spawn manifest, plus this room's standing remote guards; on-demand squads are in Squads out",
           cell: ([, r]) => defCell(r.thr, r.roles) },
@@ -1816,6 +1819,7 @@ function renderRoomDefense(room) {
 
     const zoneCovered = history.filter(row => row.rooms[room]?.thr).length;
     const zoneSub = zoneCovered < history.length ? `${zoneCovered}/${history.length} snapshots had zone detail` : "";
+    const scInfo = storageClassInfo(r);
     renderTileRow("defense-room-tiles", [
         { label: "Posture", value: posture.label,
           delta: thr.h === 0 ? "no hostiles" : [`${fmtInt.format(thr.h)} hostiles`, ...(thr.owners ?? []), ...posture.reasons].join(" · "),
@@ -1828,6 +1832,7 @@ function renderRoomDefense(room) {
           delta: `at RCL ${r.rcl.l}` },
         { ...zoneGrowthTile("Zone growth", r2 => r2.rooms[room]?.thr?.defRmp ?? null,
             thr.defRmp, zoneTarget(r.rcl.l), history), sub: zoneSub },
+        { label: "Storage class", value: scInfo?.word ?? "unknown", delta: scInfo?.why ?? SC_ABSENT_WHY },
     ]);
 
     // Defense fleet card: def[] home-defender slots, standing army_member
@@ -2204,6 +2209,16 @@ function zoneCell(hits, rcl) {
     const critical = isCriticalZone(hits);
     td.append(makeBadge(cssVar(critical ? "--status-critical" : `--fill-${level}`), fmtHits(hits)));
     td.title = `${fmtHits(hits)} / target ${fmtHits(zoneTarget(rcl))} at RCL ${rcl}`;
+    return td;
+}
+
+const SC_ABSENT_WHY = "no storage class in this snapshot (published before the bot shipped sc)";
+
+function storageClassCell(r) {
+    const info = storageClassInfo(r);
+    if (!info) return naCell("unknown", SC_ABSENT_WHY);
+    const td = textCell(info.word);
+    td.title = info.why;
     return td;
 }
 

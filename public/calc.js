@@ -368,6 +368,25 @@ export const NUKER_COOLDOWN = 100000; // ticks after a launch
 // must not read the same.
 export const ZONE_RAMPART_TARGETS = { 1: 2_000, 2: 10_000, 3: 20_000, 4: 200_000, 5: 1_000_000, 6: 2_200_000, 7: 11_200_000, 8: 300_000_000, default: 10_000 };
 
+// Storage class hysteresis — screeps2 config/config.storageClass.ts, copied
+// verbatim. Only used to explain `sc` in words; the bot resolves the class
+// itself (classifyStorageRoom) and the dashboard never re-derives it.
+export const OUTPOST_MAX_RCL = 6;
+export const VAULT_GRADUATION_HITS = 5_000_000;
+export const VAULT_FLOOR_HITS = 3_000_000;
+
+// `sc` (vault/outpost) plus `scm` (pin/config, only when an override decided
+// it) → cell word and its explanation. null when the snapshot predates `sc`.
+export function storageClassInfo(room) {
+    if (!room?.sc) return null;
+    const suffix = room.scm === "pin" ? " (pinned)" : room.scm === "config" ? " (config)" : "";
+    const why = room.scm === "pin" ? "pinned via console setStorageClass"
+        : room.scm === "config" ? "STORAGE_CLASS_BY_SHARD_AND_ROOM override"
+        : room.rcl?.l != null && room.rcl.l <= OUTPOST_MAX_RCL ? `RCL ≤ ${OUTPOST_MAX_RCL} — always outpost`
+        : `auto: zone ≥ ${fmtHits(VAULT_GRADUATION_HITS)} graduates to vault, < ${fmtHits(VAULT_FLOOR_HITS)} reverts`;
+    return { word: room.sc + suffix, why };
+}
+
 // Mirrors the bot's own console formatter — threatReport.ts:99-103 — term for
 // term, so a value on the dashboard reads identically to the same value in
 // threatReport()/healthSnapshot(). Deliberately not compact(): Intl's

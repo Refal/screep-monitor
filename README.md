@@ -123,6 +123,12 @@ share the table under the banks with the squads (`powerFleetRows`): one row per 
 one "gone" hauler row per `ph` entry, so four squads on one bank are four short rows rather
 than one cell that widens the bank table past the viewport.
 
+`sc` / `scm` are per-room too and likewise need no collector change: `sc` is the room's
+resolved storage class (`vault` holds the war chest, `outpost` keeps only what its own
+defense consumes) and `scm` (`pin` / `config`) is present only when a manual override decided
+it. Both are optional — snapshots published before the bot shipped them lack them, and the
+Defense table's Class column and the room's Storage class tile read "unknown" there.
+
 `pw` is per-room — `[storage power, terminal power, power-spawn power, processing 0|1]` — and
 needs no collector change at all: `buildSnapshotDoc` copies `rooms` wholesale, so per-room
 fields ride along (the bot's `docs/stats-history-ring.md` says otherwise; the code is the
