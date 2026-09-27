@@ -735,7 +735,11 @@ function maxedGlanceRow([room, r]) {
             : glanceStat(`zone ${fmtHits(zone.hits)}${zone.shrinking ? " ↓" : ""}`, zone.tone,
                 `${fmtHits(zone.hits)} / target ${fmtHits(zoneTarget(r.rcl.l))}${zone.rate != null ? ` · ${compact(zone.rate)}/tick` : ""}`),
         glanceStat(nuk ? `nuker ${nuk.word}` : "no nuker", nuk ? undefined : "na"),
-        glanceStat(lab ? `labs ${labStatusWord(lab.s)}` : "no labs", lab ? labWarn : "na"),
+        !lab ? glanceStat("no labs", "na")
+            // Naming the compound says more than "reaction"; prepare keeps its
+            // warning tone, and the hover still carries the state.
+            : lab.o && (lab.s === "reaction" || lab.s === "prepare") ? glanceStat(`lab ${lab.o}`, labWarn, labStatusWord(lab.s))
+            : glanceStat(`labs ${labStatusWord(lab.s)}`, labWarn),
         glanceStat(`storage ${compact(r.se ?? 0)}`),
         glanceStat(`spawn ${Math.round(pct(r.e, r.ec))}%`, undefined, `${fmtInt.format(r.e)} / ${fmtInt.format(r.ec)}`),
     ];
