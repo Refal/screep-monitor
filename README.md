@@ -177,7 +177,7 @@ ever urgent is "is anything on fire?".
   — the bot's posture only judges rooms with hostiles in them, so it never sees a decaying
   wall. It never feeds `empireVerdict`; a watch room is named there instead of in the clear line.
 - **Rooms at a glance** (below the empire tiles, never collapsed): one line per owned room,
-  split by class. Levelling rooms get an RCL progress bar and ETA, sorted soonest first;
+  split by class. Levelling rooms get an RCL progress bar, ETA and storage, sorted soonest first;
   max-level rooms get zone / nuker / labs / storage / spawn, anything coloured first.
 - **Sections** are native `<details data-section="…">` accordions. A collapsed one is
   `display: none`, and a Chart.js chart built inside a zero-sized container bakes a wrong

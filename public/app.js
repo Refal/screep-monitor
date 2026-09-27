@@ -718,6 +718,7 @@ function growingGlanceRow([room, r]) {
             bar,
             glanceStat(`${p.toFixed(1)}%`),
             glanceStat(eta ? `→ ${r.rcl.l + 1} in ${etaCellText(eta, false)}` : "no gain in range", eta ? undefined : "na"),
+            glanceStat(`storage ${compact(r.se ?? 0)}`),
         ]),
     };
 }
