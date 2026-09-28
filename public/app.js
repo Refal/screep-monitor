@@ -353,7 +353,7 @@ function etaText(eta) {
 
 // Growth-rate + ETA tile for a plain (non {l,p,pt}) numeric field tracked
 // against an explicit target — the netWindowRate/netEta analogue of the RCL
-// tile's Upgrade/ETA pair. A null `cur` (no rampart in the defender zone at
+// tile's Upgrade ETA. A null `cur` (no rampart in the defender zone at
 // all — a real, page-wide-recognized state, see ZONE_ABSENT below) reads the
 // same way here as it does in the zone column, instead of showing a stale historical rate next to a contradictory
 // "no gain in range". Once `cur` is known, three branches: already at/above
@@ -1828,8 +1828,8 @@ function renderPowerFleetTable() {
                 : POWER_ABSENCE.unknown);
 }
 
-// Stat strip for the selected room's controller: level, progress, upgrade
-// throughput and ETA to the next level — the per-room analogue of the GCL
+// Stat strip for the selected room's controller: level, progress and upgrade
+// ETA (with its throughput) to the next level — the per-room analogue of the GCL
 // tile in renderTiles(). At max level (!pt) there's no next level, and
 // rcl.p is gone too, so progress/rate/ETA would only be "max"/"—" filler:
 // the strip becomes renderMaxedRoomTiles' short summary instead.
@@ -1841,14 +1841,11 @@ function renderRoomTiles(room) {
         renderMaxedRoomTiles(room);
         return;
     }
-    const rangeLabel = $("range-group").querySelector('[aria-pressed="true"]')?.textContent ?? "range";
-    const wr = windowRate(rclOf, history);
     const eta = levelEta(rclOf, cur, history);
     const tiles = [
         { label: "RCL", value: cur.l, delta: `${compact(cur.p)} / ${compact(cur.pt)}` },
         { label: `To level ${cur.l + 1}`, value: `${pct(cur.p, cur.pt).toFixed(1)}%`, delta: `${compact(cur.pt - cur.p)} left` },
-        { label: "Upgrade", value: wr ? `${compact(wr.rate)}/tick` : "—", delta: `over ${rangeLabel}` },
-        { label: "ETA", value: eta ? (eta.etaMs != null ? `~${fmtDuration(eta.etaMs)}` : `~${compact(eta.etaTicks)} ticks`) : "—",
+        { label: "Upgrade ETA", value: eta ? (eta.etaMs != null ? `~${fmtDuration(eta.etaMs)}` : `~${compact(eta.etaTicks)} ticks`) : "—",
           delta: eta ? `${compact(eta.rate)}/tick` : "no gain in range" },
         // Stored energy is what a levelling room upgrades with; spawn capacity
         // is what the next level unlocks.
