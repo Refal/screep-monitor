@@ -288,7 +288,15 @@ Then in the [Firebase console](https://console.firebase.google.com):
 }
 ```
 
-Put the project id into `.firebaserc`. For a one-off local deploy:
+Put the project id into `.firebaserc`. Projects created on or after 2026-10-15 no longer get a
+default Hosting site automatically, so the first deploy would fail with `404 Site Not Found`.
+Create the site once (on older projects this just reports that the site already exists):
+
+```sh
+npx firebase-tools hosting:sites:create <project-id> --project <project-id>
+```
+
+For a one-off local deploy:
 
 ```sh
 npm run gen:config
