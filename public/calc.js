@@ -987,9 +987,146 @@ export function routeOrAbsence(latest, home, target) {
     return route ? { route } : { absent: hasThreatDetail(latest) ? "none" : "unknown" };
 }
 
-export function routesOrAbsence(latest, home) {
-    const routes = armyRoutesForHome(latest, home);
-    return routes.length ? { routes } : { absent: hasThreatDetail(latest) ? "none" : "unknown" };
+// ---------------------------------------------------------------------------
+// Planner verdicts (dv / sv) — why the army is or isn't acting, the payload's
+// replacement for the defense and siege planners' console lines.
+// screeps2 docs/stats-history-ring.md ("Defense verdicts", "Siege verdicts")
+// is the contract. Unlike `rt`/`ar`, neither is ever degraded: both are heap
+// caches, so an absent field is "nothing planned" or "cache still empty after
+// a global reset", never "dropped to fit". Neither is written for everything
+// that looks threatened — `dv` only covers remotes a home actually plans — so
+// a missing verdict is never read as "one is coming".
+//
+// `dv` row: { rm, v, uh?, in? } — `v` covered | holding | undefendable, `uh`
+// homes that already gave up on the current threat, `in` retry countdown
+// (undefendable only). `sv` row: { h, rm, k, d?, in? } — `k` is the committed
+// objective (core | stronghold | cleanup), `covered`, or a hold reason.
+//
+// Tones use the dashboard's status classes: "good" | "short" (warning) |
+// "serious" | "critical" | "na". A code this table doesn't know renders as
+// itself, muted, rather than vanishing — the bot's enums grow.
+
+export const DEFENSE_VERDICT = {
+    covered:      { word: "covered", tone: "good", explain: "the fielded fleet already beats the threat" },
+    holding:      { word: "holding", tone: "short", explain: "no winning plan, but each squad withstands the threat — the fleet is topped up to hold the line" },
+    undefendable: { word: "undefendable", tone: "critical", explain: "no plan wins — the planner retries after a cooldown" },
+};
+
+export const SIEGE_VERDICT = {
+    core:              { word: "sieging core", tone: "good", explain: "committed: attacking the invader core" },
+    stronghold:        { word: "sieging stronghold", tone: "good", explain: "committed: attacking the armed stronghold" },
+    cleanup:           { word: "cleanup", tone: "good", explain: "committed: clearing what the core left behind" },
+    covered:           { word: "covered", tone: "good", explain: "a live squad already carries this threat" },
+    "awaiting-deploy": { word: "awaiting deploy", tone: "na", explain: "holding until the core activates" },
+    "above-bar":       { word: "above auto-siege limit", tone: "short", explain: "holding: core level is above the auto-siege limit" },
+    "boost-missing":   { word: "boost missing", tone: "serious", explain: "holding: a required boost compound is not in stock" },
+};
+
+export const PAIR_POSTURE = {
+    r: { word: "pairs recalled", explain: "an armed contestant held the bank, so the harvest pairs were pulled home" },
+    c: { word: "pairs released", explain: "the contest cleared, so the harvest pairs were sent back to the bank" },
+};
+
+export function verdictInfo(table, code) {
+    return table[code] ?? { word: code ?? "unknown", tone: "na", explain: `unrecognized planner code "${code}"` };
+}
+
+// The hold detail `d` means different things per reason: "L3" (a core level)
+// for above-bar, a compound name for boost-missing.
+export function siegeDetailText(v) {
+    if (v.d == null) return null;
+    if (v.k === "above-bar") return `core ${v.d}`;
+    if (v.k === "boost-missing") return String(v.d);
+    return String(v.d);
+}
+
+export function siegeVerdictFor(latest, home, room) {
+    return (latest?.sv ?? []).find(v => v.h === home && v.rm === room) ?? null;
+}
+
+// Routes on the power pipeline belong to the Power section; everything else
+// the army does is an "operation". Harvest armies are always kind 'offense'
+// and sieges never target a highway room, so an offense route aimed at a
+// bank room is power — a defense or manual squad sent there is not. A bank
+// our own kill already removed from `pb` can still have its route in `ar`
+// while the haulers (`ph`) load and head home.
+function isPowerRoute(latest, route) {
+    if (route.kind !== "offense") return false;
+    return (latest?.pb ?? []).some(b => b.rm === route.target
+        || (b.sq ?? []).some(s => s.home === route.home && route.squads.some(q => q.id === s.id)))
+        || (latest?.ph ?? []).some(h => h.rm === route.target);
+}
+
+export const TONE_RANK = { critical: 0, serious: 1, short: 2, na: 3, good: 4 };
+
+// The most urgent of a list of tones, or null for an empty list.
+export function worstTone(tones) {
+    return tones.reduce((w, t) => (w == null || (TONE_RANK[t] ?? 3) < (TONE_RANK[w] ?? 3) ? t : w), null);
+}
+
+function operationRank(op) {
+    const tone = op.verdict ? TONE_RANK[op.verdict.tone] ?? 3 : 3;
+    if (tone <= 1) return tone;
+    if (op.route?.dead > 0) return 1.5;
+    if (tone === 2) return 2;
+    if (op.route?.phase === "forming") return 2.5;
+    return tone;
+}
+
+// One row per thing the army is doing or has decided about, the join of
+// three sources: non-power `ar` routes, `dv` verdicts (joined to the defense
+// routes aimed at that room) and `sv` verdicts (joined on home + target). A
+// verdict with no route still gets a row — "undefendable, nobody sent" is the
+// row that matters most. Most urgent first.
+export function armyOperations(latest) {
+    const routes = armyRoutes(latest ?? {}).filter(r => !isPowerRoute(latest, r));
+    const ops = [];
+    const used = new Set();
+    for (const v of latest?.dv ?? []) {
+        const verdict = verdictInfo(DEFENSE_VERDICT, v.v);
+        const matched = routes.filter(r => r.kind === "defense" && r.target === v.rm);
+        const base = { target: v.rm, kind: "defense", code: v.v, verdict, detail: null, retryIn: v.in ?? null, gaveUp: v.uh ?? [] };
+        if (!matched.length) ops.push({ ...base, home: null, route: null });
+        for (const r of matched) { used.add(r); ops.push({ ...base, home: r.home, route: r }); }
+    }
+    for (const v of latest?.sv ?? []) {
+        const r = routes.find(x => x.kind === "offense" && x.home === v.h && x.target === v.rm) ?? null;
+        if (r) used.add(r);
+        ops.push({
+            target: v.rm, home: v.h, kind: "siege", code: v.k, route: r, gaveUp: [],
+            verdict: verdictInfo(SIEGE_VERDICT, v.k), detail: siegeDetailText(v), retryIn: v.in ?? null,
+        });
+    }
+    for (const r of routes) {
+        if (used.has(r)) continue;
+        ops.push({
+            target: r.target, home: r.home, kind: r.kind === "offense" ? "siege" : r.kind, code: null, route: r,
+            verdict: null, detail: null, retryIn: null, gaveUp: [],
+        });
+    }
+    return ops.sort((a, b) => operationRank(a) - operationRank(b)
+        || a.target.localeCompare(b.target) || (a.home ?? "").localeCompare(b.home ?? ""));
+}
+
+// Empire-wide counts for the Army tile row. Power routes are counted apart —
+// they are shown in full in the Power section.
+export function armySummary(latest) {
+    const all = armyRoutes(latest ?? {});
+    const power = all.filter(r => isPowerRoute(latest, r));
+    const ops = all.filter(r => !power.includes(r));
+    const dv = latest?.dv ?? [];
+    const sv = latest?.sv ?? [];
+    const committed = new Set(["core", "stronghold", "cleanup", "covered"]);
+    return {
+        undefendable: dv.filter(v => v.v === "undefendable").map(v => v.rm),
+        holding: dv.filter(v => v.v === "holding").map(v => v.rm),
+        alive: ops.reduce((a, r) => a + r.alive, 0),
+        total: ops.reduce((a, r) => a + r.total - r.dead, 0),
+        lost: ops.reduce((a, r) => a + r.dead, 0),
+        siegeCommitted: sv.filter(v => committed.has(v.k)).length,
+        siegeHolding: sv.filter(v => !committed.has(v.k)).length,
+        powerSquads: power.reduce((a, r) => a + r.squads.length, 0),
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -1037,7 +1174,7 @@ export function powerGateState(row) {
 
 // The banks a snapshot shows, or which absence it is. `pb` is omitted on an
 // empty list AND dropped by degradation, so the branch needs hasThreatDetail
-// the same way routesOrAbsence does. The gate is reported alongside because a
+// the same way routeOrAbsence does. The gate is reported alongside because a
 // reader's first question about an empty list is whether harvesting is even
 // switched on.
 export function powerBanksOrAbsence(latest) {
@@ -1093,7 +1230,27 @@ export function bankPlans(bank) {
         fleetIn: p.abt?.[0] ?? null,
         killIn: p.abt?.[1] ?? null,
         text: planText(p),
+        ...bankPlanDetail(p),
     })).sort((a, b) => a.home.localeCompare(b.home));
+}
+
+// The go plan a verdict carries (bot 35d72352+): `pr` pairs per wave, `wv`
+// waves, `kt`/`ht` kill and hauler-dispatch ticks from `t`, `b: 1` boosted.
+// A loot verdict carries only `ht`; a commit that adopted an existing squad
+// carries none and no mode `m` either (`adopted`). A committed row WITH a
+// mode but no plan predates the bot publishing plans — not an adoption. `po` is the last pair recall ('r') or release
+// ('c') — a sampled event, not the current state, and it can sit on any row.
+export function bankPlanDetail(p) {
+    return {
+        plan: p.pr != null || p.ht != null,
+        adopted: p.k === "committed" && p.pr == null && p.ht == null && !p.m,
+        pairs: p.pr ?? null,
+        waves: p.wv ?? null,
+        killTickIn: p.kt ?? null,
+        haulIn: p.ht ?? null,
+        planBoosted: p.b === 1,
+        posture: p.po ? PAIR_POSTURE[p.po] ?? { word: p.po, explain: `unrecognized posture "${p.po}"` } : null,
+    };
 }
 
 function reasonText(p) {

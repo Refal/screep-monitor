@@ -4,7 +4,7 @@
  * locally.
  *
  * Payload shape: segment SEGMENT holds a manifest+head snapshot
- * (t, gcl, gpl, cpu, cr, rooms, bmax?, rt?, ar?, pb?, ph?, pba, buckets), where `buckets`
+ * (t, gcl, gpl, cpu, cr, rooms, bmax?, rt?, ar?, pb?, ph?, pba, dv?, sv?, buckets), where `buckets`
  * is how many history bucket segments the bot keeps, at
  * SEGMENT+1 .. SEGMENT+buckets. Each bucket is a JSON array of the snapshots
  * published during one fixed window of game ticks (oldest first); the bot
@@ -31,7 +31,7 @@
  *                                    not separately configured)
  *
  * Firestore layout:
- *   snapshots/<autoId>  { ts, tick, gcl, gpl?, cpu, cr, rooms, bmax?, rt?, ar?, pb?, ph?, pba?,
+ *   snapshots/<autoId>  { ts, tick, gcl, gpl?, cpu, cr, rooms, bmax?, rt?, ar?, pb?, ph?, pba?, dv?, sv?,
  *                         b5?, b30?, b120? }
  *   meta/latest         same shape, plus `lod` (bucket-tracking state); also
  *                       used to dedup by tick and to trigger the once-a-day
@@ -229,6 +229,12 @@ export function buildSnapshotDoc(entry) {
         // rejects `undefined` values, and ring entries published before the bot
         // started emitting `pba` carry none.
         ...(entry.pba !== undefined ? { pba: entry.pba } : {}),
+        // Defense (`dv`) and siege (`sv`) planner verdicts. Omit-on-empty like
+        // `ar`, but for a different reason: the bot never degrades these — they
+        // are heap caches, so an absent field means "nothing planned" or "cache
+        // still empty after a global reset", never "dropped to fit".
+        ...(entry.dv?.length ? { dv: entry.dv } : {}),
+        ...(entry.sv?.length ? { sv: entry.sv } : {}),
     };
     for (const flag of Object.keys(LOD_BUCKET_MS)) if (entry[flag]) doc[flag] = true;
     return doc;

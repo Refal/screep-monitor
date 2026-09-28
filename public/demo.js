@@ -414,7 +414,43 @@ function demoAr(i, n, f) {
     if (i >= Math.floor(n * 0.5)) {
         routes.push({ home: "E21S41", target: "E22S41", sq: [{ id: 11, st: "engaged", n: [0, 0, 1, 1], at: [1, 0, 0], hold: 1 }] });
     }
+    // A manual squad parked on a bank room — not power (it isn't offense),
+    // so it must stay in the Army table.
+    routes.push({ home: "E27S41", target: "E25N15", kind: "manual", sq: [{ id: 13, st: "engaged", n: [0, 0, 1, 0], at: [0, 1, 0] }] });
+    // A boosted siege squad on the reserving core demoSv commits to.
+    if (i >= Math.floor(n * 0.3)) {
+        routes.push({ home: "E21S41", target: "E22S41", kind: "offense", sq: [{ id: 12, st: "engaged", n: [0, 0, 2, 0], at: [0, 2, 0], b: 1 }] });
+    }
     return routes.length ? routes : null;
+}
+
+// Planner verdicts (dv / sv), one per branch the Army section distinguishes:
+//   - dv E16S57 covered, joined to its defense route;
+//   - dv E19S59 holding, only while that raid runs;
+//   - dv E24S44 undefendable with no squad sent — a verdict-only row naming
+//     the home that gave up, with a retry countdown;
+//   - sv E22S41 core committed, joined to the offense route above;
+//   - sv E25S48 awaiting deploy (the pre-activation core in demoRt);
+//   - sv E31S38 above the auto-siege limit — the dark L5 stronghold;
+//   - sv E20S50 boost missing, no route.
+// Heap caches on the bot, never degraded, so they ride through the degraded
+// stretch untouched.
+function demoDv(i, n) {
+    const rows = [{ rm: "E16S57", v: "covered" }];
+    const raidFrom = Math.floor(n * 0.3), raidTo = Math.floor(n * 0.65);
+    if (i >= raidFrom && i < raidTo) rows.push({ rm: "E19S59", v: "holding" });
+    rows.push({ rm: "E24S44", v: "undefendable", uh: ["E23S44"], in: 100 - (i % 100) });
+    return rows;
+}
+
+function demoSv(i, n) {
+    const rows = [
+        { h: "E24S48", rm: "E25S48", k: "awaiting-deploy", in: Math.max(0, 900 - i * 3) },
+        { h: "E30S38", rm: "E31S38", k: "above-bar", d: "L5" },
+        { h: "E21S49", rm: "E20S50", k: "boost-missing", d: "XGHO2", in: 100 - (i % 100) },
+    ];
+    if (i >= Math.floor(n * 0.3)) rows.push({ h: "E21S41", rm: "E22S41", k: "core" });
+    return rows;
 }
 
 // Per-room power stock (pw): [storage, terminal, power spawn, processing 0|1].
@@ -449,7 +485,8 @@ function demoPb(i, n, f) {
     const banks = [{
         rm: "E15N5", p: 4800, hits: Math.round(2_000_000 * (1 - f * 0.6)), dec: 4200 - i * 8,
         age: i % 7, ft: 4, con: [2, 340, 120], dps: 1180,
-        pl: [{ h: "E15S57", k: "committed", m: "fight" }, { h: "E18S59", k: "committed", m: "race" },
+        pl: [{ h: "E15S57", k: "committed", m: "fight", pr: 2, wv: 2, kt: 1600 - i * 4, ht: 1300 - i * 4, b: 1 },
+             { h: "E18S59", k: "committed", m: "race", pr: 1, wv: 3, kt: 1800 - i * 4, ht: 1500 - i * 4 },
              { h: "E21S41", k: "skip", r: "too_far" }],
         sq: [{ id: 21, home: "E15S57", w: 1 }, { id: 22, home: "E15S57", f: 1 },
              { id: 41, home: "E18S59", w: 1 }, { id: 42, home: "E18S59", w: 2 }],
@@ -459,7 +496,7 @@ function demoPb(i, n, f) {
     banks.push({ rm: "E25N15", p: 2600, hits: 2_000_000, dec: 3000 - i * 5, age: 2, ft: 6, dps: 0 });
     banks.push({
         rm: "E35N25", p: 6400, hits: 1_400_000, dec: 5000 - i * 6, age: 340 + i, ft: 1, dps: 0,
-        pl: [{ h: "E21S41", k: "retry", in: 200 - i * 3, r: "no_pairs" }, { h: "E23S44", k: "skip", r: "bank_too_tough" }],
+        pl: [{ h: "E21S41", k: "retry", in: 200 - i * 3, r: "no_pairs", po: "r" }, { h: "E23S44", k: "skip", r: "bank_too_tough" }],
     });
     banks.push({
         rm: "E55N45", p: 3280, hits: Math.round(1_100_000 * (1 - f * 0.5)), dec: 2500 - i * 4,
@@ -473,7 +510,7 @@ function demoPb(i, n, f) {
         banks.push({
             rm: "E45N35", p: 5200, hits: Math.round(900_000 * (1 - i / (n * 0.8))), dec: 2600 - i * 4,
             age: 1, ft: 3, dps: 940,
-            pl: [{ h: "E27S41", k: "committed", m: "loot" }],
+            pl: [{ h: "E27S41", k: "committed", m: "loot", ht: Math.max(0, 300 - i) }],
             sq: [{ id: 31, home: "E27S41", w: 2 }],
             hl: [2, 1200, 640],
         });
@@ -628,6 +665,8 @@ export function synthDemo(rangeHours, maxPoints) {
             ...(ar ? { ar } : {}),
             ...(pb?.length ? { pb } : {}),
             ...(ph?.length ? { ph } : {}),
+            dv: demoDv(i, n),
+            sv: demoSv(i, n),
             // Always published and never degraded — that is the whole point of
             // the scalar, so it stays outside the `degraded` branch above. It
             // is absent only in the pre-power stretch, where the bot had no

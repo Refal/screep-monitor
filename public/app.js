@@ -20,7 +20,9 @@ import {
     hasIncomingNuke, incomingNukes,
     netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS,
     remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes, remoteDeployPhase,
-    armyRoutesForHome, routeStatusText, excludeRoutedGuards, routeOrAbsence, routesOrAbsence,
+    armyRoutesForHome, routeStatusText, excludeRoutedGuards, routeOrAbsence,
+    armyOperations, armySummary, verdictInfo, siegeVerdictFor, worstTone,
+    SIEGE_VERDICT, siegeDetailText,
     REMOTE_STALE_AGE_TICKS, MAX_REMOTE_THREATS,
     powerGateState, powerBanksOrAbsence, bankEta, bankContest, bankStale, bankPlans,
     powerFleetRows, haulerSummary, powerStockPoint, POWER_BANK_STALE_AGE_TICKS,
@@ -518,13 +520,22 @@ function roomThreatCard(item) {
     card.append(boardRow("Defenders",
         def.des ? `${def.cur} of ${def.des} fielded` : DEF_STATE_EXPLAIN[def.state] ?? def.state,
         def.des && def.cur < def.des ? shortfallClass(def.cur, def.des) : undefined));
-    // Squads this room has out protecting its remotes: spawn capacity and
-    // bodies committed elsewhere while the home itself is under threat.
-    const routes = armyRoutesForHome(latest, item.room);
-    if (routes.length) {
-        card.append(boardRow("Squads out",
-            routes.map(r => `→ ${r.target}: ${routeStatusText(r)}`).join(" · "),
-            routes.some(r => r.dead > 0) ? "critical" : undefined));
+    // What this home has out while it is itself under threat: spawn capacity
+    // and bodies committed elsewhere, each named by the planner's verdict or,
+    // with none (manual squads, an empty cache), by where the squad stands.
+    // The full rows are in the Army section.
+    const ops = armyOperations(latest).filter(op =>
+        (op.home === item.room && (op.route || op.verdict)) || op.gaveUp.includes(item.room));
+    if (ops.length) {
+        const tones = [
+            ...ops.filter(op => op.verdict).map(op => op.verdict.tone),
+            ...(ops.some(op => op.route?.dead > 0) ? ["critical"] : []),
+        ];
+        card.append(boardRow("Operations", ops.map(op => {
+            if (op.home !== item.room) return `→ ${op.target}: gave up (${op.verdict.word})`;
+            if (op.verdict) return `→ ${op.target}: ${op.verdict.word}`;
+            return `→ ${op.target}: ${op.kind === "manual" ? "manual · " : ""}${op.route.phase}`;
+        }).join(" · "), toneClass(worstTone(tones))));
     }
     return card;
 }
@@ -551,15 +562,18 @@ function strongholdCard(item) {
         "critical"));
     const deploy = remoteDeployPhase(entry.exp, latest.tick);
     if (deploy) {
-        const ms = observedMsPerTick(history);
-        const ticks = Math.max(0, deploy.ticks);
-        const text = ms != null ? fmtDuration(ticks * ms) : `~${compact(ticks)} ticks`;
-        card.append(boardRow(deploy.phase === "deploys" ? "Deploys in" : "Expires in", text,
+        card.append(boardRow(deploy.phase === "deploys" ? "Deploys in" : "Expires in", ticksText(deploy.ticks),
             deploy.phase === "deploys" ? undefined : "critical"));
     }
     if (entry.home) card.append(boardRow("Threatens", `${entry.home}'s remote mining`));
     const response = responseRow(entry);
     if (response) card.append(response);
+    const sv = entry.home ? siegeVerdictFor(latest, entry.home, entry.room) : null;
+    if (sv) {
+        const info = verdictInfo(SIEGE_VERDICT, sv.k);
+        const detail = siegeDetailText(sv);
+        card.append(boardRow("Siege", detail ? `${info.word} — ${detail}` : info.word, toneClass(info.tone)));
+    }
     card.append(boardRow("Hostiles",
         entry.mem ? "unknown — no vision" : `${entry.h}${entry.owners?.length ? ` · ${entry.owners.join(", ")}` : ""}`,
         entry.mem ? "na" : undefined));
@@ -930,15 +944,11 @@ function defenseColumns() {
           hint: "storage class — a vault holds the empire's war chest, an outpost keeps only what its own defense consumes; above RCL 6 a room graduates to vault at 5.0M zone hits and reverts below 3.0M, unless pinned or overridden in config",
           cell: ([, r]) => storageClassCell(r) },
         { key: "defenders", label: "Defenders",
-          hint: "home defense fleet from the live spawn manifest, plus this room's standing remote guards; on-demand squads are in Squads out",
+          hint: "home defense fleet from the live spawn manifest, plus this room's standing remote guards; on-demand squads are in the Army section",
           cell: ([, r]) => defCell(r.thr, r.roles) },
-        { key: "squads", label: "Squads out",
-          hint: "on-demand army squads this room has fielded for other rooms, from the bot's army records: forming at home, staging, in transit, or deployed in the target room. Engaged squads never respawn, so “lost” is permanent",
-          cell: ([n]) => squadsOutCell(n) },
     ];
 }
 
-const ARMY_NONE_TITLE = "no army route from this room in the bot's army records";
 const ARMY_DEGRADED_TITLE = "army detail dropped from this snapshot (payload degradation)";
 
 // Per-squad breakdown for a tooltip; the cell text itself carries the phase.
@@ -952,15 +962,139 @@ function routeDetailTitle(r) {
     }).join("\n");
 }
 
-function squadsOutCell(room) {
-    const resolved = routesOrAbsence(latest, room);
-    if (!resolved.routes) {
-        return resolved.absent === "none" ? naCell("none", ARMY_NONE_TITLE) : naCell("unknown", ARMY_DEGRADED_TITLE);
+// ---------- army ----------
+// What the army is doing and why: every non-power route joined to the defense
+// (`dv`) and siege (`sv`) planners' verdicts — the payload's replacement for
+// their console lines. Power-bank squads stay in the Power section.
+
+const TONE_COLOR = {
+    good: "--status-good", short: "--status-warning", serious: "--status-serious",
+    critical: "--status-critical", na: "--text-muted",
+};
+// Board rows and table cells share the critical/serious/short/na classes;
+// "good" is the unmarked default.
+const toneClass = tone => (tone === "good" || tone == null ? undefined : tone);
+
+// `ar` rides the bot's first degradation step while `dv`/`sv` never degrade,
+// so a verdict row can outlive its squads' detail — "none sent" there would
+// be a guess.
+const armyDetailDropped = () => !latest.ar && !hasThreatDetail(latest);
+
+const VERDICT_ABSENT_WHY = "the planners only decide remotes a home plans and sieges it can run, and their cache is heap state that empties on a global reset";
+const SAMPLED_NOTE = "sampled every 20 ticks, so a decision that flipped and flipped back in between is not shown";
+
+// Tick-relative countdowns (`in`, `kt`, `ht`, `exp`) read as wall time when
+// the history gives a tick rate, as ticks otherwise.
+function ticksText(ticks) {
+    const t = Math.max(0, ticks);
+    const ms = observedMsPerTick(history);
+    return ms != null ? fmtDuration(t * ms) : `~${compact(t)} ticks`;
+}
+
+function verdictBadgeCell(op) {
+    if (!op.verdict) {
+        return op.kind === "manual"
+            ? naCell("manual", "launched by hand from the console — no planner verdict applies")
+            : naCell("no cached verdict", VERDICT_ABSENT_WHY);
     }
-    const td = textCell(resolved.routes.map(r => `${r.target}: ${routeStatusText(r)}`).join("; "),
-        resolved.routes.some(r => r.dead > 0) ? "critical" : undefined);
-    td.title = resolved.routes.map(r => `→ ${r.target}\n${routeDetailTitle(r)}`).join("\n");
+    const td = document.createElement("td");
+    td.append(makeBadge(cssVar(TONE_COLOR[op.verdict.tone] ?? TONE_COLOR.na),
+        op.detail ? `${op.verdict.word} · ${op.detail}` : op.verdict.word));
+    td.title = `${op.verdict.explain} — ${SAMPLED_NOTE}`;
     return td;
+}
+
+function opHomeCell(op) {
+    const gaveUp = op.gaveUp.length ? `gave up: ${op.gaveUp.join(", ")}` : null;
+    const why = "homes that already gave up on this threat; the list resets when the threat changes";
+    if (!op.home) {
+        if (gaveUp) return naCell(gaveUp, why);
+        return armyDetailDropped() ? naCell("unknown", ARMY_DEGRADED_TITLE) : naCell("nobody", "no home has a squad aimed at this room");
+    }
+    const td = roomLinkCell(op.home);
+    if (gaveUp) {
+        const note = document.createElement("div");
+        note.className = "cell-note";
+        note.textContent = gaveUp;
+        note.title = why;
+        td.append(note);
+    }
+    return td;
+}
+
+function opSquadsCell(op) {
+    const r = op.route;
+    if (!r) {
+        return armyDetailDropped() ? naCell("unknown", ARMY_DEGRADED_TITLE)
+            : naCell("none sent", "no squad is aimed at this room in the bot's army records");
+    }
+    const td = textCell(routeStatusText(r), r.dead > 0 ? "critical" : undefined);
+    td.title = routeDetailTitle(r);
+    return td;
+}
+
+const NEXT_LABEL = { "awaiting-deploy": "deploys in", "boost-missing": "recheck in", undefendable: "retry in" };
+
+function opNextCell(op) {
+    if (op.retryIn == null) return naCell("—", "no countdown on this verdict");
+    const label = NEXT_LABEL[op.code] ?? "next in";
+    return textCell(op.retryIn > 0 ? `${label} ${ticksText(op.retryIn)}` : `${label.split(" ")[0]} due`);
+}
+
+function opWhereCell(op) {
+    const r = op.route;
+    if (!r) return naCell("—", "no squad to place");
+    return textCell(`${r.atHome} home · ${r.atTarget} in room · ${r.inTransit} en route`);
+}
+
+const ARMY_COLUMNS = [
+    { key: "target", label: "Target", primary: true, cell: op => roomLinkCell(op.target) },
+    { key: "home", label: "Home", hint: "the colony that fields the squad; for a defense nobody took, the homes that gave up", cell: opHomeCell },
+    { key: "kind", label: "Kind",
+      hint: "defense — a squad protecting a room; siege — an attack on an invader core or stronghold; manual — launched by hand",
+      cell: op => textCell(op.kind) },
+    { key: "verdict", label: "Verdict",
+      hint: `the planner's latest decision: covered / holding / undefendable for defense, the committed objective or the reason it is holding for a siege. It is the planner's cache, ${SAMPLED_NOTE}`,
+      cell: verdictBadgeCell },
+    { key: "squads", label: "Squads",
+      hint: "forming at home, staging, in transit, or deployed in the target room. Engaged squads never respawn, so “lost” is permanent",
+      cell: opSquadsCell },
+    { key: "next", label: "Next", hint: "when the planner looks again: an undefendable retry, a core activation, a boost recheck", cell: opNextCell },
+    { key: "where", label: "Where", tier: 3, hint: "alive members at home / in the target room / on the way", cell: opWhereCell },
+];
+
+function renderArmyTiles() {
+    const s = armySummary(latest);
+    const dropped = armyDetailDropped();
+    const tiles = [
+        {
+            label: "Undefendable", value: String(s.undefendable.length),
+            delta: s.undefendable.length ? s.undefendable.join(" ") : "none",
+            tone: s.undefendable.length ? "critical" : undefined,
+        },
+        {
+            label: "Holding the line", value: String(s.holding.length),
+            delta: s.holding.length ? s.holding.join(" ") : "none",
+            tone: s.holding.length ? "short" : undefined,
+        },
+        dropped
+            ? { label: "Squad members alive", value: "—", delta: "unknown — army detail dropped" }
+            : {
+                label: "Squad members alive", value: `${s.alive} / ${s.total}`,
+                delta: s.lost ? `${s.lost} lost` : "no losses", tone: s.lost ? "serious" : undefined,
+            },
+        { label: "Sieges", value: `${s.siegeCommitted} committed`, delta: `${s.siegeHolding} holding` },
+        { label: "Power squads", value: dropped ? "—" : String(s.powerSquads), delta: dropped ? "unknown — army detail dropped" : "shown in Power" },
+    ];
+    renderTileRow("army-tiles", tiles);
+}
+
+function renderArmyTable() {
+    const ops = armyOperations(latest);
+    let empty;
+    if (armyDetailDropped()) empty = { text: "unknown", why: ARMY_DEGRADED_TITLE };
+    else empty = { text: "no army operations", why: `no squads out and no cached verdicts — ${VERDICT_ABSENT_WHY}` };
+    renderTable("army-table", ARMY_COLUMNS, ops, empty);
 }
 
 function renderDefenseTable() {
@@ -1639,6 +1773,26 @@ function bankDpsCell(bank) {
     return textCell(fmtInt.format(bank.dps));
 }
 
+function planShapeText(p) {
+    if (p.adopted) return "adopted an existing squad — no go plan cached";
+    if (!p.plan) return "no go plan in this snapshot";
+    const parts = [];
+    if (p.pairs != null) parts.push(`${pluralCount(p.pairs, "pair")} per wave × ${pluralCount(p.waves ?? 1, "wave")}`);
+    if (p.planBoosted) parts.push("boosted");
+    return parts.join(" · ") || "loot run";
+}
+
+// Kill and hauler-dispatch ETAs of every cached go plan on this bank.
+function bankPlanEtaCell(bank) {
+    const plans = bankPlans(bank).filter(p => p.plan);
+    if (!plans.length) return naCell("none", "no cached go plan for this bank");
+    return textCell(plans.map(p => [
+        p.home,
+        p.killTickIn != null ? `kill ${ticksText(p.killTickIn)}` : null,
+        p.haulIn != null ? `haulers ${ticksText(p.haulIn)}` : null,
+    ].filter(Boolean).join(" · ")).join("; "));
+}
+
 const PLAN_COLOR = { committed: "--status-good", skip: "--text-muted", retry: "--status-warning" };
 
 // One chip per committed home. Skip and retry verdicts fold into a single
@@ -1654,10 +1808,18 @@ function bankPlanCell(bank) {
     const committed = plans.filter(p => p.kind === "committed");
     const others = plans.filter(p => p.kind !== "committed");
     const chips = committed.map(p => {
-        const badge = makeBadge(cssVar(PLAN_COLOR.committed), `${p.home} ${p.mode ?? "go"}`);
-        badge.title = `${p.home}: ${p.text}`;
+        const shape = p.pairs != null ? ` · ${p.pairs}×${p.waves ?? 1}` : "";
+        const badge = makeBadge(cssVar(PLAN_COLOR.committed), `${p.home} ${p.mode ?? "go"}${shape}${p.planBoosted ? " ⚡" : ""}`);
+        badge.title = `${p.home}: ${p.text} · ${planShapeText(p)}`;
         return badge;
     });
+    // The last pair recall/release — an event the bot saw, not a state.
+    for (const p of plans.filter(x => x.posture)) {
+        const badge = makeBadge(cssVar(p.posture.word === "pairs recalled" ? "--status-warning" : "--status-good"),
+            `${p.home} ${p.posture.word}`);
+        badge.title = `${p.posture.explain} — the last change seen, not necessarily the current state; ${SAMPLED_NOTE}`;
+        chips.push(badge);
+    }
     if (others.length) {
         // Beside a committed chip "+N other" is enough; alone it would read
         // as "other than what?", so it names what it holds instead.
@@ -1743,6 +1905,9 @@ const POWER_COLUMNS = [
     { key: "plan", label: "Committed",
       hint: "homes the planner has committed to this bank, with the mode (loot, fight, race); skip and retry verdicts from other homes fold into one muted chip. It is the planner's cache, not a fresh evaluation, and is empty after a global reset. The squads themselves are in the table below",
       cell: bankPlanCell },
+    { key: "planEta", label: "Plan ETA", tier: 3,
+      hint: "from each committed home's go plan: when the bank should break and when haulers leave home; a loot run carries only the hauler dispatch",
+      cell: bankPlanEtaCell },
     { key: "haulers", label: "Haulers", cell: b => haulerCell(b.hl),
       hint: "haulers assigned to this bank, and the power they are already carrying; “spawning” means none has left home yet" },
     { key: "age", label: "Last seen", tier: 3,
@@ -2798,6 +2963,7 @@ function renderRoomSelect() {
 // last. `history: true` keeps a section collapsed even on a wide screen.
 const SECTIONS = [
     { id: "defense",    render: () => { renderDefenseTiles(); renderDefenseTable(); } },
+    { id: "army",       render: () => { renderArmyTiles(); renderArmyTable(); } },
     { id: "power",      render: () => { renderPowerTiles(); renderPowerTable(); renderPowerFleetTable(); } },
     { id: "boosts",     render: renderBoostMatrix },
     { id: "labs",       render: renderLabsTable },

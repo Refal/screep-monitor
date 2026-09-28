@@ -71,12 +71,26 @@ Each route is `home → target` with per-squad status, member slots by status
 `[queued, spawning, alive, dead]` and alive members by location `[home, target, elsewhere]`.
 `routeSummary`/`routePhase` in `public/calc.js` collapse that to one word (forming, staging,
 in transit, deployed, wiped) and `routeStatusText` to one line, which the remote table's
-Response column, the threat board's stronghold card and the Defense table's Squads out column
+Response column, the threat board's stronghold card and the Army section's Squads column
 all share. Two rules carried through every renderer: an engaged squad never respawns, so its
 dead count is worded "lost" and never folded into a "short by N"; and like `rt` the bot omits
 `ar` when no army exists, so an absent field reads as "none" only when `hasThreatDetail`
 holds and "unknown" otherwise. The standing remote guard slot (`army_member` in `roles`) is
 unaffected and still reaches the Defenders cell via `defenderSummary`.
+
+`dv` / `sv` (defense and siege planner verdicts) replaced the bot's planner console lines.
+`dv` is one row per defended room — `covered`, `holding` or `undefendable`, the homes that
+gave up (`uh`) and a retry countdown (`in`); `sv` is one row per home→target siege route —
+the committed objective (`core`/`stronghold`/`cleanup`), `covered`, or why it holds
+(`awaiting-deploy`, `above-bar` with the core level in `d`, `boost-missing` with the compound
+in `d`). The collector persists both omit-on-empty like `ar`, but they are **not** on any
+degradation step: they are heap caches, so an absent field means "nothing to decide" or "the
+cache is refilling after a global reset", never "dropped to fit". Neither is written for
+everything that looks threatened (`dv` only covers remotes a home plans), so the dashboard
+never presents a missing verdict as one that is coming. The same bot change added the
+go plan to each power-bank `pl` row (`pr` pairs per wave, `wv` waves, `kt`/`ht` kill and
+hauler-dispatch ETAs, `b` boosted, `po` last pair recall/release), which rides inside `pb`
+with no collector change.
 
 One caveat with a shelf life: `snapshots` docs written **before** the collector started
 persisting `rt` carry `thr` but no `rt`, so `hasThreatDetail` reads them as "no remote
@@ -186,7 +200,7 @@ ever urgent is "is anything on fire?".
   first open. Below 1100px only Defense ships `open` (tiles plus a table, no charts), so a
   phone builds no charts at all until the reader opens a section, against 16 for the whole
   page. From 1100px up every section opens by default except the two activity logs
-  (`history: true` in `SECTIONS`). Order is live state first (Defense, Power, Boosts, Labs,
+  (`history: true` in `SECTIONS`). Order is live state first (Defense, Army, Power, Boosts, Labs,
   Rooms), then Empire charts and Remote threats, then the logs. On a phone the Defense table
   folds its clear rooms behind a "+ N clear rooms" toggle, so a quiet empire isn't ten
   identical cards.
@@ -196,6 +210,15 @@ ever urgent is "is anything on fire?".
   then Defense and Nuker — which own the zone, safe-mode and nuker tiles, so nothing is
   shown twice — with the economy charts last. Incoming nukes lead
   both.
+- **Army** is a latest-snapshot section answering "what is the army doing, and why":
+  a tile row (undefendable / holding rooms, squad members alive, sieges, power squads) and one
+  row per operation from `armyOperations` — every non-power `ar` route joined to its `dv`/`sv`
+  verdict, plus verdict-only rows for decisions no squad carries ("undefendable, nobody
+  sent", a siege on hold), most urgent first. Power-bank squads stay in the Power section.
+  The threat board summarises the same data in place: a threatened home's card has an
+  Operations row naming every operation it fields or gave up on — by verdict, or by the
+  squad's phase when there is none (manual squads, an empty cache) — and a stronghold card
+  gets a Siege row from `sv`.
 - **Power harvesting** is a latest-snapshot section built from `pb`/`ph`/`pba`, modelled on
   the bot's own `debugPowerBanks()` console command — gate tiles, one row per live bank with
   its committed homes, and a second table with one row per squad plus the haulers whose bank

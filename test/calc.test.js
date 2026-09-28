@@ -13,7 +13,9 @@ import {
     remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes, remoteDeployPhase,
     empireVerdict, threatItems, clearRooms, watchItems, quietRooms, isOutgunned, hasIncomingNuke, incomingNukes,
     squadSummary, routeSummary, routePhase, routeStatusText, armyRoutes, armyRouteFor, armyRoutesForHome,
-    excludeRoutedGuards, routeOrAbsence, routesOrAbsence,
+    excludeRoutedGuards, routeOrAbsence,
+    armyOperations, armySummary, verdictInfo, siegeDetailText, bankPlanDetail,
+    DEFENSE_VERDICT, siegeVerdictFor, worstTone,
     powerGateState, powerBanksOrAbsence, bankEta, bankContest, bankStale, bankPlans,
     bankSquads, powerFleetRows, haulerSummary, powerStockPoint, powerStockSeries,
     POWER_BANK_STALE_AGE_TICKS,
@@ -1607,7 +1609,7 @@ describe("armyRoutes / armyRouteFor / armyRoutesForHome", () => {
     });
 });
 
-describe("routeOrAbsence / routesOrAbsence", () => {
+describe("routeOrAbsence", () => {
     const withRoutes = { rooms: { W1N1: { thr: thr() } }, ar: [{ home: "W1N1", target: "W2N1", sq: [sq()] }] };
     const noArButThr = { rooms: { W1N1: { thr: thr() } } };
     const degraded = { rooms: { W1N1: {} } };
@@ -1618,12 +1620,105 @@ describe("routeOrAbsence / routesOrAbsence", () => {
         assert.deepEqual(routeOrAbsence(noArButThr, "W1N1", "W2N1"), { absent: "none" });
         assert.deepEqual(routeOrAbsence(degraded, "W1N1", "W2N1"), { absent: "unknown" });
     });
-    test("routesOrAbsence returns all of a home's routes when any exist", () => {
-        assert.deepEqual(routesOrAbsence(withRoutes, "W1N1").routes.map(r => r.target), ["W2N1"]);
+});
+
+describe("planner verdicts (dv / sv)", () => {
+    test("verdictInfo maps known codes and passes unknown ones through muted", () => {
+        assert.equal(verdictInfo(DEFENSE_VERDICT, "undefendable").tone, "critical");
+        const odd = verdictInfo(DEFENSE_VERDICT, "covered-elsewhere");
+        assert.equal(odd.word, "covered-elsewhere");
+        assert.equal(odd.tone, "na");
     });
-    test("routesOrAbsence reads 'none' vs 'unknown' through hasThreatDetail", () => {
-        assert.deepEqual(routesOrAbsence(noArButThr, "W1N1"), { absent: "none" });
-        assert.deepEqual(routesOrAbsence(degraded, "W1N1"), { absent: "unknown" });
+    test("siegeDetailText reads `d` per hold reason", () => {
+        assert.equal(siegeDetailText({ k: "above-bar", d: "L4" }), "core L4");
+        assert.equal(siegeDetailText({ k: "boost-missing", d: "XUH2O" }), "XUH2O");
+        assert.equal(siegeDetailText({ k: "core" }), null);
+    });
+    test("verdict lookups", () => {
+        const latest = { dv: [{ rm: "W2N1", v: "holding" }], sv: [{ h: "W1N1", rm: "W3N1", k: "core" }] };
+        assert.equal(siegeVerdictFor(latest, "W1N1", "W3N1").k, "core");
+        assert.equal(siegeVerdictFor(latest, "W2N1", "W3N1"), null);
+    });
+    test("worstTone picks the most urgent, null for none", () => {
+        assert.equal(worstTone(["good", "short", "critical", "na"]), "critical");
+        assert.equal(worstTone(["good", "na"]), "na");
+        assert.equal(worstTone([]), null);
+    });
+});
+
+describe("armyOperations", () => {
+    const latest = () => ({
+        rooms: {},
+        ar: [
+            { home: "W1N1", target: "W2N1", sq: [sq({ id: 1 })] },
+            { home: "W1N1", target: "W3N1", kind: "offense", sq: [sq({ id: 2 })] },
+            { home: "W1N1", target: "W4N1", kind: "manual", sq: [sq({ id: 3, n: [0, 0, 1, 1] })] },
+            { home: "W1N1", target: "W9N9", kind: "offense", sq: [sq({ id: 4 })] },
+        ],
+        pb: [{ rm: "W9N9", sq: [{ id: 4, home: "W1N1", w: 1 }] }],
+        dv: [{ rm: "W2N1", v: "covered" }, { rm: "W5N1", v: "undefendable", uh: ["W1N1"], in: 40 }],
+        sv: [{ h: "W1N1", rm: "W3N1", k: "core" }, { h: "W6N1", rm: "W7N1", k: "boost-missing", d: "XGHO2", in: 100 }],
+    });
+    test("joins dv to defense routes and sv to offense routes, excludes power routes", () => {
+        const ops = armyOperations(latest());
+        const by = t => ops.find(o => o.target === t);
+        assert.equal(by("W2N1").verdict.word, "covered");
+        assert.equal(by("W2N1").route.home, "W1N1");
+        assert.equal(by("W3N1").kind, "siege");
+        assert.equal(by("W3N1").route.target, "W3N1");
+        assert.equal(by("W9N9"), undefined);
+        assert.equal(ops.length, 5);
+    });
+    test("a route to a bank already killed (haulers in ph) is power, not an operation", () => {
+        const l = { rooms: {}, ar: [{ home: "W1N1", target: "W8N8", kind: "offense", sq: [sq({ id: 8 })] }], ph: [{ rm: "W8N8", hl: [1, 800, 900] }] };
+        assert.deepEqual(armyOperations(l), []);
+        assert.equal(armySummary(l).powerSquads, 1);
+    });
+    test("only offense routes count as power — defense or manual squads sent to a bank room stay", () => {
+        const l = {
+            rooms: {},
+            ar: [
+                { home: "W1N1", target: "W9N9", sq: [sq({ id: 5 })] },
+                { home: "W1N1", target: "W9N9", kind: "manual", sq: [sq({ id: 6 })] },
+                { home: "W1N1", target: "W9N9", kind: "offense", sq: [sq({ id: 7 })] },
+            ],
+            pb: [{ rm: "W9N9", sq: [{ id: 7, home: "W1N1", w: 1 }] }],
+        };
+        assert.deepEqual(armyOperations(l).map(o => o.kind).sort(), ["defense", "manual"]);
+        assert.equal(armySummary(l).powerSquads, 1);
+    });
+    test("a manual route never absorbs a siege verdict", () => {
+        const l = {
+            rooms: {},
+            ar: [{ home: "W1N1", target: "W3N1", kind: "manual", sq: [sq({ id: 9 })] }],
+            sv: [{ h: "W1N1", rm: "W3N1", k: "core" }],
+        };
+        const ops = armyOperations(l);
+        assert.equal(ops.length, 2);
+        assert.equal(ops.find(o => o.kind === "siege").route, null);
+        assert.equal(ops.find(o => o.kind === "manual").route.target, "W3N1");
+    });
+    test("verdicts with no route still get a row", () => {
+        const ops = armyOperations(latest());
+        const und = ops.find(o => o.target === "W5N1");
+        assert.equal(und.route, null);
+        assert.equal(und.home, null);
+        assert.deepEqual(und.gaveUp, ["W1N1"]);
+        assert.equal(und.retryIn, 40);
+        const boost = ops.find(o => o.target === "W7N1");
+        assert.equal(boost.detail, "XGHO2");
+    });
+    test("most urgent first: undefendable, then serious holds, then losses, then the rest", () => {
+        assert.deepEqual(armyOperations(latest()).map(o => o.target), ["W5N1", "W7N1", "W4N1", "W2N1", "W3N1"]);
+    });
+    test("armySummary counts verdicts and non-power squads", () => {
+        const s = armySummary(latest());
+        assert.deepEqual(s.undefendable, ["W5N1"]);
+        assert.equal(s.siegeCommitted, 1);
+        assert.equal(s.siegeHolding, 1);
+        assert.equal(s.powerSquads, 1);
+        assert.equal(s.lost, 1);
+        assert.equal(s.alive, 5);
     });
 });
 
@@ -1719,6 +1814,39 @@ describe("bankPlans", () => {
     });
     test("no pl at all is empty, not an error — the verdict cache is heap state", () => {
         assert.deepEqual(bankPlans(bank()), []);
+    });
+});
+
+describe("bankPlanDetail", () => {
+    test("a full go plan", () => {
+        assert.deepEqual(bankPlanDetail({ h: "W1N1", k: "committed", m: "race", pr: 2, wv: 3, kt: 900, ht: 700, b: 1 }), {
+            plan: true, adopted: false, pairs: 2, waves: 3, killTickIn: 900, haulIn: 700, planBoosted: true, posture: null,
+        });
+    });
+    test("a loot verdict carries only the hauler dispatch", () => {
+        const d = bankPlanDetail({ h: "W1N1", k: "committed", m: "loot", ht: 120 });
+        assert.equal(d.plan, true);
+        assert.equal(d.pairs, null);
+        assert.equal(d.haulIn, 120);
+    });
+    test("adopted (committed, no plan, no mode) vs a pre-plan snapshot (mode, no plan)", () => {
+        assert.equal(bankPlanDetail({ h: "W1N1", k: "committed" }).adopted, true);
+        const old = bankPlanDetail({ h: "W1N1", k: "committed", m: "fight" });
+        assert.equal(old.plan, false);
+        assert.equal(old.adopted, false);
+        assert.equal(bankPlanDetail({ h: "W1N1", k: "committed", m: "loot", ht: 5 }).adopted, false);
+    });
+    test("posture reads on any row", () => {
+        const d = bankPlanDetail({ h: "W1N1", k: "retry", in: 20, po: "r" });
+        assert.equal(d.plan, false);
+        assert.equal(d.adopted, false);
+        assert.equal(d.posture.word, "pairs recalled");
+        assert.equal(bankPlanDetail({ h: "W1N1", k: "skip", po: "x" }).posture.word, "x");
+    });
+    test("bankPlans spreads the detail into each plan", () => {
+        const [plan] = bankPlans(bank({ pl: [{ h: "W1N1", k: "committed", m: "race", pr: 2, wv: 1, kt: 50, ht: 30 }] }));
+        assert.equal(plan.pairs, 2);
+        assert.equal(plan.haulIn, 30);
     });
 });
 

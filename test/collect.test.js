@@ -250,6 +250,20 @@ describe("buildSnapshotDoc", () => {
         assert.equal(full.pba, 1);
     });
 
+    test("planner verdicts: dv/sv omit-on-empty, pass through whole", () => {
+        const bare = buildSnapshotDoc({ ...entry(100), tsMs: 0 });
+        assert.equal("dv" in bare, false);
+        assert.equal("sv" in bare, false);
+        const empty = buildSnapshotDoc({ ...entry(100), tsMs: 0, dv: [], sv: [] });
+        assert.equal("dv" in empty, false);
+        assert.equal("sv" in empty, false);
+        const dv = [{ rm: "W2N1", v: "undefendable", uh: ["W1N1"], in: 60 }];
+        const sv = [{ h: "W1N1", rm: "W3N1", k: "above-bar", d: "L4" }];
+        const full = buildSnapshotDoc({ ...entry(100), tsMs: 0, dv, sv });
+        assert.deepEqual(full.dv, dv);
+        assert.deepEqual(full.sv, sv);
+    });
+
     test("per-room pw rides through `rooms` with no collector change", () => {
         const pwRoom = { ...room, pw: [12_000, 3000, 80, 1] };
         const doc = buildSnapshotDoc({ ...entry(100), tsMs: 0, rooms: { W1N1: pwRoom } });
