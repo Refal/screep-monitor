@@ -37,6 +37,7 @@
 <link rel="modulepreload" href="sections/threat-board.js">
 <link rel="modulepreload" href="state.js">
 <link rel="modulepreload" href="ui/cells-defense.js">
+<link rel="modulepreload" href="ui/cells-economy.js">
 <link rel="modulepreload" href="ui/cells-labs.js">
 <link rel="modulepreload" href="ui/cells-nuker.js">
 <link rel="modulepreload" href="ui/format.js">
@@ -333,6 +334,22 @@
             <div class="tiles" id="nuker-tiles"></div>
             <div class="charts">
                 <div class="card"><h3>Nuker fill · % of capacity</h3><div class="plot"><canvas id="c-nuker"></canvas></div></div>
+            </div>
+        </div>
+
+        <div id="room-remote-economy" hidden>
+            <h2>Remote economy</h2>
+            <div class="table-wrap">
+                <table id="room-remote-economy-table">
+                    <thead></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="viz-legend">
+                <span>energy in vs out (latest snapshot); a route booked for less than a full window is still “measuring”: its net is not a verdict</span>
+                <span>out includes reserver, builder and defender spend on purpose — holding a harassed remote is part of its cost</span>
+                <span>boost and mineral costs are not counted</span>
+                <span>a newly colonised home shows spend before any income, because it has no haulers yet</span>
             </div>
         </div>
         </div>

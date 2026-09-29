@@ -9,6 +9,7 @@ import { lineDataset, netRateDatasets, rateDatasets, renderLine } from "../chart
 import { $, cssVar, fmtInt } from "../dom.js";
 import { charts, history, latest, route, selectedRoom } from "../state.js";
 import { DEGRADED_TITLE, pluralCount, SC_ABSENT_WHY, ZONE_ABSENT } from "../ui/cells-defense.js";
+import { renderRoomRemoteEconomy } from "../ui/cells-economy.js";
 import { labStatusWord, labTone, renderBoostGrid } from "../ui/cells-labs.js";
 import { nukeEta, nukerStatus } from "../ui/cells-nuker.js";
 import { screepsRoomLink } from "../ui/links.js";
@@ -64,8 +65,8 @@ function renderMaxedRoomTiles(room) {
 // always lead; these follow in the listed order. Incoming nukes come first
 // for both, since a scheduled hit outranks everything else about a room.
 const ROOM_BLOCK_ORDER = {
-    growing: ["nukes-section", "room-economy", "room-boosts", "defense-section", "nuker-section"],
-    maxed:   ["nukes-section", "defense-section", "nuker-section", "room-boosts", "room-economy"],
+    growing: ["nukes-section", "room-economy", "room-boosts", "defense-section", "nuker-section", "room-remote-economy"],
+    maxed:   ["nukes-section", "defense-section", "nuker-section", "room-boosts", "room-economy", "room-remote-economy"],
 };
 
 // Moves the DOM nodes rather than using CSS `order`, so tab order and
@@ -337,4 +338,5 @@ export function renderRoomCharts() {
     renderNuker(room, of);
     renderRoomDefense(room);
     renderZoneRate(room);
+    renderRoomRemoteEconomy(room);
 }

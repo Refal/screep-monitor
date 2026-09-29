@@ -1984,6 +1984,17 @@ describe("remote ledger", () => {
         assert.deepEqual(rows.map(r => r.remote), ["Bad", "Good", "Young2", "Young1"]);
     });
 
+    test("with a home, keeps only that colony's routes in the usual order", () => {
+        const latest = snap([
+            row("W2N1", "B-Good", 120000, 12000, 12000),
+            row("W1N1", "A-Young", 0, 0, 500),
+            row("W2N1", "B-Bad", 12000, 60000, 12000),
+            row("W1N1", "A-Bad", 12000, 60000, 12000),
+        ]);
+        assert.deepEqual(remoteLedgerRows(latest, "W1N1").rows.map(r => r.remote), ["A-Bad", "A-Young"]);
+        assert.deepEqual(remoteLedgerRows(latest, "W3N1").rows, []);
+    });
+
     test("absent rl reads as none when threat detail survived, unknown when degraded", () => {
         assert.equal(remoteLedgerRows({ rooms: { W1N1: { thr: { h: 0 } } } }).absent, "none");
         assert.equal(remoteLedgerRows({ rooms: { W1N1: {} } }).absent, "unknown");

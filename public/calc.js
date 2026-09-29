@@ -1141,11 +1141,14 @@ export const LEDGER_MATURE_TICKS = 10_500;
 
 // `rl` is omitted when empty and dropped by the same degradation step as
 // `rt`/`ar`, so an absent field needs hasThreatDetail to be readable.
-export function remoteLedgerRows(latest) {
+// With `home`, only that colony's routes (the room view), filtered before the
+// sort so a room render doesn't sort the whole empire's ledger.
+export function remoteLedgerRows(latest, home) {
     if (!latest?.rl) return { rows: [], absent: hasThreatDetail(latest ?? {}) ? "none" : "unknown" };
     const rows = latest.rl
         .filter(r => typeof r?.h === "string" && typeof r.rm === "string"
-            && Number.isFinite(r.in) && Number.isFinite(r.out) && Number.isFinite(r.w))
+            && Number.isFinite(r.in) && Number.isFinite(r.out) && Number.isFinite(r.w)
+            && (home === undefined || r.h === home))
         .map(r => {
             const inRate = r.w > 0 ? r.in / r.w : 0;
             const outRate = r.w > 0 ? r.out / r.w : 0;

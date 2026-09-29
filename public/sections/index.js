@@ -1,13 +1,14 @@
 // The lazily rendered overview sections registry.
 import { remoteLedgerSummary } from "../calc.js";
 import { latest } from "../state.js";
+import { renderRemoteEconomyTable } from "../ui/cells-economy.js";
 import { renderArmyTable, renderArmyTiles } from "./army.js";
 import { renderAttackLog } from "./attacks.js";
 import { renderBoostMatrix, renderLabsTable } from "./boosts.js";
 import { renderDefenseTable, renderDefenseTiles } from "./defense.js";
 import { renderEmpireCharts } from "./overview.js";
 import { renderPowerFleetTable, renderPowerTable, renderPowerTiles } from "./power.js";
-import { renderRemoteEconomyTable, renderRemoteEconomyTiles } from "./remote-economy.js";
+import { renderRemoteEconomyTiles } from "./remote-economy.js";
 import { renderRemoteLog, renderRemoteTable, renderRemoteTiles } from "./remote.js";
 import { renderRoomsTable } from "./rooms.js";
 
