@@ -1129,6 +1129,59 @@ export function armySummary(latest) {
     };
 }
 
+// Remote energy ledger (`rl`): per home→remote route, energy delivered home
+// (`in`) and creep spawn spend (`out`) over `w` ticks. `w` is per row, not
+// global: a route booked for the first time recently covers fewer ticks than
+// the ring holds, so rates must divide by the row's own `w`.
+//
+// Must match a full ring in the bot's RemoteLedgerMemoryProxy: (buckets - 1)
+// full buckets, the minimum any full ring covers. Below it a negative net is
+// still being measured, not a verdict.
+export const LEDGER_MATURE_TICKS = 10_500;
+
+// `rl` is omitted when empty and dropped by the same degradation step as
+// `rt`/`ar`, so an absent field needs hasThreatDetail to be readable.
+export function remoteLedgerRows(latest) {
+    if (!latest?.rl) return { rows: [], absent: hasThreatDetail(latest ?? {}) ? "none" : "unknown" };
+    const rows = latest.rl
+        .filter(r => typeof r?.h === "string" && typeof r.rm === "string"
+            && Number.isFinite(r.in) && Number.isFinite(r.out) && Number.isFinite(r.w))
+        .map(r => {
+            const inRate = r.w > 0 ? r.in / r.w : 0;
+            const outRate = r.w > 0 ? r.out / r.w : 0;
+            return {
+                home: r.h, remote: r.rm, in: r.in, out: r.out, w: r.w,
+                inRate, outRate, netRate: inRate - outRate,
+                mature: r.w >= LEDGER_MATURE_TICKS,
+            };
+        });
+    // Verdict-grade rows first, worst net first; young rows last, oldest first.
+    rows.sort((a, b) => b.mature - a.mature
+        || (a.mature ? a.netRate - b.netRate : b.w - a.w)
+        || a.remote.localeCompare(b.remote) || a.home.localeCompare(b.home));
+    return { rows, absent: null };
+}
+
+// Aggregates cover mature rows only: a lump spawn cost over a tiny window is
+// exactly the noise the maturity cutoff exists to keep out of a headline
+// number. Rates are summed, not raw energy, because rows cover different windows.
+export function remoteLedgerSummary(latest) {
+    const { rows, absent } = remoteLedgerRows(latest);
+    const mature = rows.filter(r => r.mature);
+    const sum = key => mature.reduce((a, r) => a + r[key], 0);
+    const inRate = sum("inRate");
+    const outRate = sum("outRate");
+    return {
+        absent,
+        rows,
+        routes: rows.length,
+        counted: mature.length,
+        measuring: rows.length - mature.length,
+        inRate, outRate, netRate: inRate - outRate,
+        losing: mature.filter(r => r.netRate < 0),
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Power harvesting (pb / ph / pba / pw) — the power-bank pipeline.
 // screeps2/src/manager/StatsManager.ts (buildPowerBanks) reads it off

@@ -264,6 +264,14 @@ describe("buildSnapshotDoc", () => {
         assert.deepEqual(full.sv, sv);
     });
 
+    test("remote ledger: rl omit-on-empty, pass through whole", () => {
+        const bare = buildSnapshotDoc({ ...entry(100), tsMs: 0 });
+        assert.equal("rl" in bare, false);
+        assert.equal("rl" in buildSnapshotDoc({ ...entry(100), tsMs: 0, rl: [] }), false);
+        const rl = [{ h: "W1N1", rm: "W2N1", in: 90000, out: 30000, w: 11200 }];
+        assert.deepEqual(buildSnapshotDoc({ ...entry(100), tsMs: 0, rl }).rl, rl);
+    });
+
     test("per-room pw rides through `rooms` with no collector change", () => {
         const pwRoom = { ...room, pw: [12_000, 3000, 80, 1] };
         const doc = buildSnapshotDoc({ ...entry(100), tsMs: 0, rooms: { W1N1: pwRoom } });

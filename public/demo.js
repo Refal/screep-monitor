@@ -453,6 +453,25 @@ function demoSv(i, n) {
     return rows;
 }
 
+// Remote energy ledger. Mature routes swing their window between 10,500 and
+// 12,000 ticks the way the bot's bucketed ring does, so the "mature" cutoff is
+// exercised; E24S48 is only booked partway through (a young row that ramps up
+// to mature), and E30S38 is a fresh colony with spend and no income yet.
+function demoRl(i, f) {
+    const swing = 12000 - (i * 97) % 1500;
+    const rows = [
+        { h: "E15S57", rm: "E16S57", in: Math.round(swing * 14.2), out: Math.round(swing * 3.1), w: swing },
+        { h: "E18S59", rm: "E19S59", in: Math.round(swing * 5.4), out: Math.round(swing * 7.9), w: swing },
+        { h: "E21S41", rm: "E22S41", in: Math.round(swing * 17.8), out: Math.round(swing * 4.6), w: swing },
+    ];
+    if (f > 0.25) {
+        const w = Math.min(12000, Math.round((f - 0.25) * 16000));
+        rows.push({ h: "E24S48", rm: "E25S48", in: Math.round(w * 6.5), out: Math.round(w * 9.0), w });
+    }
+    rows.push({ h: "E30S38", rm: "E31S38", in: 0, out: Math.round(Math.min(swing, 2400) * 5), w: Math.min(swing, 2400) });
+    return rows;
+}
+
 // Per-room power stock (pw): [storage, terminal, power spawn, processing 0|1].
 // Only the first two rooms hold power, and only from the window's midpoint —
 // a room with no power spawn and no power in store publishes no `pw` at all,
@@ -548,6 +567,7 @@ export function degradeLatest(rows) {
     }
     delete last.rt;
     delete last.ar;
+    delete last.rl;
     // pb/ph ride the same degradation step; `pba` does NOT and must survive,
     // or the section reads "gate off"/"no banks" instead of "degraded away".
     delete last.pb;
@@ -640,6 +660,7 @@ export function synthDemo(rangeHours, maxPoints) {
         const gpl = demoGpl(i, n);
         const rt = degraded ? null : demoRt(i, n, f);
         const ar = degraded ? null : demoAr(i, n, f);
+        const rl = degraded ? null : demoRl(i, f);
         // The first quarter of the window predates the power fields entirely —
         // snapshots the collector stored before it began persisting them. That
         // is the only way to see the chart's blank left edge, and the only way
@@ -663,6 +684,7 @@ export function synthDemo(rangeHours, maxPoints) {
             rooms,
             ...(rt ? { rt } : {}),
             ...(ar ? { ar } : {}),
+            ...(rl ? { rl } : {}),
             ...(pb?.length ? { pb } : {}),
             ...(ph?.length ? { ph } : {}),
             dv: demoDv(i, n),

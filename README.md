@@ -92,6 +92,17 @@ go plan to each power-bank `pl` row (`pr` pairs per wave, `wv` waves, `kt`/`ht` 
 hauler-dispatch ETAs, `b` boosted, `po` last pair recall/release), which rides inside `pb`
 with no collector change.
 
+`rl` (remote energy ledger) is one row per home→remote route: `in` is energy the route's haulers
+delivered home, `out` is what its creeps cost to spawn (reserver, builder and defender spend
+included on purpose), and `w` is the number of ticks those two sums cover. **`w` is per row**:
+a route booked for the first time recently covers less than the full ring, so every rate divides
+by the row's own `w` (`remoteLedgerRows` in `public/calc.js`), and a row under
+`LEDGER_MATURE_TICKS` (10,500, the least a full ring covers) reads "measuring" instead of being
+judged, and stays out of the headline tiles. The collector persists `rl` omit-on-empty like `rt`/`ar`, and the bot drops it in the
+same first degradation step, so an absent field is read through `hasThreatDetail`: "none booked"
+when threat detail survived, "unknown" when it did not. A snapshot from before the bot published
+`rl` also reads "none booked". Boost and mineral costs are not in the ledger.
+
 One caveat with a shelf life: `snapshots` docs written **before** the collector started
 persisting `rt` carry `thr` but no `rt`, so `hasThreatDetail` reads them as "no remote
 hostiles cached" when the truth is "never collected". Like `gpl`, `rt` can't be backfilled,

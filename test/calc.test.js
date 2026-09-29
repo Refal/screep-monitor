@@ -19,7 +19,9 @@ import {
     powerGateState, powerBanksOrAbsence, bankEta, bankContest, bankStale, bankPlans,
     bankSquads, powerFleetRows, haulerSummary, powerStockPoint, powerStockSeries,
     POWER_BANK_STALE_AGE_TICKS,
+    remoteLedgerRows, remoteLedgerSummary, LEDGER_MATURE_TICKS,
 } from "../public/calc.js";
+import { degradeLatest } from "../public/demo.js";
 
 describe("pct", () => {
     test("returns the percentage of progress toward the total", () => {
@@ -1938,5 +1940,92 @@ describe("powerStockPoint / powerStockSeries", () => {
     test("the series keeps the row beside each point so a blank left edge stays plottable", () => {
         const series = powerStockSeries([{ rooms: { W1N1: {} } }, { pba: 1, rooms: { W1N1: { pw: [5, 0, 0, 0] } } }]);
         assert.deepEqual(series.map(s => s.point?.stock ?? null), [null, 5]);
+    });
+});
+
+describe("remote ledger", () => {
+    const row = (h, rm, inn, out, w) => ({ h, rm, in: inn, out, w });
+    const snap = rl => ({ rooms: { W1N1: { thr: { h: 0 } } }, rl });
+
+    test("rates divide by each row's own window", () => {
+        const { rows } = remoteLedgerRows(snap([row("W1N1", "W2N1", 12000, 6000, 3000)]));
+        assert.equal(rows[0].inRate, 4);
+        assert.equal(rows[0].outRate, 2);
+        assert.equal(rows[0].netRate, 2);
+    });
+
+    test("a row is mature from exactly LEDGER_MATURE_TICKS", () => {
+        const { rows } = remoteLedgerRows(snap([
+            row("W1N1", "W2N1", 1, 1, LEDGER_MATURE_TICKS - 1),
+            row("W1N1", "W3N1", 1, 1, LEDGER_MATURE_TICKS),
+        ]));
+        assert.deepEqual(rows.map(r => [r.remote, r.mature]), [["W3N1", true], ["W2N1", false]]);
+    });
+
+    test("w of 0 gives zero rates instead of NaN and never counts as mature", () => {
+        const { rows } = remoteLedgerRows(snap([row("W1N1", "W2N1", 500, 100, 0)]));
+        assert.equal(rows[0].netRate, 0);
+        assert.equal(rows[0].mature, false);
+    });
+
+    test("sorts mature rows worst net first, then young rows oldest first", () => {
+        const { rows } = remoteLedgerRows(snap([
+            row("W1N1", "Young1", 0, 0, 500),
+            row("W1N1", "Good", 120000, 12000, 12000),
+            row("W1N1", "Young2", 0, 0, 4000),
+            row("W1N1", "Bad", 12000, 60000, 12000),
+        ]));
+        assert.deepEqual(rows.map(r => r.remote), ["Bad", "Good", "Young2", "Young1"]);
+    });
+
+    test("absent rl reads as none when threat detail survived, unknown when degraded", () => {
+        assert.equal(remoteLedgerRows({ rooms: { W1N1: { thr: { h: 0 } } } }).absent, "none");
+        assert.equal(remoteLedgerRows({ rooms: { W1N1: {} } }).absent, "unknown");
+        assert.equal(remoteLedgerRows(snap([row("W1N1", "W2N1", 1, 1, 12000)])).absent, null);
+    });
+
+    test("summary aggregates mature rows only; losing needs a mature negative net", () => {
+        const s = remoteLedgerSummary(snap([
+            row("W1N1", "Long", 12000, 24000, 12000),   // -1/t, mature
+            row("W1N1", "Good", 60000, 12000, 12000),    // +4/t, mature
+            row("W1N1", "Fresh", 0, 3000, 50),           // -60/t but only 50 ticks: noise
+            row("W1N1", "Short", 3000, 1000, 1000),      // young
+        ]));
+        assert.equal(s.inRate, 6);
+        assert.equal(s.outRate, 3);
+        assert.equal(s.netRate, 3);
+        assert.deepEqual(s.losing.map(r => r.remote), ["Long"]);
+        assert.equal(s.counted, 2);
+        assert.equal(s.measuring, 2);
+        assert.equal(s.routes, 4);
+        assert.equal(s.rows.length, 4);
+    });
+
+    test("summary with only young rows counts nothing and reports none losing", () => {
+        const s = remoteLedgerSummary(snap([row("W1N1", "Fresh", 0, 3000, 50)]));
+        assert.equal(s.counted, 0);
+        assert.equal(s.netRate, 0);
+        assert.equal(s.measuring, 1);
+        assert.deepEqual(s.losing, []);
+    });
+
+    test("null latest reads unknown, and an empty rl is no rows rather than absent", () => {
+        assert.equal(remoteLedgerRows(null).absent, "unknown");
+        assert.deepEqual(remoteLedgerRows({ ...snap([]) }), { rows: [], absent: null });
+    });
+
+    test("malformed rows are dropped instead of throwing", () => {
+        const { rows } = remoteLedgerRows(snap([
+            { h: "W1N1", in: 1, out: 1, w: 12000 },
+            row("W1N1", "Ok", 1, 1, 12000),
+            { h: "W1N1", rm: "Bad", in: "x", out: 1, w: 12000 },
+        ]));
+        assert.deepEqual(rows.map(r => r.remote), ["Ok"]);
+    });
+
+    test("the demo's degraded row drops rl, so it reads unknown", () => {
+        const rows = [{ rooms: { W1N1: { thr: { h: 0 }, roles: {} } }, rl: [row("W1N1", "W2N1", 1, 1, 12000)] }];
+        assert.equal(remoteLedgerRows(rows[0]).absent, null);
+        assert.equal(remoteLedgerRows(degradeLatest(rows).at(-1)).absent, "unknown");
     });
 });
