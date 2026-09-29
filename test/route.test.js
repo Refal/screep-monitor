@@ -59,8 +59,8 @@ describe("parseHash", () => {
 
     test("a malformed percent escape is refused, not thrown", () => {
         // decodeURIComponent throws a URIError on these. parseHash has to stay
-        // total: app.js calls readHash() at module top level, so a throw there
-        // aborts the module and the page never finishes booting.
+        // total: boot() calls readHash() before the first render, so a throw there
+        // aborts the boot and the page never finishes booting.
         for (const bad of ["%", "%E0%A4", "E23S45%", "%zz"]) {
             assert.deepEqual(
                 parseHash(`#/room/${bad}`, OPTS),

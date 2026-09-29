@@ -1,6 +1,6 @@
 // Synthetic data generator for ?demo=1 — renders a full dashboard with no
 // Firestore, for local layout checks (see README). Excluded from deploy via
-// firebase.json's hosting.ignore, so app.js only ever reaches this file
+// firebase.json's hosting.ignore, so data.js only ever reaches this file
 // through a dynamic import gated on the DEMO flag — a static import here
 // would 404 in production.
 import {

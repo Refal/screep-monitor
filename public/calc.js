@@ -1,4 +1,4 @@
-// Pure calculation/formatting helpers shared by the dashboard (app.js) and
+// Pure calculation/formatting helpers shared by the dashboard (the modules under public/) and
 // the collector (../scripts/collect.mjs), covered directly by unit tests
 // (../test/calc.test.js). Nothing in here touches the DOM, Chart.js, or
 // Firebase, and nothing holds mutable module state — every input the
@@ -219,7 +219,7 @@ function etaFromRate(wr, etaTicks) {
 // externally (zoneTarget(rcl)) rather than embedded as {pt}. Takes
 // an already-computed netWindowRate result rather than sel/history, since
 // every caller already has (or needs) `wr` itself — see zoneGrowthTile in
-// app.js. Null when there's nothing to reach (cur/target absent, or cur
+// ui/tiles.js. Null when there's nothing to reach (cur/target absent, or cur
 // already at/above target — a maxed-out ETA of 0 would be as misleading as
 // levelEta's !cur.pt case) or when the rate isn't positive (flat or
 // shrinking is a real possibility here, unlike levelEta's monotonic
@@ -442,7 +442,7 @@ const POSTURE_RANK = { exposed: 0, engaged: 1, unknown: 2, clear: 3 };
 // ---------- the empire verdict ----------
 // One answer to "is anything on fire?", for the board that sits above
 // everything else on the page. Pure so it can be tested; all the wording,
-// colour and DOM stays in app.js, the same split remoteThreatClass already
+// colour and DOM stays in sections/threat-board.js, the same split remoteThreatClass already
 // has with REMOTE_CLASS_COLOR.
 //
 // The load-bearing rule: a payload that dropped its threat detail must NEVER
@@ -981,7 +981,7 @@ export function armyRoutesForHome(latest, home) {
 // What a route-status cell should show for one (home,target) pair: an actual
 // route, or which of the two absence states the caller must otherwise derive
 // itself via hasThreatDetail — "none planned" vs. "detail dropped this
-// snapshot". Centralizes the branch every route cell in app.js needs.
+// snapshot". Centralizes the branch every route cell in the dashboard needs.
 export function routeOrAbsence(latest, home, target) {
     const route = armyRouteFor(latest, home, target);
     return route ? { route } : { absent: hasThreatDetail(latest) ? "none" : "unknown" };

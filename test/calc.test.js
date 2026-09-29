@@ -1,6 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { dashboardFiles, readDashboardFile } from "./dashboard-files.js";
 import {
     compact, pct, progressDelta, rateSeries, observedMsPerTick, windowRate, stockRate,
     netRateSeries, netWindowRate, netEta, average,
@@ -1418,7 +1419,11 @@ describe("header shard label vs SHARD", () => {
     });
 });
 
-const appJs = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
+// The dashboard is split across public/**/*.js (app.js is only the entry point),
+// so greps over "the page's source" have to cover every module — vendor/ is
+// third-party. Asserting more than one file keeps a grep from going vacuous if
+// the module tree is ever flattened or moved.
+const dashboardSource = dashboardFiles.map(readDashboardFile).join("\n");
 
 describe("no information is hover-only", () => {
     // A tooltip is fine as a second channel and useless as the only one: touch
@@ -1432,8 +1437,9 @@ describe("no information is hover-only", () => {
     });
 
     test("no cell renders a bare em dash as its whole content", () => {
-        // naCell(word, why) exists for this; see its comment in app.js.
-        const offenders = [...appJs.matchAll(/textContent = "\u2014"/g)].map(m => m[0]);
+        // naCell(word, why) exists for this; see its comment in ui/table.js.
+        assert.ok(dashboardFiles.length > 10, "expected the split dashboard modules under public/");
+        const offenders = [...dashboardSource.matchAll(/textContent = "\u2014"/g)].map(m => m[0]);
         assert.deepEqual(offenders, [], "use naCell(word, why) instead of a bare em dash");
     });
 });
@@ -1444,7 +1450,7 @@ describe("time-range buttons vs retention", () => {
     // (the query just returns the shorter window under the longer label). Keep
     // them mechanically in sync, like the composite-index check in
     // collect.test.js. RANGES is the single source the buttons are built from
-    // (app.js renderRangeButtons), so this checks the constant rather than the
+    // (controller.js renderRangeButtons), so this checks the constant rather than the
     // markup it produces.
     const ranges = RANGES;
 

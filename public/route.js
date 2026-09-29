@@ -7,7 +7,7 @@
 // for one web page has no business there. This file is pure and testable the
 // same way.
 //
-// ?demo=1 and ?theme= stay in the real query string, not the hash — app.js
+// ?demo=1 and ?theme= stay in the real query string, not the hash — config.js
 // reads them once at load, so they are load-time flags rather than view state.
 
 export const OVERVIEW = "overview";
@@ -27,8 +27,8 @@ function splitHash(hash) {
 
 // decodeURIComponent throws a URIError on a malformed percent escape, and a
 // hand-edited hash can easily carry one ("#/room/%"). parseHash has to stay
-// total: app.js calls readHash() at module top level, so a throw there aborts
-// the whole module and leaves a dead page. null falls through to the same
+// total: boot() calls readHash() before the first render, so a throw there
+// aborts the boot and leaves a dead page. null falls through to the same
 // overview fallback a bad room name gets.
 function decodeSegment(raw) {
     try { return decodeURIComponent(raw); } catch { return null; }

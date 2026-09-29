@@ -54,7 +54,7 @@ off the snapshot instead would drag every episode through the cache's ~300-tick 
 the room went dark: a finished raid would read as current, and a genuine re-sighting could
 open a second episode starting before the first one's reported end. The episode also carries
 `staleTicks` (how far behind the last observing snapshot that final sighting was), because
-converting it to wall clock needs the ms-per-tick ratio, which only exists in `public/app.js`
+converting it to wall clock needs the ms-per-tick ratio, which only exists in the dashboard (`observedMsPerTick(history)`)
 — so `fromMs`/`toMs` stay the observing rows' own clocks and `remoteWhenCell` applies the
 lag. Third, `remoteEpisodes` and the `remote-tiles` headline counts both exclude
 Source-Keeper-only entries, since an SK remote permanently caches its standing guards: in the
@@ -179,7 +179,7 @@ cadence, and the full SDK's WebChannel `Listen` stream — used internally even 
 `getDoc`/`getDocs` — proved flaky on some networks (backchannel GETs 404ing, retried with
 backoff, data appearing only after a few reloads). Lite talks plain REST and avoids that
 stream. Each poll after the first fetches only snapshots newer than what it already has
-(`loadHistoryIncremental` in `public/app.js`), so the 5-minute cadence stays cheaper in reads
+(`loadHistoryIncremental` in `public/data.js`), so the 5-minute cadence stays cheaper in reads
 than the old 10-minute full-refetch poll. The page also refreshes immediately on regaining
 focus/visibility (background tabs get their timers throttled) and skips re-rendering charts
 when a poll finds no new tick. If a truly push-based dashboard is ever wanted, that's a
@@ -206,7 +206,7 @@ ever urgent is "is anything on fire?".
   max-level rooms get zone / nuker / labs / storage / spawn, anything coloured first.
 - **Sections** are native `<details data-section="…">` accordions. A collapsed one is
   `display: none`, and a Chart.js chart built inside a zero-sized container bakes a wrong
-  `devicePixelRatio` it does not recover from, so `SECTIONS` in `public/app.js` renders
+  `devicePixelRatio` it does not recover from, so `SECTIONS` in `public/sections/index.js` renders
   lazily: new data marks every section dirty, only the open ones render, the rest render on
   first open. Below 1100px only Defense ships `open` (tiles plus a table, no charts), so a
   phone builds no charts at all until the reader opens a section, against 16 for the whole
@@ -215,7 +215,7 @@ ever urgent is "is anything on fire?".
   Rooms), then Empire charts and Remote threats, then the logs. On a phone the Defense table
   folds its clear rooms behind a "+ N clear rooms" toggle, so a quiet empire isn't ten
   identical cards.
-- **The room view reorders by room class** (`orderRoomView` in `public/app.js`, which moves
+- **The room view reorders by room class** (`orderRoomView` in `public/sections/room-view.js`, which moves
   the DOM nodes so tab order matches). A levelling room leads with RCL progress tiles and
   the economy charts; a max-level room leads with a short strip (RCL/UPW, labs, storage),
   then Defense and Nuker — which own the zone, safe-mode and nuker tiles, so nothing is
@@ -243,8 +243,8 @@ ever urgent is "is anything on fire?".
   the Back button and a click all take one path. Only *owned* rooms have such a view: `rt` names
   the remote next door (an entry's `home` is the colony), and those rooms carry no per-room stats
   at all, so their names link out to screeps.com rather than to a route that resolves to nothing
-  — see `roomNameLink`/`isOwnedRoom` in `public/app.js`.
-- **Tables have two modes**, from one `renderTable` + column spec per table (`public/app.js`).
+  — see `roomNameLink`/`isOwnedRoom` in `public/ui/links.js`.
+- **Tables have two modes**, from one `renderTable` + column spec per table (`public/ui/table.js`).
   Below 700px each row is a card with its own labels — nothing important can be scrolled out
   of view. Above it they are real tables with the room column `position: sticky`. The old
   layout let the room name scroll away on a phone, which left the numbers anonymous.
@@ -254,6 +254,35 @@ ever urgent is "is anything on fire?".
   dash (`naCell`, and `remoteHomeCell`'s "corridor" is the original of the pattern). Two
   source-text tests in `test/calc.test.js` stop this drifting back.
 
+### Code layout (`public/`)
+
+There is no build step and no bundler: `public/` is deployed as-is and the browser loads the
+ES modules directly (`<script type="module" src="app.js">`). Every relative import therefore
+needs its `.js` extension, and the module graph must stay acyclic — `test/modules.test.js`
+checks both, and links every module under Node so a wrong export name fails in CI rather than
+as a blank page. `index.html` lists every module as `<link rel="modulepreload">` (the import
+chain is ~10 levels deep and the JS is served `no-cache`, so without it a cold load is ~10 serial
+round trips); the same test fails if a module is added without a matching preload line.
+
+```
+app.js            entry only: theme override, shard label, then boot()
+controller.js     refresh/poll loop, hashchange handling, control wiring, boot()
+data.js           Firestore (or ?demo) loaders — the only module that talks to Firebase
+state.js          shared state as live-binding exports; change it through the setters
+nav.js           hash routing; imports no rendering, so any module can use it without a cycle
+render.js         renderAll + the header status line
+constants.js dom.js config.js
+charts/           Chart.js dataset + option builders, bar charts
+ui/               renderTable, tiles, links/badges, shared cell builders and formatters
+sections/         one module per overview section, the threat board, and the room view;
+                  sections/index.js holds the lazily rendered SECTIONS registry
+calc.js route.js  pure logic (shared with the collector / unit-tested), stay at the root
+demo.js           ?demo=1 generator — must stay at the root (firebase.json ignores it there)
+```
+
+Sections import from `ui/` and `charts/`, never from each other; a helper needed by two
+sections belongs in `ui/`. Nothing but `app.js` may do work at import time.
+
 ## Local preview (no setup needed)
 
 ```sh
@@ -262,7 +291,7 @@ cd public && python3 -m http.server 8787
 ```
 
 `?demo=1` works only against this local server: the generator lives in `public/demo.js`,
-which `firebase.json`'s hosting `ignore` excludes from every deploy, and `app.js` reaches
+which `firebase.json`'s hosting `ignore` excludes from every deploy, and `data.js` reaches
 it with a dynamic `import()` gated on `?demo=1` so production never requests it.
 
 `?demo=degraded` additionally strips the newest row's `thr`/`roles`/`rt` (`degradeLatest` in
@@ -271,7 +300,8 @@ branches that need `latest` itself to be degraded — the remote table's two emp
 the threat board's "no threat data" verdict.
 
 Note that `python3 -m http.server` sends no cache headers, so a browser will happily serve a
-stale `app.js` or `styles.css` while you edit. Production sets `no-cache` on html/js/css (see
+stale module or `styles.css` while you edit (the dashboard is ~30 small files now, so a
+single changed module is easy to miss). Production sets `no-cache` on html/js/css (see
 `firebase.json`); locally, hard-reload or serve from a fresh port.
 
 ## Tests
@@ -283,6 +313,8 @@ Firebase dependency, so they're covered by plain `node:test` unit tests in `test
 ```sh
 npm test
 ```
+
+`test/modules.test.js` guards the dashboard's module tree (see *Code layout*).
 
 Runs in CI as the `test` job in `.github/workflows/deploy.yml` on every push/PR touching
 `public/`, `scripts/`, `test/`, or `package.json`; the `deploy` job only runs after it passes.

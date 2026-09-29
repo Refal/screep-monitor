@@ -6,6 +6,43 @@
 <title>Screeps Monitor</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🛰️</text></svg>">
 <link rel="stylesheet" href="styles.css">
+<!-- Preload every module up front. Without this the browser discovers the import
+     graph one level at a time — about ten dependent round trips, each a
+     conditional GET because the JS is served no-cache — before boot can start.
+     test/modules.test.js keeps this list equal to the modules under public/
+     (app.js is the <script> below; demo.js is excluded from deploys). -->
+<link rel="modulepreload" href="calc.js">
+<link rel="modulepreload" href="charts/bars.js">
+<link rel="modulepreload" href="charts/core.js">
+<link rel="modulepreload" href="config.js">
+<link rel="modulepreload" href="constants.js">
+<link rel="modulepreload" href="controller.js">
+<link rel="modulepreload" href="data.js">
+<link rel="modulepreload" href="dom.js">
+<link rel="modulepreload" href="firebase-config.js">
+<link rel="modulepreload" href="nav.js">
+<link rel="modulepreload" href="render.js">
+<link rel="modulepreload" href="route.js">
+<link rel="modulepreload" href="sections/army.js">
+<link rel="modulepreload" href="sections/attacks.js">
+<link rel="modulepreload" href="sections/boosts.js">
+<link rel="modulepreload" href="sections/defense.js">
+<link rel="modulepreload" href="sections/index.js">
+<link rel="modulepreload" href="sections/overview.js">
+<link rel="modulepreload" href="sections/power.js">
+<link rel="modulepreload" href="sections/remote-economy.js">
+<link rel="modulepreload" href="sections/remote.js">
+<link rel="modulepreload" href="sections/room-view.js">
+<link rel="modulepreload" href="sections/rooms.js">
+<link rel="modulepreload" href="sections/threat-board.js">
+<link rel="modulepreload" href="state.js">
+<link rel="modulepreload" href="ui/cells-defense.js">
+<link rel="modulepreload" href="ui/cells-labs.js">
+<link rel="modulepreload" href="ui/cells-nuker.js">
+<link rel="modulepreload" href="ui/format.js">
+<link rel="modulepreload" href="ui/links.js">
+<link rel="modulepreload" href="ui/table.js">
+<link rel="modulepreload" href="ui/tiles.js">
 </head>
 <body>
 <div class="wrap">
@@ -238,7 +275,7 @@
         </div>
         <div class="tiles" id="room-tiles"></div>
         <p id="room-data-gap-note" class="viz-legend"></p>
-        <!-- The blocks below are reordered by orderRoomView() in app.js: a room
+        <!-- The blocks below are reordered by orderRoomView() in sections/room-view.js: a room
              still levelling leads with its controller/economy charts, a
              max-level room with defense and nuker. Source order here is the
              levelling one, which is also the no-JS order. -->

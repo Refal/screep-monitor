@@ -6,7 +6,7 @@ service cloud.firestore {
     match /snapshots/{id} {
       // No client reads a single snapshot by id — only ranged/listed queries
       // from the dashboard, which always carry an explicit limit() (see
-      // public/app.js MAX_HISTORY_DOCS). Capping list size here bounds the
+      // public/constants.js MAX_HISTORY_DOCS). Capping list size here bounds the
       // cost of an anonymous full-collection scan; it does not require
       // authentication, since none of this project's data is confidential
       // (see README "On the web apiKey").

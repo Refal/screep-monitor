@@ -180,7 +180,7 @@ h2 { font-size: 15px; margin: 24px 0 10px; color: var(--text-secondary); font-we
 /* ---------- accordion sections ----------
    Native <details> so `open` is the state: no ARIA to keep in sync, keyboard
    and screen-reader behaviour come free, and find-in-page opens a closed
-   section. app.js renders a section's contents lazily on first open. */
+   section. sections/index.js renders a section's contents lazily on first open. */
 .section { margin: 18px 0; }
 .section > summary {
     display: flex; align-items: center; gap: 9px; min-height: 44px;
@@ -213,7 +213,7 @@ h2 { font-size: 15px; margin: 24px 0 10px; color: var(--text-secondary); font-we
    can be scrolled out of view. The widest table was 2.2x a 375px viewport with
    the room column scrolling away, which made the numbers anonymous.
    From 700px up the same DOM goes back to being a real table.
-   The data-* attributes come from renderTable() in app.js. */
+   The data-* attributes come from renderTable() in ui/table.js. */
 .table-wrap { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th { color: var(--text-muted); font-weight: 500; }
