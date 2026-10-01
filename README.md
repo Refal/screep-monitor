@@ -87,10 +87,7 @@ in `d`). The collector persists both omit-on-empty like `ar`, but they are **not
 degradation step: they are heap caches, so an absent field means "nothing to decide" or "the
 cache is refilling after a global reset", never "dropped to fit". Neither is written for
 everything that looks threatened (`dv` only covers remotes a home plans), so the dashboard
-never presents a missing verdict as one that is coming. The same bot change added the
-go plan to each power-bank `pl` row (`pr` pairs per wave, `wv` waves, `kt`/`ht` kill and
-hauler-dispatch ETAs, `b` boosted, `po` last pair recall/release), which rides inside `pb`
-with no collector change.
+never presents a missing verdict as one that is coming.
 
 `rl` (remote energy ledger) is one row per home→remote route: `in` is energy the route's haulers
 delivered home, `out` is what its creeps cost to spawn (reserver, builder and defender spend
@@ -109,44 +106,40 @@ hostiles cached" when the truth is "never collected". Like `gpl`, `rt` can't be 
 so the remote activity log under-reports incursions in any range still reaching back past
 that deploy, and ages out of the problem on its own after `RETENTION_DAYS`.
 
-`pb` / `ph` / `pba` / `pw` (power harvesting) are the fourth family on that degradation step,
-and the answer to "are we taking power banks, and how is it going?". `pb` lists every live
-bank in the bot's highway intel with its power, hits, ticks to decay, free adjacent tiles,
-contestant totals, the summed dps of our attackers standing in the bank room, the planner's
-decision per home (`pl`), the harvest waves and fight squads on it (`sq`) and its haulers
-(`hl`). Five traps, all of them load-bearing:
+`ph` / `pba` / `pw` / `pwl` and the power-tagged squads in `ar` (power harvesting) are the
+fourth family on that degradation step, and the answer to "are we taking power banks, and is
+it paying?". The bot no longer publishes live-bank planner state (the old `pb`: hits, decay,
+contest, cached verdicts) — its `debugPowerBanks()` console command shows that live — and the
+dashboard does not read `pb` from older snapshots either. Four traps, all of them load-bearing:
 
 - **`pba` is a scalar, not a list, and never degrades.** It is the bot's `autoHarvest` gate,
   and it is the only thing separating "harvesting is switched off" from "the gate is on and
-  no bank is live" from "the detail was degraded away". `buildSnapshotDoc` therefore persists
-  it with an `!== undefined` guard rather than the `?.length` test `rt`/`ar`/`pb`/`ph` use —
-  a truthiness test would drop exactly the `0` that means "off". `powerGateState` and
-  `powerBanksOrAbsence` in `public/calc.js` own the four-way reading, and the Power tiles
-  show "unknown", never a calm zero, on a degraded snapshot.
-- **`pl` is the planner's cached verdict, not a fresh evaluation.** The cache is heap state,
-  so the first publish after a global reset legitimately carries no `pl` at all — the table
-  says "undecided" there, which is a different thing from "no home in range". The bank
-  table's **Committed** column shows one chip per committed home and folds every skip/retry
-  verdict into a single muted chip, so a bank several homes can reach stays one column wide.
-  A `contested` verdict may carry `ab` (why the planner abandoned: `dark` / `undefendable` /
-  `holding` / `late` / `unreachable`) and `abt` (`[fleet ETA, rival kill]` in ticks, either side
-  `null`); `planText` spells both out, and a lone folded verdict puts the reason on the chip.
-- **`age` is intel staleness, not the snapshot's.** `StatsManager` never reads the bank room,
-  so hits and power only refresh while something of ours has vision there; past
-  `POWER_BANK_STALE_AGE_TICKS` the row is a memory of a room gone dark, and can outlive the
-  real structure until `dec` runs out. Same de-emphasis as a stale `rt` row.
+  nothing is out" from "the detail was degraded away". `buildSnapshotDoc` therefore persists
+  it with an `!== undefined` guard rather than the `?.length` test `rt`/`ar`/`ph` use —
+  a truthiness test would drop exactly the `0` that means "off". `powerGateState` in
+  `public/calc.js` owns the reading, and the Power tiles show "unknown", never a calm zero,
+  on a degraded snapshot.
+- **Power squads are `ar` squads with a tag.** A harvest army is `kind: 'offense'` aimed at
+  the bank room, and each squad carries `pw` (its harvest wave) or `pf: 1` (the fight squad);
+  `squadSummary` exposes them as `wave` / `fight`. Those routes belong to the Power section,
+  not the Army table (`isPowerRoute`). Rows are per *squad*, not per route — one harvest
+  route carries both the wave and its fight squad.
+- **`ph` is every power hauler, grouped by bank room, and `lv: 1` marks a live bank.** Our
+  own kill deletes the bank's intel record exactly while the haulers are loading, so a row
+  without `lv` is the loot leg home and renders "gone". Snapshots from before `lv` existed
+  listed only that case, so reading a missing `lv` as gone is right for them too. A squad row
+  reads "gone" only when `ph` says so for its room; with no `ph` row at all the haulers have
+  simply not been dispatched.
 - **`hl`'s min ttl is `0` while every hauler is still spawning.** Rendered as the word
   "spawning": printing "0t" would say the opposite of what it means.
-- **`sq` carries only the wave number and the fight flag.** Status and member counts come
-  from joining back to `ar` on home + bank room + squad id (harvest armies are
-  `kind: 'offense'`), and the join is made per *squad*, not per route — one harvest route
-  carries both the wave and its fight squad. A miss reads "no army record", never a phase.
 
-`ph` exists because our own kill deletes the bank's intel record exactly while the haulers
-are loading, so the loot leg home would otherwise vanish from the payload mid-trip. Its rows
-share the table under the banks with the squads (`powerFleetRows`): one row per squad, plus
-one "gone" hauler row per `ph` entry, so four squads on one bank are four short rows rather
-than one cell that widens the bank table past the viewport.
+`pwl` (power ledger) is one row per home: `p` is power its haulers handed over at home, `e`
+the energy power ops cost it (spawn bodies of power-bank squads and haulers, plus lab boost
+energy), `c` the boost compound units consumed, and `w` the ticks covered. It is the same
+bucket ring as `rl`, so `w` is per row and `LEDGER_MATURE_TICKS` applies: a young home reads
+"measuring" rather than a ratio — spend is booked at spawn and at the lab, power only on
+delivery, so an op in progress always shows its cost first. `powerLedgerRows` reads it, with
+the same "none" vs "unknown" absence branch as `remoteLedgerRows`.
 
 `sc` / `scm` are per-room too and likewise need no collector change: `sc` is the room's
 resolved storage class (`vault` holds the war chest, `outpost` keeps only what its own
@@ -230,12 +223,12 @@ ever urgent is "is anything on fire?".
   Operations row naming every operation it fields or gave up on — by verdict, or by the
   squad's phase when there is none (manual squads, an empty cache) — and a stronghold card
   gets a Siege row from `sv`.
-- **Power harvesting** is a latest-snapshot section built from `pb`/`ph`/`pba`, modelled on
-  the bot's own `debugPowerBanks()` console command — gate tiles, one row per live bank with
-  its committed homes, and a second table with one row per squad plus the haulers whose bank
-  is already gone. The empire-wide power *stock* over time is a chart in the Empire section instead,
-  since `pw` (unlike everything else here) has complete history. Bank rooms are highway
-  rooms, so their names link out to screeps.com rather than to a per-room view.
+- **Power harvesting** is a latest-snapshot section built from `ar`/`ph`/`pba`/`pwl` — gate
+  and stock tiles, one row per power squad and per bank's haulers (`powerFleetRows`), and the
+  per-home ledger of power in against energy and boosts out. The empire-wide power *stock*
+  over time is a chart in the Empire section instead, since `pw` (unlike everything else
+  here) has complete history. Bank rooms are highway rooms, so their names link out to
+  screeps.com rather than to a per-room view.
 - **The per-room view is a hash route**, not a tail on the same page — `#/room/E23S45`, with
   the time range as `?range=`. `public/route.js` owns the grammar (and rejects a range with
   no `LOD_BY_RANGE` flag behind it, which would otherwise run an unflagged full-resolution

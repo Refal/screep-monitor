@@ -15,12 +15,10 @@ import {
     empireVerdict, threatItems, clearRooms, watchItems, quietRooms, isOutgunned, hasIncomingNuke, incomingNukes,
     squadSummary, routeSummary, routePhase, routeStatusText, armyRoutes, armyRouteFor, armyRoutesForHome,
     excludeRoutedGuards, routeOrAbsence,
-    armyOperations, armySummary, verdictInfo, siegeDetailText, bankPlanDetail,
+    armyOperations, armySummary, verdictInfo, siegeDetailText,
     DEFENSE_VERDICT, siegeVerdictFor, worstTone,
-    powerGateState, powerBanksOrAbsence, bankEta, bankContest, bankStale, bankPlans,
-    bankSquads, powerFleetRows, haulerSummary, powerStockPoint, powerStockSeries,
-    POWER_BANK_STALE_AGE_TICKS,
-    remoteLedgerRows, remoteLedgerSummary, LEDGER_MATURE_TICKS,
+    powerGateState, powerFleetRows, haulerSummary, powerStockPoint, powerStockSeries,
+    remoteLedgerRows, remoteLedgerSummary, LEDGER_MATURE_TICKS, powerLedgerRows,
 } from "../public/calc.js";
 import { degradeLatest } from "../public/demo.js";
 
@@ -1490,7 +1488,12 @@ describe("squadSummary", () => {
             queued: 1, spawning: 1, alive: 2, dead: 3, total: 7,
             atHome: 1, atTarget: 1, inTransit: 0,
             boosted: true, held: true,
+            wave: null, fight: false,
         });
+    });
+    test("power-bank tags: `pw` is the harvest wave, `pf: 1` the fight squad", () => {
+        assert.deepEqual([squadSummary(sq({ pw: 2 })), squadSummary(sq({ pf: 1 }))].map(s => [s.wave, s.fight]),
+            [[2, false], [null, true]]);
     });
     test("boosted/held default to false when the flags are absent", () => {
         const s = squadSummary(sq());
@@ -1661,9 +1664,8 @@ describe("armyOperations", () => {
             { home: "W1N1", target: "W2N1", sq: [sq({ id: 1 })] },
             { home: "W1N1", target: "W3N1", kind: "offense", sq: [sq({ id: 2 })] },
             { home: "W1N1", target: "W4N1", kind: "manual", sq: [sq({ id: 3, n: [0, 0, 1, 1] })] },
-            { home: "W1N1", target: "W9N9", kind: "offense", sq: [sq({ id: 4 })] },
+            { home: "W1N1", target: "W9N9", kind: "offense", sq: [sq({ id: 4, pw: 1 })] },
         ],
-        pb: [{ rm: "W9N9", sq: [{ id: 4, home: "W1N1", w: 1 }] }],
         dv: [{ rm: "W2N1", v: "covered" }, { rm: "W5N1", v: "undefendable", uh: ["W1N1"], in: 40 }],
         sv: [{ h: "W1N1", rm: "W3N1", k: "core" }, { h: "W6N1", rm: "W7N1", k: "boost-missing", d: "XGHO2", in: 100 }],
     });
@@ -1677,10 +1679,15 @@ describe("armyOperations", () => {
         assert.equal(by("W9N9"), undefined);
         assert.equal(ops.length, 5);
     });
-    test("a route to a bank already killed (haulers in ph) is power, not an operation", () => {
+    test("an offense route without power tags or haulers stays an operation", () => {
+        const l = { rooms: {}, ar: [{ home: "W1N1", target: "W8N8", kind: "offense", sq: [sq({ id: 8 })] }] };
+        assert.equal(armyOperations(l).length, 1);
+        assert.equal(armySummary(l).powerSquads, 0);
+    });
+    test("an untagged route stays an operation even with haulers in ph — no active army is hidden", () => {
         const l = { rooms: {}, ar: [{ home: "W1N1", target: "W8N8", kind: "offense", sq: [sq({ id: 8 })] }], ph: [{ rm: "W8N8", hl: [1, 800, 900] }] };
-        assert.deepEqual(armyOperations(l), []);
-        assert.equal(armySummary(l).powerSquads, 1);
+        assert.equal(armyOperations(l).length, 1);
+        assert.equal(armySummary(l).powerSquads, 0);
     });
     test("only offense routes count as power — defense or manual squads sent to a bank room stay", () => {
         const l = {
@@ -1688,9 +1695,8 @@ describe("armyOperations", () => {
             ar: [
                 { home: "W1N1", target: "W9N9", sq: [sq({ id: 5 })] },
                 { home: "W1N1", target: "W9N9", kind: "manual", sq: [sq({ id: 6 })] },
-                { home: "W1N1", target: "W9N9", kind: "offense", sq: [sq({ id: 7 })] },
+                { home: "W1N1", target: "W9N9", kind: "offense", sq: [sq({ id: 7, pf: 1 })] },
             ],
-            pb: [{ rm: "W9N9", sq: [{ id: 7, home: "W1N1", w: 1 }] }],
         };
         assert.deepEqual(armyOperations(l).map(o => o.kind).sort(), ["defense", "manual"]);
         assert.equal(armySummary(l).powerSquads, 1);
@@ -1730,9 +1736,7 @@ describe("armyOperations", () => {
     });
 });
 
-// --- Power harvesting (pb / ph / pba / pw) --------------------------------
-
-const bank = (over = {}) => ({ rm: "W5N5", p: 4200, hits: 1_800_000, dec: 3000, age: 10, ft: 3, dps: 0, ...over });
+// --- Power harvesting (ar power squads / ph / pba / pw / pwl) -------------
 
 describe("powerGateState", () => {
     test("separates gate-off from a snapshot that never carried the field", () => {
@@ -1743,178 +1747,58 @@ describe("powerGateState", () => {
     });
 });
 
-describe("powerBanksOrAbsence", () => {
-    test("returns the banks when any are live", () => {
-        const latest = { pba: 1, pb: [bank()], rooms: { W1N1: { thr: thr() } } };
-        assert.deepEqual(powerBanksOrAbsence(latest).banks.map(b => b.rm), ["W5N5"]);
-        assert.equal(powerBanksOrAbsence(latest).gate, "on");
-    });
-    test("gate off outranks the empty-list branch — harvesting is simply switched off", () => {
-        assert.deepEqual(powerBanksOrAbsence({ pba: 0, rooms: { W1N1: { thr: thr() } } }),
-            { absent: "off", gate: "off" });
-    });
-    test("with the gate on, reads 'none' vs 'unknown' through hasThreatDetail", () => {
-        assert.deepEqual(powerBanksOrAbsence({ pba: 1, rooms: { W1N1: { thr: thr() } } }),
-            { absent: "none", gate: "on" });
-        assert.deepEqual(powerBanksOrAbsence({ pba: 1, rooms: { W1N1: {} } }),
-            { absent: "unknown", gate: "on" });
-    });
-    test("a pre-deploy snapshot is 'uncollected', never 'off'", () => {
-        assert.deepEqual(powerBanksOrAbsence({ rooms: { W1N1: { thr: thr() } } }),
-            { absent: "uncollected", gate: "uncollected" });
-    });
-});
-
-describe("bankEta", () => {
-    test("no dps of ours means no kill — the normal state for an uncommitted bank", () => {
-        assert.deepEqual(bankEta(bank()), { killIn: null, decaysFirst: true, decayIn: 3000 });
-    });
-    test("kill eta rounds up and is compared against decay", () => {
-        assert.deepEqual(bankEta(bank({ hits: 1000, dps: 300 })), { killIn: 4, decaysFirst: false, decayIn: 3000 });
-        assert.equal(bankEta(bank({ hits: 1_800_000, dps: 300, dec: 500 })).decaysFirst, true);
-    });
-});
-
-describe("bankContest / bankStale", () => {
-    test("contest is null when the bot published no contestants", () => {
-        assert.equal(bankContest(bank()), null);
-        assert.deepEqual(bankContest(bank({ con: [2, 300, 120] })), { count: 2, dps: 300, heal: 120 });
-    });
-    test("staleness is intel age, not the snapshot's own age", () => {
-        assert.equal(bankStale(bank({ age: POWER_BANK_STALE_AGE_TICKS - 1 })), false);
-        assert.equal(bankStale(bank({ age: POWER_BANK_STALE_AGE_TICKS })), true);
-    });
-});
-
-describe("bankPlans", () => {
-    test("renders each cached verdict kind, sorted by home", () => {
-        const plans = bankPlans(bank({ pl: [
-            { h: "W2N2", k: "retry", in: 40, r: "no_pairs" },
-            { h: "W1N1", k: "committed", m: "loot" },
-            { h: "W3N3", k: "skip", r: "too_far" },
-        ] }));
-        assert.deepEqual(plans.map(p => p.home), ["W1N1", "W2N2", "W3N3"]);
-        assert.deepEqual(plans.map(p => p.text),
-            ["committed loot", "retry in 40t (no_pairs)", "skip · too_far"]);
-    });
-    for (const [name, p, text, fields] of [
-        ["a late abandon names both sides of the clock",
-            { h: "W1N1", k: "retry", in: 40, r: "contested", ab: "late", abt: [400, 316] },
-            "retry in 40t (contested: late, fleet 400t > kill 316t)", { abandon: "late", fleetIn: 400, killIn: 316 }],
-        ["an unreachable abandon has only the rival's kill",
-            { h: "W1N1", k: "skip", r: "contested", ab: "unreachable", abt: [null, 50] },
-            "skip · contested: unreachable, rival kills in 50t", { abandon: "unreachable", fleetIn: null, killIn: 50 }],
-        ["a clockless abandon names just the reason",
-            { h: "W1N1", k: "retry", in: 10, r: "contested", ab: "dark" },
-            "retry in 10t (contested: dark)", { abandon: "dark", fleetIn: null, killIn: null }],
-        ["a skip without ab is unchanged",
-            { h: "W1N1", k: "skip", r: "energy-low" },
-            "skip · energy-low", { abandon: null, fleetIn: null, killIn: null }],
-    ]) {
-        test(name, () => {
-            const [plan] = bankPlans(bank({ pl: [p] }));
-            assert.equal(plan.text, text);
-            assert.deepEqual({ abandon: plan.abandon, fleetIn: plan.fleetIn, killIn: plan.killIn }, fields);
-        });
-    }
-    test("a due retry says so rather than printing a non-positive countdown", () => {
-        assert.equal(bankPlans(bank({ pl: [{ h: "W1N1", k: "retry", in: -12 }] }))[0].text, "retry due");
-    });
-    test("no pl at all is empty, not an error — the verdict cache is heap state", () => {
-        assert.deepEqual(bankPlans(bank()), []);
-    });
-});
-
-describe("bankPlanDetail", () => {
-    test("a full go plan", () => {
-        assert.deepEqual(bankPlanDetail({ h: "W1N1", k: "committed", m: "race", pr: 2, wv: 3, kt: 900, ht: 700, b: 1 }), {
-            plan: true, adopted: false, pairs: 2, waves: 3, killTickIn: 900, haulIn: 700, planBoosted: true, posture: null,
-        });
-    });
-    test("a loot verdict carries only the hauler dispatch", () => {
-        const d = bankPlanDetail({ h: "W1N1", k: "committed", m: "loot", ht: 120 });
-        assert.equal(d.plan, true);
-        assert.equal(d.pairs, null);
-        assert.equal(d.haulIn, 120);
-    });
-    test("adopted (committed, no plan, no mode) vs a pre-plan snapshot (mode, no plan)", () => {
-        assert.equal(bankPlanDetail({ h: "W1N1", k: "committed" }).adopted, true);
-        const old = bankPlanDetail({ h: "W1N1", k: "committed", m: "fight" });
-        assert.equal(old.plan, false);
-        assert.equal(old.adopted, false);
-        assert.equal(bankPlanDetail({ h: "W1N1", k: "committed", m: "loot", ht: 5 }).adopted, false);
-    });
-    test("posture reads on any row", () => {
-        const d = bankPlanDetail({ h: "W1N1", k: "retry", in: 20, po: "r" });
-        assert.equal(d.plan, false);
-        assert.equal(d.adopted, false);
-        assert.equal(d.posture.word, "pairs recalled");
-        assert.equal(bankPlanDetail({ h: "W1N1", k: "skip", po: "x" }).posture.word, "x");
-    });
-    test("bankPlans spreads the detail into each plan", () => {
-        const [plan] = bankPlans(bank({ pl: [{ h: "W1N1", k: "committed", m: "race", pr: 2, wv: 1, kt: 50, ht: 30 }] }));
-        assert.equal(plan.pairs, 2);
-        assert.equal(plan.haulIn, 30);
-    });
-});
-
-describe("bankSquads", () => {
-    const latest = {
-        ar: [{ home: "W1N1", target: "W5N5", kind: "offense", sq: [sq({ id: 7 })] }],
-        rooms: { W1N1: { thr: thr() } },
-    };
-    test("joins sq back to ar on home + bank room + squad id", () => {
-        const [s] = bankSquads(latest, bank({ sq: [{ id: 7, home: "W1N1", w: 2 }] }));
-        assert.equal(s.wave, 2);
-        assert.equal(s.fight, false);
-        assert.equal(s.status, "engaged");
-        assert.equal(s.route.phase, "deployed");
-        // the squad's OWN counts, not the route's: one harvest route carries
-        // both the wave and its fight squad, so route-level totals would
-        // describe the pair rather than the row a reader is pointing at.
-        assert.equal(s.squad.alive, 2);
-        assert.equal(s.squad.atTarget, 2);
-    });
-    test("a join miss leaves the squad null instead of inventing a status", () => {
-        const [s] = bankSquads(latest, bank({ sq: [{ id: 9, home: "W1N1", f: 1 }] }));
-        assert.equal(s.squad, null);
-        assert.equal(s.status, null);
-        assert.equal(s.fight, true);
-        assert.equal(s.wave, null);
-    });
-});
-
 describe("powerFleetRows", () => {
     const latest = (over = {}) => ({
-        ar: [{ home: "W1N1", target: "W5N5", kind: "offense", sq: [sq({ id: 7 })] }],
+        ar: [
+            { home: "W1N1", target: "W5N5", kind: "offense", sq: [sq({ id: 7, pw: 2 }), sq({ id: 8, pf: 1, n: [0, 0, 1, 1] })] },
+            { home: "W2N2", target: "W6N6", kind: "offense", sq: [sq({ id: 3, pw: 1, at: [2, 0, 0] })] },
+            // a siege and a manual squad: no power tags, never fleet rows
+            { home: "W1N1", target: "W3N1", kind: "offense", sq: [sq({ id: 1 })] },
+            { home: "W1N1", target: "W5N5", kind: "manual", sq: [sq({ id: 9 })] },
+        ],
         rooms: { W1N1: { thr: thr() } },
         ...over,
     });
-    test("each squad on a live bank is its own row, with the ar join carried through", () => {
-        const rows = powerFleetRows(latest({ pb: [bank({ hl: [2, 0, 0], sq: [{ id: 7, home: "W1N1", w: 2 }, { id: 8, home: "W1N1", f: 1 }] })] }));
-        assert.deepEqual(rows.map(r => [r.kind, r.rm, r.id, r.live]), [["squad", "W5N5", 7, true], ["squad", "W5N5", 8, true]]);
+    test("each power-tagged squad in ar is its own row, carrying the squad's own stats", () => {
+        const rows = powerFleetRows(latest()).filter(r => r.kind === "squad");
+        assert.deepEqual(rows.map(r => [r.rm, r.home, r.id, r.wave, r.fight, r.live]),
+            [["W5N5", "W1N1", 7, 2, false, true], ["W5N5", "W1N1", 8, null, true, true], ["W6N6", "W2N2", 3, 1, false, true]]);
         assert.equal(rows[0].status, "engaged");
-        assert.equal(rows[1].fight, true);
-        assert.equal(rows[1].squad, null);
+        // the squad's OWN counts, not the route's: one harvest route carries
+        // both the wave and its fight squad.
+        assert.equal(rows[1].squad.dead, 1);
+        assert.equal(rows[1].squad.alive, 1);
     });
-    test("a ph entry becomes a gone hauler row; live-bank haulers stay on the bank", () => {
-        const rows = powerFleetRows(latest({ pb: [bank({ hl: [2, 0, 0] })], ph: [{ rm: "W6N6", hl: [1, 800, 400] }] }));
-        assert.deepEqual(rows, [{ kind: "haulers", rm: "W6N6", live: false, hl: [1, 800, 400] }]);
+    test("ph rows are hauler rows, live only with lv: 1", () => {
+        const rows = powerFleetRows(latest({ ph: [{ rm: "W5N5", hl: [2, 0, 0], lv: 1 }, { rm: "W8N8", hl: [1, 800, 400] }] }))
+            .filter(r => r.kind === "haulers");
+        assert.deepEqual(rows, [
+            { kind: "haulers", rm: "W5N5", live: true, hl: [2, 0, 0] },
+            { kind: "haulers", rm: "W8N8", live: false, hl: [1, 800, 400] },
+        ]);
     });
-    test("sorted by room, live before gone, then squads by (home, id)", () => {
-        const rows = powerFleetRows(latest({
-            pb: [
-                bank({ rm: "W7N7", sq: [{ id: 3, home: "W2N2" }, { id: 1, home: "W1N1" }] }),
-                bank({ rm: "W5N5", sq: [{ id: 7, home: "W1N1" }] }),
+    test("a squad reads gone only when ph says its bank is gone", () => {
+        const rows = powerFleetRows(latest({ ph: [{ rm: "W6N6", hl: [1, 2000, 300] }] }));
+        assert.deepEqual(rows.map(r => `${r.rm}:${r.kind}:${r.live}`),
+            ["W5N5:squad:true", "W5N5:squad:true", "W6N6:squad:false", "W6N6:haulers:false"]);
+    });
+    test("sorted by room, then squads by (home, id), then that room's haulers", () => {
+        const rows = powerFleetRows({
+            ar: [
+                { home: "W2N2", target: "W7N7", kind: "offense", sq: [sq({ id: 3, pw: 1 })] },
+                { home: "W1N1", target: "W7N7", kind: "offense", sq: [sq({ id: 5, pw: 1 }), sq({ id: 1, pf: 1 })] },
             ],
-            ph: [{ rm: "W5N5", hl: [1, 0, 0] }, { rm: "W6N6", hl: [1, 0, 0] }],
-        }));
-        assert.deepEqual(rows.map(r => `${r.rm}:${r.kind === "squad" ? `${r.home}#${r.id}` : "gone"}`),
-            ["W5N5:W1N1#7", "W5N5:gone", "W6N6:gone", "W7N7:W1N1#1", "W7N7:W2N2#3"]);
+            ph: [{ rm: "W7N7", hl: [1, 0, 0], lv: 1 }, { rm: "W4N4", hl: [1, 0, 0] }],
+        });
+        assert.deepEqual(rows.map(r => `${r.rm}:${r.kind === "squad" ? `${r.home}#${r.id}` : "haulers"}`),
+            ["W4N4:haulers", "W7N7:W1N1#1", "W7N7:W1N1#5", "W7N7:W2N2#3", "W7N7:haulers"]);
     });
-    test("no pb still yields the ph rows", () => {
+    test("no ar still yields the ph rows; nothing is empty", () => {
         assert.deepEqual(powerFleetRows({ ph: [{ rm: "W6N6", hl: [1, 0, 0] }] }).map(r => r.rm), ["W6N6"]);
         assert.deepEqual(powerFleetRows({}), []);
+    });
+    test("an old snapshot's pb is not read", () => {
+        assert.deepEqual(powerFleetRows({ pb: [{ rm: "W5N5", sq: [{ id: 7, home: "W1N1", w: 1 }], hl: [2, 0, 0] }] }), []);
     });
 });
 
@@ -2044,5 +1928,58 @@ describe("remote ledger", () => {
         const rows = [{ rooms: { W1N1: { thr: { h: 0 }, roles: {} } }, rl: [row("W1N1", "W2N1", 1, 1, 12000)] }];
         assert.equal(remoteLedgerRows(rows[0]).absent, null);
         assert.equal(remoteLedgerRows(degradeLatest(rows).at(-1)).absent, "unknown");
+    });
+});
+
+describe("powerLedgerRows", () => {
+    const snap = pwl => ({ rooms: { W1N1: { thr: { h: 0 } } }, pwl });
+
+    test("rates divide by each row's own window, ratio is energy per power", () => {
+        const [r] = powerLedgerRows(snap([{ h: "W1N1", p: 3000, e: 30000, w: 12000 }])).rows;
+        assert.equal(r.powerRate, 0.25);
+        assert.equal(r.energyRate, 2.5);
+        assert.equal(r.energyPerPower, 10);
+        assert.equal(r.mature, true);
+        assert.deepEqual(r.compounds, []);
+    });
+
+    test("no power delivered yet is a null ratio, not Infinity", () => {
+        assert.equal(powerLedgerRows(snap([{ h: "W1N1", p: 0, e: 900, w: 300 }])).rows[0].energyPerPower, null);
+    });
+
+    test("a row is mature from exactly LEDGER_MATURE_TICKS; w of 0 gives zero rates", () => {
+        const { rows } = powerLedgerRows(snap([
+            { h: "W1N1", p: 10, e: 1, w: LEDGER_MATURE_TICKS - 1 },
+            { h: "W2N1", p: 1, e: 1, w: LEDGER_MATURE_TICKS },
+            { h: "W3N1", p: 5, e: 5, w: 0 },
+        ]));
+        assert.deepEqual(rows.map(r => [r.home, r.mature]), [["W2N1", true], ["W1N1", false], ["W3N1", false]]);
+        assert.equal(rows[2].powerRate, 0);
+    });
+
+    test("compounds become a list sorted by compound", () => {
+        const [r] = powerLedgerRows(snap([{ h: "W1N1", p: 1, e: 1, w: 1, c: { XUH2O: 300, XGHO2: 120 } }])).rows;
+        assert.deepEqual(r.compounds, [["XGHO2", 120], ["XUH2O", 300]]);
+    });
+
+    test("absent pwl reads as none when threat detail survived, unknown when degraded", () => {
+        assert.equal(powerLedgerRows(snap(undefined)).absent, "none");
+        assert.equal(powerLedgerRows({ rooms: { W1N1: {} } }).absent, "unknown");
+        assert.equal(powerLedgerRows(null).absent, "unknown");
+        assert.deepEqual(powerLedgerRows(snap([])), { rows: [], absent: null });
+    });
+
+    test("malformed rows are dropped instead of throwing", () => {
+        const { rows } = powerLedgerRows(snap([
+            { p: 1, e: 1, w: 1 },
+            { h: "W1N1", p: "x", e: 1, w: 1 },
+            { h: "W2N1", p: 1, e: 1, w: 1 },
+        ]));
+        assert.deepEqual(rows.map(r => r.home), ["W2N1"]);
+    });
+
+    test("the demo's degraded row drops pwl, so it reads unknown", () => {
+        const rows = [{ rooms: { W1N1: { thr: { h: 0 }, roles: {} } }, pwl: [{ h: "W1N1", p: 1, e: 1, w: 1 }] }];
+        assert.equal(powerLedgerRows(degradeLatest(rows).at(-1)).absent, "unknown");
     });
 });

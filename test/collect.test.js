@@ -272,6 +272,14 @@ describe("buildSnapshotDoc", () => {
         assert.deepEqual(buildSnapshotDoc({ ...entry(100), tsMs: 0, rl }).rl, rl);
     });
 
+    test("power ledger: pwl omit-on-empty, pass through whole", () => {
+        const bare = buildSnapshotDoc({ ...entry(100), tsMs: 0 });
+        assert.equal("pwl" in bare, false);
+        assert.equal("pwl" in buildSnapshotDoc({ ...entry(100), tsMs: 0, pwl: [] }), false);
+        const pwl = [{ h: "W1N1", p: 4000, e: 52000, c: { XUH2O: 900 }, w: 11200 }];
+        assert.deepEqual(buildSnapshotDoc({ ...entry(100), tsMs: 0, pwl }).pwl, pwl);
+    });
+
     test("per-room pw rides through `rooms` with no collector change", () => {
         const pwRoom = { ...room, pw: [12_000, 3000, 80, 1] };
         const doc = buildSnapshotDoc({ ...entry(100), tsMs: 0, rooms: { W1N1: pwRoom } });

@@ -7,7 +7,7 @@ import { renderAttackLog } from "./attacks.js";
 import { renderBoostMatrix, renderLabsTable } from "./boosts.js";
 import { renderDefenseTable, renderDefenseTiles } from "./defense.js";
 import { renderEmpireCharts } from "./overview.js";
-import { renderPowerFleetTable, renderPowerTable, renderPowerTiles } from "./power.js";
+import { renderPowerFleetTable, renderPowerLedgerTable, renderPowerTiles } from "./power.js";
 import { renderRemoteEconomyTiles } from "./remote-economy.js";
 import { renderRemoteLog, renderRemoteTable, renderRemoteTiles } from "./remote.js";
 import { renderRoomsTable } from "./rooms.js";
@@ -25,7 +25,7 @@ import { renderRoomsTable } from "./rooms.js";
 export const SECTIONS = [
     { id: "defense",    render: () => { renderDefenseTiles(); renderDefenseTable(); } },
     { id: "army",       render: () => { renderArmyTiles(); renderArmyTable(); } },
-    { id: "power",      render: () => { renderPowerTiles(); renderPowerTable(); renderPowerFleetTable(); } },
+    { id: "power",      render: () => { renderPowerTiles(); renderPowerFleetTable(); renderPowerLedgerTable(); } },
     { id: "boosts",     render: renderBoostMatrix },
     { id: "labs",       render: renderLabsTable },
     { id: "rooms",      render: renderRoomsTable },

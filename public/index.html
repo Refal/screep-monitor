@@ -126,27 +126,27 @@
         </details>
 
         <details class="section" data-section="power">
-            <summary>Power harvesting · live banks (latest snapshot)</summary>
+            <summary>Power harvesting · squads, haulers and ledger</summary>
         <div class="tiles" id="power-tiles"></div>
-        <div class="table-wrap">
-            <table id="power-table">
-                <thead></thead>
-                <tbody></tbody>
-            </table>
-        </div>
-        <h3 class="sub-head">Squads out · haulers from gone banks</h3>
+        <h3 class="sub-head">Squads and haulers out</h3>
         <div class="table-wrap">
             <table id="power-fleet-table">
                 <thead></thead>
                 <tbody></tbody>
             </table>
         </div>
+        <h3 class="sub-head">Power ledger · per home</h3>
+        <div class="table-wrap">
+            <table id="power-ledger-table">
+                <thead></thead>
+                <tbody></tbody>
+            </table>
+        </div>
         <div class="viz-legend">
             <span>a bank room is a highway room — the name links to screeps.com, not to a per-room view</span>
-            <span>“Committed” is the planner’s cached decision per home, not a fresh evaluation; after a global reset it is empty until the planner runs again</span>
-            <span>a committed chip shows pairs per wave × waves, ⚡ when boosted; “pairs recalled / released” is the last posture change the bot saw, not necessarily the current one</span>
-            <span>“Last seen” is how stale the hits/power reading is — the bot only refreshes a bank while something of ours has vision there</span>
-            <span>the second table has one row per squad; rows marked “gone” are banks our own kill already removed from intel while the haulers are still loading or on the way home</span>
+            <span>one row per squad and per bank’s haulers; rows marked “gone” are banks our own kill already removed from intel while the creeps are still loading or on the way home</span>
+            <span>live-bank planner state (hits, decay, contest, verdicts) is not published — the bot’s debugPowerBanks() console command shows it</span>
+            <span>the ledger books spend at spawn and at the lab and power on delivery, so a young op shows its cost before its power</span>
         </div>
         </details>
 

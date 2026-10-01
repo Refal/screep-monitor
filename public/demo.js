@@ -392,24 +392,25 @@ function demoAr(i, n, f) {
         });
     }
     routes.push({ home: "E27S41", target: "E28S41", kind: "manual", sq: [{ id: 9, st: "engaged", n: [0, 0, 1, 0], at: [0, 0, 1] }] });
-    // The power-harvest armies behind demoPb's `sq` entries — kind 'offense',
-    // and the only thing the squads table can join against for
-    // a status. The E45N35 route ends with the bank, so late in the window
-    // that bank's squads have no route record at all — the join-miss branch.
+    // Power-harvest armies: kind 'offense' at the bank room, each squad tagged
+    // `pw` (harvest wave) or `pf: 1` (fight squad). The E45N35 route outlives
+    // its bank: from 0.8n demoPh drops that bank's `lv`, so the squad reads
+    // "gone" on its walk home, and from 0.9n the route itself is over.
     routes.push({
         home: "E15S57", target: "E15N5", kind: "offense",
-        sq: [{ id: 21, st: "engaged", n: [0, 0, 4, 0], at: [0, 4, 0], b: 1 },
-             { id: 22, st: "engaged", n: [0, 0, 2, 0], at: [0, 2, 0] }],
+        sq: [{ id: 21, st: "engaged", n: [0, 0, 4, 0], at: [0, 4, 0], b: 1, pw: 1 },
+             { id: 22, st: "engaged", n: [0, 0, 2, 0], at: [0, 2, 0], pf: 1 }],
     });
-    // A second home on the same bank — four squads in all, the case that used
-    // to push the bank table past the viewport.
+    // A second home on the same bank — four squads in all.
     routes.push({
         home: "E18S59", target: "E15N5", kind: "offense",
-        sq: [{ id: 41, st: "engaged", n: [0, 0, 3, 0], at: [0, 0, 3] },
-             { id: 42, st: "forming", n: [2, 0, 0, 0], at: [2, 0, 0] }],
+        sq: [{ id: 41, st: "engaged", n: [0, 0, 3, 0], at: [0, 0, 3], pw: 1 },
+             { id: 42, st: "forming", n: [2, 0, 0, 0], at: [2, 0, 0], pw: 2 }],
     });
-    if (i < Math.floor(n * 0.8)) {
-        routes.push({ home: "E27S41", target: "E45N35", kind: "offense", sq: [{ id: 31, st: "engaged", n: [0, 0, 4, 1], at: [0, 0, 4] }] });
+    if (i < Math.floor(n * 0.9)) {
+        const home = i >= Math.floor(n * 0.8);
+        routes.push({ home: "E27S41", target: "E45N35", kind: "offense",
+            sq: [{ id: 31, st: "engaged", n: [0, 0, 4, 1], at: home ? [0, 0, 4] : [0, 4, 0], pw: 2 }] });
     }
     if (i >= Math.floor(n * 0.5)) {
         routes.push({ home: "E21S41", target: "E22S41", sq: [{ id: 11, st: "engaged", n: [0, 0, 1, 1], at: [1, 0, 0], hold: 1 }] });
@@ -488,60 +489,31 @@ function demoPw(k, i, n, f) {
         : [Math.round(1500 * g), 0, 0, 0];
 }
 
-// Live power banks (pb). One case per branch the renderers distinguish:
-//
-//   - E15N5: committed by two homes (four squads between them) with a third
-//     home's skip folded into "+1 other", contested by a rival, haulers
-//     already on it — the fully-engaged case, and the only one with `dps`, so
-//     the "dead before it decays" badge has something to render;
-//   - E25N15: a fresh sighting nothing has decided on yet — no `pl` at all
-//     (the planner's cache is heap state), no squads, no haulers;
-//   - E35N25: a retry pending on one home and a committed skip on another,
-//     stale intel (the room has gone dark) and only one free tile;
-//   - E55N45: a rival wins the race — the lone home abandons `late`, so the
-//     fold chip names the reason and its tooltip the fleet-vs-kill clock.
-function demoPb(i, n, f) {
-    const banks = [{
-        rm: "E15N5", p: 4800, hits: Math.round(2_000_000 * (1 - f * 0.6)), dec: 4200 - i * 8,
-        age: i % 7, ft: 4, con: [2, 340, 120], dps: 1180,
-        pl: [{ h: "E15S57", k: "committed", m: "fight", pr: 2, wv: 2, kt: 1600 - i * 4, ht: 1300 - i * 4, b: 1 },
-             { h: "E18S59", k: "committed", m: "race", pr: 1, wv: 3, kt: 1800 - i * 4, ht: 1500 - i * 4 },
-             { h: "E21S41", k: "skip", r: "too_far" }],
-        sq: [{ id: 21, home: "E15S57", w: 1 }, { id: 22, home: "E15S57", f: 1 },
-             { id: 41, home: "E18S59", w: 1 }, { id: 42, home: "E18S59", w: 2 }],
-        // still spawning (min ttl 0) for the first stretch, then out on the road
-        hl: i > Math.floor(n * 0.6) ? [2, 2400, 890] : [2, 0, 0],
-    }];
-    banks.push({ rm: "E25N15", p: 2600, hits: 2_000_000, dec: 3000 - i * 5, age: 2, ft: 6, dps: 0 });
-    banks.push({
-        rm: "E35N25", p: 6400, hits: 1_400_000, dec: 5000 - i * 6, age: 340 + i, ft: 1, dps: 0,
-        pl: [{ h: "E21S41", k: "retry", in: 200 - i * 3, r: "no_pairs", po: "r" }, { h: "E23S44", k: "skip", r: "bank_too_tough" }],
-    });
-    banks.push({
-        rm: "E55N45", p: 3280, hits: Math.round(1_100_000 * (1 - f * 0.5)), dec: 2500 - i * 4,
-        age: 1, ft: 4, con: [1, 2520, 1104], dps: 0,
-        pl: [{ h: "E21S49", k: "retry", in: 100 - (i % 100), r: "contested", ab: "late", abt: [400, 316] }],
-    });
-    // The bank our own squad finishes late in the window — it leaves the list
-    // exactly when demoPh starts publishing its haulers, which is the sequence
-    // `ph` exists for.
-    if (i < Math.floor(n * 0.8)) {
-        banks.push({
-            rm: "E45N35", p: 5200, hits: Math.round(900_000 * (1 - i / (n * 0.8))), dec: 2600 - i * 4,
-            age: 1, ft: 3, dps: 940,
-            pl: [{ h: "E27S41", k: "committed", m: "loot", ht: Math.max(0, 300 - i) }],
-            sq: [{ id: 31, home: "E27S41", w: 2 }],
-            hl: [2, 1200, 640],
-        });
-    }
-    return banks;
+// Every power hauler, grouped by bank room (ph). E15N5's are still spawning
+// for the first stretch, then out on the road, with the bank live (`lv`).
+// E45N35 is the bank our own squad finishes at 0.8n: the intel record goes,
+// `lv` with it, and the row becomes the loot leg home — the sequence `lv`
+// exists to mark.
+function demoPh(i, n) {
+    const rows = [{ rm: "E15N5", hl: i > Math.floor(n * 0.6) ? [2, 2400, 890] : [2, 0, 0], lv: 1 }];
+    rows.push(i < Math.floor(n * 0.8)
+        ? { rm: "E45N35", hl: [2, 1200, 640], lv: 1 }
+        : { rm: "E45N35", hl: [2, 5200, 760] });
+    return rows;
 }
 
-// Haulers whose bank record is already gone (ph) — the loot leg home. Appears
-// exactly when demoPb drops E15N5, which is the sequence this field exists
-// for: our own kill deletes the intel record while the haulers are loading.
-function demoPh(i, n) {
-    return i >= Math.floor(n * 0.8) ? [{ rm: "E45N35", hl: [2, 5200, 760] }] : null;
+// Power ledger (pwl), one row per branch the table distinguishes: E15S57 a
+// mature home with boosts, E27S41 a mature loot-only home (no `c`), and
+// E18S59 young — spend booked, no power delivered yet ("no power yet").
+function demoPwl(i, f) {
+    const swing = 12000 - (i * 97) % 1500;
+    const rows = [
+        { h: "E15S57", p: Math.round(swing * 0.9), e: Math.round(swing * 11.5), c: { XUH2O: 1200, XGHO2: 600, XLHO2: 900 }, w: swing },
+        { h: "E27S41", p: Math.round(swing * 0.4), e: Math.round(swing * 2.1), w: swing },
+    ];
+    const w = Math.min(4000, Math.max(300, Math.round(f * 4000)));
+    rows.push({ h: "E18S59", p: 0, e: Math.round(w * 6), c: { XUH2O: 300 }, w });
+    return rows;
 }
 
 // One contiguous stretch mid-window where the published payload outgrew its
@@ -568,10 +540,10 @@ export function degradeLatest(rows) {
     delete last.rt;
     delete last.ar;
     delete last.rl;
-    // pb/ph ride the same degradation step; `pba` does NOT and must survive,
-    // or the section reads "gate off"/"no banks" instead of "degraded away".
-    delete last.pb;
+    // ph/pwl ride the same degradation step; `pba` does NOT and must survive,
+    // or the section reads "gate off"/"nothing out" instead of "degraded away".
     delete last.ph;
+    delete last.pwl;
     return [...rows.slice(0, -1), last];
 }
 
@@ -667,8 +639,8 @@ export function synthDemo(rangeHours, maxPoints) {
         // to tell it apart from the stretch that follows, where `pba` is
         // present and no room holds power: a genuine empire-wide zero.
         const prePower = i < Math.floor(n * 0.25);
-        const pb = degraded || prePower ? null : demoPb(i, n, f);
         const ph = degraded || prePower ? null : demoPh(i, n);
+        const pwl = degraded || prePower ? null : demoPwl(i, f);
         rows.push({
             ts: { toDate: () => date }, date, tick: 76680000 + i * 120,
             // mild oscillation on top of the upward trend so the GCL/tick chart
@@ -685,8 +657,8 @@ export function synthDemo(rangeHours, maxPoints) {
             ...(rt ? { rt } : {}),
             ...(ar ? { ar } : {}),
             ...(rl ? { rl } : {}),
-            ...(pb?.length ? { pb } : {}),
             ...(ph?.length ? { ph } : {}),
+            ...(pwl?.length ? { pwl } : {}),
             dv: demoDv(i, n),
             sv: demoSv(i, n),
             // Always published and never degraded — that is the whole point of

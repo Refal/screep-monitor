@@ -889,6 +889,8 @@ export function squadSummary(sq) {
         queued, spawning, alive, dead, total: queued + spawning + alive + dead,
         atHome, atTarget, inTransit,
         boosted: sq.b === 1, held: sq.hold === 1,
+        // Power-bank squads only: `pw` the harvest wave, `pf: 1` its fight squad.
+        wave: sq.pw ?? null, fight: sq.pf === 1,
     };
 }
 
@@ -1022,11 +1024,6 @@ export const SIEGE_VERDICT = {
     "boost-missing":   { word: "boost missing", tone: "serious", explain: "holding: a required boost compound is not in stock" },
 };
 
-export const PAIR_POSTURE = {
-    r: { word: "pairs recalled", explain: "an armed contestant held the bank, so the harvest pairs were pulled home" },
-    c: { word: "pairs released", explain: "the contest cleared, so the harvest pairs were sent back to the bank" },
-};
-
 export function verdictInfo(table, code) {
     return table[code] ?? { word: code ?? "unknown", tone: "na", explain: `unrecognized planner code "${code}"` };
 }
@@ -1045,16 +1042,13 @@ export function siegeVerdictFor(latest, home, room) {
 }
 
 // Routes on the power pipeline belong to the Power section; everything else
-// the army does is an "operation". Harvest armies are always kind 'offense'
-// and sieges never target a highway room, so an offense route aimed at a
-// bank room is power — a defense or manual squad sent there is not. A bank
-// our own kill already removed from `pb` can still have its route in `ar`
-// while the haulers (`ph`) load and head home.
+// the army does is an "operation". Harvest armies are always kind 'offense',
+// and their squads carry `pw`/`pf`; a defense or manual squad sent to a bank
+// room is not power. A route whose squads predate the tags stays an operation,
+// so no active army is ever hidden from the army view.
 function isPowerRoute(latest, route) {
     if (route.kind !== "offense") return false;
-    return (latest?.pb ?? []).some(b => b.rm === route.target
-        || (b.sq ?? []).some(s => s.home === route.home && route.squads.some(q => q.id === s.id)))
-        || (latest?.ph ?? []).some(h => h.rm === route.target);
+    return route.squads.some(q => q.wave != null || q.fight);
 }
 
 export const TONE_RANK = { critical: 0, serious: 1, short: 2, na: 3, good: 4 };
@@ -1185,40 +1179,59 @@ export function remoteLedgerSummary(latest) {
     };
 }
 
+// Power harvesting ledger (`pwl`): per home, power its haulers delivered (`p`)
+// against the energy power ops cost it (`e`: squad and hauler spawn bodies plus
+// lab boost energy) and the boost compounds consumed (`c`), over `w` ticks. The
+// same bucket ring as `rl`, so LEDGER_MATURE_TICKS applies and `w` is per row.
+// Spend is booked at spawn and at the lab, income on delivery: an op in
+// progress shows its cost before its power, which is what "measuring" covers.
+// `pwl` rides the same degradation step as `rl`, so absence reads the same way.
+export function powerLedgerRows(latest) {
+    if (!latest?.pwl) return { rows: [], absent: hasThreatDetail(latest ?? {}) ? "none" : "unknown" };
+    const rows = latest.pwl
+        .filter(r => typeof r?.h === "string"
+            && Number.isFinite(r.p) && Number.isFinite(r.e) && Number.isFinite(r.w))
+        .map(r => ({
+            home: r.h, p: r.p, e: r.e, w: r.w,
+            powerRate: r.w > 0 ? r.p / r.w : 0,
+            energyRate: r.w > 0 ? r.e / r.w : 0,
+            energyPerPower: r.p > 0 ? r.e / r.p : null,
+            compounds: Object.entries(r.c ?? {})
+                .filter(([, units]) => Number.isFinite(units))
+                .sort(([a], [b]) => a.localeCompare(b)),
+            mature: r.w >= LEDGER_MATURE_TICKS,
+        }))
+        // Verdict-grade rows first, then the homes bringing in the most power.
+        .sort((a, b) => b.mature - a.mature || b.p - a.p || a.home.localeCompare(b.home));
+    return { rows, absent: null };
+}
+
 // ---------------------------------------------------------------------------
-// Power harvesting (pb / ph / pba / pw) — the power-bank pipeline.
-// screeps2/src/manager/StatsManager.ts (buildPowerBanks) reads it off
-// Memory.highwayIntel + the planner's verdict cache; docs/stats-history-ring.md
-// ("Power banks") is the field-by-field contract these mirror, and the bot's
-// debugPowerBanks() console command is the same view in text form.
+// Power harvesting (ph / pba / pw / pwl + power squads in `ar`).
+// screeps2/src/manager/StatsManager.ts publishes it; docs/stats-history-ring.md
+// ("Power harvesting") is the field-by-field contract these mirror. Live-bank
+// planner state (hits, decay, contest, verdicts) is NOT published — the bot's
+// debugPowerBanks() console command is the only view of it — so older
+// snapshots' `pb` is deliberately not read.
 //
-// Four fields, three of them snapshot-level because a bank is home-agnostic:
-// several homes may hold a cached verdict on the same bank and only one ever
-// reads `committed`.
-//
-//  - `pb`  live banks: power, last-seen hits, `dec` ticks to decay, `ft` free
-//          adjacent tiles, `con` contestant totals [count, Σdps, Σheal], `dps`
-//          our attackers' summed dps in the bank room, `pl` the planner's
-//          CACHED decision per home, `sq` waves/fight squads, `hl` haulers.
-//  - `ph`  haulers whose bank record is already gone: our own kill deletes the
-//          intel record exactly while they are loading, so the loot leg home
-//          would otherwise vanish from the payload entirely.
+//  - squads ride `ar`: a harvest army is kind 'offense' targeting the bank
+//          room, each squad tagged `pw` (wave) or `pf: 1` (fight). Army
+//          records outlive the bank's intel, so they stay through the walk home.
+//  - `ph`  every power hauler, grouped by bank room: `hl`, plus `lv: 1` while
+//          the bank's intel record is live. Our own kill deletes that record
+//          exactly while the haulers load, so no `lv` is the loot leg home —
+//          and snapshots from before `lv` listed only that case anyway.
 //  - `pba` the autoHarvest gate, a scalar that is ALWAYS published and never
-//          degraded — the only thing that keeps "gate off" apart from "no
-//          banks" apart from "degraded away".
+//          degraded — the only thing that keeps "gate off" apart from "nothing
+//          out" apart from "degraded away".
 //  - `pw`  per-room [storage, terminal, power spawn, processing 0|1]. It is in
 //          no degradation step, so its history is complete going forward (the
 //          `gpl` case); the only gap is the ticks before the collector began
 //          persisting it, which cannot be backfilled.
+//  - `pwl` the ledger above.
 //
-// `pb`/`ph` ride DEGRADATION_STEPS[0] with roles/thr/rt/ar, so absence is read
-// through hasThreatDetail exactly as `rt` and `ar` are.
-
-// `age` is Game.time - lastSeenTick: StatsManager never reads the bank room,
-// so hits/power only refresh while something of ours has vision there. Past a
-// bank's own decay the record is dropped, but until then a row can outlive the
-// real structure — the same "memory, not a live reading" caveat as a remote.
-export const POWER_BANK_STALE_AGE_TICKS = 300;
+// `ar`/`ph`/`pwl` ride DEGRADATION_STEPS[0] with roles/thr/rt, so absence is
+// read through hasThreatDetail exactly as `rt` is.
 
 // Which of the three readings a snapshot's gate carries. Deliberately not a
 // boolean: `uncollected` is a snapshot stored before the collector persisted
@@ -1228,148 +1241,29 @@ export function powerGateState(row) {
     return row.pba === 1 ? "on" : "off";
 }
 
-// The banks a snapshot shows, or which absence it is. `pb` is omitted on an
-// empty list AND dropped by degradation, so the branch needs hasThreatDetail
-// the same way routeOrAbsence does. The gate is reported alongside because a
-// reader's first question about an empty list is whether harvesting is even
-// switched on.
-export function powerBanksOrAbsence(latest) {
-    const gate = powerGateState(latest);
-    const banks = latest?.pb ?? [];
-    if (banks.length) return { banks, gate };
-    if (gate === "uncollected") return { absent: "uncollected", gate };
-    if (gate === "off") return { absent: "off", gate };
-    return { absent: hasThreatDetail(latest ?? {}) ? "none" : "unknown", gate };
-}
-
-// Ticks until our attackers break the bank, against the ticks until it decays
-// on its own. `dps` is 0 whenever nothing of ours is swinging — including
-// every bank we have not committed to — so "never" here is the normal case,
-// not an error, and the caller renders it as a word rather than an infinity.
-export function bankEta(bank) {
-    const decayIn = bank.dec;
-    if (!bank.dps) return { killIn: null, decaysFirst: true, decayIn };
-    const killIn = Math.ceil(bank.hits / bank.dps);
-    return { killIn, decaysFirst: killIn > decayIn, decayIn };
-}
-
-// Contestants are other players racing or fighting us for the same bank.
-// `con` is omitted when there are none; [count, Σdps, Σheal] when there are.
-export function bankContest(bank) {
-    if (!bank.con) return null;
-    const [count, dps, heal] = bank.con;
-    return { count, dps, heal };
-}
-
-export function bankStale(bank) {
-    return bank.age >= POWER_BANK_STALE_AGE_TICKS;
-}
-
-// The planner's CACHED decision per home (screeps2 powerBankVerdict.ts), never
-// a fresh evaluation: `committed` is a cached go (`m` says loot/fight/race),
-// `skip` a committed skip, `retry` a skip awaiting re-evaluation with `in`
-// ticks to go (≤ 0 once due). The cache is heap state, so the first publish
-// after a global reset legitimately carries no `pl` at all — an empty list is
-// "not decided yet", not "no home in range".
-// A `contested` skip/retry may carry `ab`, why the planner abandoned
-// (dark / undefendable / holding / late / unreachable), and `abt`, the
-// [our fight fleet ETA, rival's kill] clock in ticks from `t` — either side
-// null when that abandon had no such number (`unreachable` has only the kill).
-export function bankPlans(bank) {
-    return (bank.pl ?? []).map(p => ({
-        home: p.h,
-        kind: p.k,
-        mode: p.m ?? null,
-        reason: p.r ?? null,
-        retryIn: p.in ?? null,
-        abandon: p.ab ?? null,
-        fleetIn: p.abt?.[0] ?? null,
-        killIn: p.abt?.[1] ?? null,
-        text: planText(p),
-        ...bankPlanDetail(p),
-    })).sort((a, b) => a.home.localeCompare(b.home));
-}
-
-// The go plan a verdict carries (bot 35d72352+): `pr` pairs per wave, `wv`
-// waves, `kt`/`ht` kill and hauler-dispatch ticks from `t`, `b: 1` boosted.
-// A loot verdict carries only `ht`; a commit that adopted an existing squad
-// carries none and no mode `m` either (`adopted`). A committed row WITH a
-// mode but no plan predates the bot publishing plans — not an adoption. `po` is the last pair recall ('r') or release
-// ('c') — a sampled event, not the current state, and it can sit on any row.
-export function bankPlanDetail(p) {
-    return {
-        plan: p.pr != null || p.ht != null,
-        adopted: p.k === "committed" && p.pr == null && p.ht == null && !p.m,
-        pairs: p.pr ?? null,
-        waves: p.wv ?? null,
-        killTickIn: p.kt ?? null,
-        haulIn: p.ht ?? null,
-        planBoosted: p.b === 1,
-        posture: p.po ? PAIR_POSTURE[p.po] ?? { word: p.po, explain: `unrecognized posture "${p.po}"` } : null,
-    };
-}
-
-function reasonText(p) {
-    if (!p.r) return null;
-    if (!p.ab) return p.r;
-    const [fleet, kill] = p.abt ?? [null, null];
-    const clock = fleet != null && kill != null ? `, fleet ${fleet}t > kill ${kill}t`
-        : kill != null ? `, rival kills in ${kill}t` : "";
-    return `${p.r}: ${p.ab}${clock}`;
-}
-
-function planText(p) {
-    const why = reasonText(p);
-    switch (p.k) {
-        case "committed": return `committed ${p.m ?? "go"}`;
-        case "skip": return `skip · ${why ?? "no reason given"}`;
-        case "retry": {
-            const suffix = why ? ` (${why})` : "";
-            return (p.in ?? 0) > 0 ? `retry in ${p.in}t${suffix}` : `retry due${suffix}`;
-        }
-        default: return p.k;
-    }
-}
-
-// `sq` carries only what `ar` lacks — the harvest wave number `w` and the
-// fight flag `f` — so status and member counts come from joining back to the
-// army route on home + bank room + squad id. Harvest armies are kind
-// 'offense'. A join miss is normal rather than an error: `ar` and `pb` ride
-// the same degradation step but `ar` is also omitted when Memory.armies is
-// empty, and the two are built from different sources within one tick.
-export function bankSquads(latest, bank) {
-    return (bank.sq ?? []).map(s => {
-        const route = armyRoutes(latest ?? {}).find(r =>
-            r.home === s.home && r.target === bank.rm && r.squads.some(q => q.id === s.id));
-        const squad = route?.squads.find(q => q.id === s.id) ?? null;
-        return {
-            id: s.id, home: s.home,
-            fight: s.f === 1,
-            wave: s.w ?? null,
+// One row per unit of ours on the power pipeline: every power-tagged squad in
+// `ar` and every `ph` hauler group. A squad row reads gone only when `ph`
+// positively says so (a row for its room without `lv`); with no `ph` row the
+// haulers simply have not been dispatched, which says nothing about the bank.
+export function powerFleetRows(latest) {
+    const ph = latest?.ph ?? [];
+    const goneRooms = new Set(ph.filter(h => h.lv !== 1).map(h => h.rm));
+    const squads = armyRoutes(latest ?? {})
+        .filter(r => r.kind === "offense")
+        .flatMap(r => r.squads.filter(q => q.wave != null || q.fight).map(q => ({
+            kind: "squad", rm: r.target, home: r.home, live: !goneRooms.has(r.target),
+            id: q.id, fight: q.fight, wave: q.wave,
             // Squad-level, not route-level: one route carries both the harvest
             // wave and its fight squad, so route phase/status would describe
             // the pair rather than the row the reader is pointing at.
-            squad,
-            status: squad?.status ?? null,
-            route: route ?? null,
-        };
-    }).sort((a, b) => a.home.localeCompare(b.home) || a.id - b.id);
-}
-
-// One row per unit of ours on the power pipeline: every squad on a live bank
-// (via bankSquads, so the `ar` join stays in one place) plus the `ph` haulers
-// whose bank record is already gone. Live-bank haulers are not here — they
-// stay a column on the bank itself. `pb`/`ph` share a degradation step, so a
-// snapshot missing `pb` for any reason can still carry `ph` rows, and does.
-export function powerFleetRows(latest) {
-    const banks = latest?.pb ?? [];
-    const squads = banks.flatMap(bank => bankSquads(latest, bank).map(s => ({
-        kind: "squad", rm: bank.rm, live: true, ...s,
-    })));
-    const gone = (latest?.ph ?? []).map(h => ({ kind: "haulers", rm: h.rm, live: false, hl: h.hl }));
-    // bankSquads already orders one bank's squads by (home, id); the stable
-    // sort keeps that order within a room.
-    return [...squads, ...gone].sort((a, b) => a.rm.localeCompare(b.rm) || Number(b.live) - Number(a.live));
+            squad: q, status: q.status,
+        })));
+    const haulers = ph.map(h => ({ kind: "haulers", rm: h.rm, live: h.lv === 1, hl: h.hl }));
+    // Room, live first, squads before haulers, then squads by (home, id).
+    return [...squads, ...haulers].sort((a, b) => a.rm.localeCompare(b.rm)
+        || Number(b.live) - Number(a.live)
+        || Number(a.kind === "haulers") - Number(b.kind === "haulers")
+        || (a.home ?? "").localeCompare(b.home ?? "") || (a.id ?? 0) - (b.id ?? 0));
 }
 
 // `hl` is [count, carried power, min ticksToLive]. The min ttl is 0 while
