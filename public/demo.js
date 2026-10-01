@@ -516,6 +516,21 @@ function demoPwl(i, f) {
     return rows;
 }
 
+// Deposit ledger (dpl), one row per branch the table distinguishes: E21S41 a
+// mature home hauling two types, E23S44 a mature single-type home, and
+// E21S49 young — harvester and hauler spend booked, nothing delivered yet,
+// so no `d` at all ("none yet" / "no deposits yet").
+function demoDpl(i, f) {
+    const swing = 12000 - (i * 89) % 1500;
+    const rows = [
+        { h: "E21S41", e: Math.round(swing * 3.2), d: { silicon: Math.round(swing * 0.6), mist: Math.round(swing * 0.15) }, w: swing },
+        { h: "E23S44", e: Math.round(swing * 1.8), d: { biomass: Math.round(swing * 0.35) }, w: swing },
+    ];
+    const w = Math.min(3000, Math.max(300, Math.round(f * 3000)));
+    rows.push({ h: "E21S49", e: Math.round(w * 2.5), w });
+    return rows;
+}
+
 // One contiguous stretch mid-window where the published payload outgrew its
 // budget and DEGRADATION_STEPS[0] fired, dropping roles/thr/rt/ar together
 // across the WHOLE snapshot — which is how the bot actually degrades, and the
@@ -540,10 +555,11 @@ export function degradeLatest(rows) {
     delete last.rt;
     delete last.ar;
     delete last.rl;
-    // ph/pwl ride the same degradation step; `pba` does NOT and must survive,
+    // ph/pwl/dpl ride the same degradation step; `pba` does NOT and must survive,
     // or the section reads "gate off"/"nothing out" instead of "degraded away".
     delete last.ph;
     delete last.pwl;
+    delete last.dpl;
     return [...rows.slice(0, -1), last];
 }
 
@@ -641,6 +657,7 @@ export function synthDemo(rangeHours, maxPoints) {
         const prePower = i < Math.floor(n * 0.25);
         const ph = degraded || prePower ? null : demoPh(i, n);
         const pwl = degraded || prePower ? null : demoPwl(i, f);
+        const dpl = degraded || prePower ? null : demoDpl(i, f);
         rows.push({
             ts: { toDate: () => date }, date, tick: 76680000 + i * 120,
             // mild oscillation on top of the upward trend so the GCL/tick chart
@@ -659,6 +676,7 @@ export function synthDemo(rangeHours, maxPoints) {
             ...(rl ? { rl } : {}),
             ...(ph?.length ? { ph } : {}),
             ...(pwl?.length ? { pwl } : {}),
+            ...(dpl?.length ? { dpl } : {}),
             dv: demoDv(i, n),
             sv: demoSv(i, n),
             // Always published and never degraded — that is the whole point of

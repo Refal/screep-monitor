@@ -280,6 +280,14 @@ describe("buildSnapshotDoc", () => {
         assert.deepEqual(buildSnapshotDoc({ ...entry(100), tsMs: 0, pwl }).pwl, pwl);
     });
 
+    test("deposit ledger: dpl omit-on-empty, pass through whole", () => {
+        const bare = buildSnapshotDoc({ ...entry(100), tsMs: 0 });
+        assert.equal("dpl" in bare, false);
+        assert.equal("dpl" in buildSnapshotDoc({ ...entry(100), tsMs: 0, dpl: [] }), false);
+        const dpl = [{ h: "W1N1", e: 18000, d: { silicon: 2400, mist: 300 }, w: 11200 }];
+        assert.deepEqual(buildSnapshotDoc({ ...entry(100), tsMs: 0, dpl }).dpl, dpl);
+    });
+
     test("per-room pw rides through `rooms` with no collector change", () => {
         const pwRoom = { ...room, pw: [12_000, 3000, 80, 1] };
         const doc = buildSnapshotDoc({ ...entry(100), tsMs: 0, rooms: { W1N1: pwRoom } });

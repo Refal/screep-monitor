@@ -1,5 +1,5 @@
 // Remote-economy columns and formatters shared by the overview section and the room view.
-import { fmtDuration, LEDGER_MATURE_TICKS, observedMsPerTick, remoteLedgerRows } from "../calc.js";
+import { compact, fmtDuration, LEDGER_MATURE_TICKS, observedMsPerTick, remoteLedgerRows } from "../calc.js";
 import { $, fmtInt } from "../dom.js";
 import { history, latest } from "../state.js";
 import { roomLinkCell } from "./links.js";
@@ -23,7 +23,15 @@ function economyNetCell(row) {
     return td;
 }
 
-function economyWindowCell(row, msPerTick) {
+// A per-home ledger total, with the exact figure and its per-tick rate on hover.
+export function ledgerAmountCell(total, rate, unit, w) {
+    const td = textCell(compact(total));
+    td.title = `${fmtInt.format(total)} ${unit} over ${fmtInt.format(w)} ticks · ${fmtRate.format(rate)} /tick`;
+    return td;
+}
+
+// How much game time a ledger row covers, as wall time once the tick rate is known.
+export function ledgerWindowCell(row, msPerTick) {
     const td = textCell(msPerTick != null ? fmtDuration(row.w * msPerTick) : `${fmtInt.format(row.w)} ticks`);
     td.title = `${fmtInt.format(row.w)} ticks`;
     return td;
@@ -48,7 +56,7 @@ function routeColumns(msPerTick) {
           cell: economyNetCell },
         { key: "window", label: "Window", tier: 3,
           hint: "how much game time the in and out sums cover; a route added recently covers less than the full ring",
-          cell: r => economyWindowCell(r, msPerTick) },
+          cell: r => ledgerWindowCell(r, msPerTick) },
     ];
 }
 

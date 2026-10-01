@@ -18,7 +18,7 @@ import {
     armyOperations, armySummary, verdictInfo, siegeDetailText,
     DEFENSE_VERDICT, siegeVerdictFor, worstTone,
     powerGateState, powerFleetRows, haulerSummary, powerStockPoint, powerStockSeries,
-    remoteLedgerRows, remoteLedgerSummary, LEDGER_MATURE_TICKS, powerLedgerRows,
+    remoteLedgerRows, remoteLedgerSummary, LEDGER_MATURE_TICKS, powerLedgerRows, depositLedgerRows,
 } from "../public/calc.js";
 import { degradeLatest } from "../public/demo.js";
 
@@ -1928,6 +1928,59 @@ describe("remote ledger", () => {
         const rows = [{ rooms: { W1N1: { thr: { h: 0 }, roles: {} } }, rl: [row("W1N1", "W2N1", 1, 1, 12000)] }];
         assert.equal(remoteLedgerRows(rows[0]).absent, null);
         assert.equal(remoteLedgerRows(degradeLatest(rows).at(-1)).absent, "unknown");
+    });
+});
+
+describe("depositLedgerRows", () => {
+    const snap = dpl => ({ rooms: { W1N1: { thr: { h: 0 } } }, dpl });
+
+    test("deposits are totalled across types, sorted, and rates divide by the row's window", () => {
+        const [r] = depositLedgerRows(snap([{ h: "W1N1", e: 24000, d: { silicon: 2000, biomass: 1000 }, w: 12000 }])).rows;
+        assert.deepEqual(r.deposits, [["biomass", 1000], ["silicon", 2000]]);
+        assert.equal(r.total, 3000);
+        assert.equal(r.depositRate, 0.25);
+        assert.equal(r.energyRate, 2);
+        assert.equal(r.energyPerUnit, 8);
+        assert.equal(r.mature, true);
+    });
+
+    test("no `d` yet is an empty list and a null ratio, not Infinity", () => {
+        const [r] = depositLedgerRows(snap([{ h: "W1N1", e: 900, w: 300 }])).rows;
+        assert.deepEqual(r.deposits, []);
+        assert.equal(r.total, 0);
+        assert.equal(r.energyPerUnit, null);
+    });
+
+    test("a row is mature from exactly LEDGER_MATURE_TICKS; w of 0 gives zero rates", () => {
+        const { rows } = depositLedgerRows(snap([
+            { h: "W1N1", e: 1, d: { metal: 10 }, w: LEDGER_MATURE_TICKS - 1 },
+            { h: "W2N1", e: 1, d: { metal: 1 }, w: LEDGER_MATURE_TICKS },
+            { h: "W3N1", e: 5, d: { mist: 5 }, w: 0 },
+        ]));
+        assert.deepEqual(rows.map(r => [r.home, r.mature]), [["W2N1", true], ["W1N1", false], ["W3N1", false]]);
+        assert.equal(rows[2].depositRate, 0);
+        assert.equal(rows[2].energyRate, 0);
+    });
+
+    test("absent dpl reads as none when threat detail survived, unknown when degraded", () => {
+        assert.equal(depositLedgerRows(snap(undefined)).absent, "none");
+        assert.equal(depositLedgerRows({ rooms: { W1N1: {} } }).absent, "unknown");
+        assert.equal(depositLedgerRows(null).absent, "unknown");
+        assert.deepEqual(depositLedgerRows(snap([])), { rows: [], absent: null });
+    });
+
+    test("malformed rows are dropped and non-numeric deposit units ignored", () => {
+        const { rows } = depositLedgerRows(snap([
+            { e: 1, w: 1 },
+            { h: "W1N1", e: "x", w: 1 },
+            { h: "W2N1", e: 1, d: { silicon: 4, metal: "x" }, w: 1 },
+        ]));
+        assert.deepEqual(rows.map(r => [r.home, r.total]), [["W2N1", 4]]);
+    });
+
+    test("the demo's degraded row drops dpl, so it reads unknown", () => {
+        const rows = [{ rooms: { W1N1: { thr: { h: 0 }, roles: {} } }, dpl: [{ h: "W1N1", e: 1, w: 1 }] }];
+        assert.equal(depositLedgerRows(degradeLatest(rows).at(-1)).absent, "unknown");
     });
 });
 

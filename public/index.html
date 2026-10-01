@@ -27,6 +27,7 @@
 <link rel="modulepreload" href="sections/attacks.js">
 <link rel="modulepreload" href="sections/boosts.js">
 <link rel="modulepreload" href="sections/defense.js">
+<link rel="modulepreload" href="sections/deposit.js">
 <link rel="modulepreload" href="sections/index.js">
 <link rel="modulepreload" href="sections/overview.js">
 <link rel="modulepreload" href="sections/power.js">
@@ -147,6 +148,22 @@
             <span>one row per squad and per bank’s haulers; rows marked “gone” are banks our own kill already removed from intel while the creeps are still loading or on the way home</span>
             <span>live-bank planner state (hits, decay, contest, verdicts) is not published — the bot’s debugPowerBanks() console command shows it</span>
             <span>the ledger books spend at spawn and at the lab and power on delivery, so a young op shows its cost before its power</span>
+        </div>
+        </details>
+
+        <details class="section" data-section="deposit">
+            <summary>Deposit harvesting · ledger per home (latest snapshot)</summary>
+        <div class="tiles" id="deposit-tiles"></div>
+        <div class="table-wrap">
+            <table id="deposit-ledger-table">
+                <thead></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div class="viz-legend">
+            <span>the ledger books spend at spawn and deposits on delivery, so a young op shows its cost before its deposits</span>
+            <span>deposit creeps are never boosted, so energy is the only cost</span>
+            <span>units are summed across deposit types, so the ratio is energy per unit hauled, not per unit of value</span>
         </div>
         </details>
 

@@ -1206,6 +1206,36 @@ export function powerLedgerRows(latest) {
     return { rows, absent: null };
 }
 
+// Deposit harvesting ledger (`dpl`): per home, the energy deposit ops cost it
+// (`e`: harvester and hauler spawn bodies) against the deposit units its
+// haulers handed over at home (`d`, per type, omitted before the first
+// delivery), over `w` ticks. screeps2 docs/stats-history-ring.md ("Deposit
+// harvesting") is the contract. Same bucket ring and degradation step as
+// `pwl`, so maturity and absence read the same way. Deposit creeps are never
+// boosted, so there is no compound column. Units are summed across types for
+// the ratio: energy per unit hauled, not per unit of value.
+export function depositLedgerRows(latest) {
+    if (!latest?.dpl) return { rows: [], absent: hasThreatDetail(latest ?? {}) ? "none" : "unknown" };
+    const rows = latest.dpl
+        .filter(r => typeof r?.h === "string" && Number.isFinite(r.e) && Number.isFinite(r.w))
+        .map(r => {
+            const deposits = Object.entries(r.d ?? {})
+                .filter(([, units]) => Number.isFinite(units))
+                .sort(([a], [b]) => a.localeCompare(b));
+            const total = deposits.reduce((sum, [, units]) => sum + units, 0);
+            return {
+                home: r.h, e: r.e, w: r.w, deposits, total,
+                depositRate: r.w > 0 ? total / r.w : 0,
+                energyRate: r.w > 0 ? r.e / r.w : 0,
+                energyPerUnit: total > 0 ? r.e / total : null,
+                mature: r.w >= LEDGER_MATURE_TICKS,
+            };
+        })
+        // Verdict-grade rows first, then the homes bringing in the most deposits.
+        .sort((a, b) => b.mature - a.mature || b.total - a.total || a.home.localeCompare(b.home));
+    return { rows, absent: null };
+}
+
 // ---------------------------------------------------------------------------
 // Power harvesting (ph / pba / pw / pwl + power squads in `ar`).
 // screeps2/src/manager/StatsManager.ts publishes it; docs/stats-history-ring.md

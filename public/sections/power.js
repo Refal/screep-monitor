@@ -1,12 +1,12 @@
 // Power harvesting section.
 import {
-    compact, fmtDuration, hasThreatDetail, haulerSummary, LEDGER_MATURE_TICKS, observedMsPerTick,
+    compact, hasThreatDetail, haulerSummary, LEDGER_MATURE_TICKS, observedMsPerTick,
     powerFleetRows, powerGateState, powerLedgerRows, powerStockPoint, roomUrl,
 } from "../calc.js";
 import { cssVar, fmtInt } from "../dom.js";
 import { history, latest } from "../state.js";
 import { pluralCount } from "../ui/cells-defense.js";
-import { fmtRate } from "../ui/cells-economy.js";
+import { fmtRate, ledgerAmountCell, ledgerWindowCell } from "../ui/cells-economy.js";
 import { chipsCell } from "../ui/cells-labs.js";
 import { makeBadge, roomLink, roomLinkCell } from "../ui/links.js";
 import { naCell, renderTable, textCell } from "../ui/table.js";
@@ -182,12 +182,6 @@ function ledgerRatioCell(row) {
     return td;
 }
 
-function ledgerAmountCell(total, rate, unit, w) {
-    const td = textCell(compact(total));
-    td.title = `${fmtInt.format(total)} ${unit} over ${fmtInt.format(w)} ticks · ${fmtRate.format(rate)} /tick`;
-    return td;
-}
-
 function ledgerBoostsCell(row) {
     if (!row.compounds.length) return naCell("none", "no boost compound consumed by power ops within the window");
     const chips = row.compounds.map(([compound, units]) => {
@@ -196,12 +190,6 @@ function ledgerBoostsCell(row) {
         return badge;
     });
     return chipsCell(chips, row.compounds.map(([c, u]) => `${c} ${fmtInt.format(u)}`).join(" · "));
-}
-
-function ledgerWindowCell(row, msPerTick) {
-    const td = textCell(msPerTick != null ? fmtDuration(row.w * msPerTick) : `${fmtInt.format(row.w)} ticks`);
-    td.title = `${fmtInt.format(row.w)} ticks`;
-    return td;
 }
 
 function ledgerColumns(msPerTick) {

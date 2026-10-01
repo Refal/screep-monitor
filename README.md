@@ -141,6 +141,13 @@ bucket ring as `rl`, so `w` is per row and `LEDGER_MATURE_TICKS` applies: a youn
 delivery, so an op in progress always shows its cost first. `powerLedgerRows` reads it, with
 the same "none" vs "unknown" absence branch as `remoteLedgerRows`.
 
+`dpl` (deposit ledger) is the same per-home ring for deposit harvesting: `e` is the energy
+deposit harvester and hauler bodies cost at spawn, `d` the deposit units its haulers handed
+over at home per type (omitted before the first delivery), and `w` the ticks covered. Deposit
+creeps are never boosted, so there is no compound column. `depositLedgerRows` totals `d`
+across types for the energy-per-unit ratio (per unit hauled, not per unit of value), with the
+same maturity rule and "none" vs "unknown" absence branch as `pwl`.
+
 `sc` / `scm` are per-room too and likewise need no collector change: `sc` is the room's
 resolved storage class (`vault` holds the war chest, `outpost` keeps only what its own
 defense consumes) and `scm` (`pin` / `config`) is present only when a manual override decided
@@ -229,6 +236,9 @@ ever urgent is "is anything on fire?".
   over time is a chart in the Empire section instead, since `pw` (unlike everything else
   here) has complete history. Bank rooms are highway rooms, so their names link out to
   screeps.com rather than to a per-room view.
+- **Deposit harvesting** is a latest-snapshot section built from `dpl` alone — tiles for the
+  empire-wide totals and one ledger row per home of deposits in, by type, against energy out.
+  It is the only deposit data the bot publishes.
 - **The per-room view is a hash route**, not a tail on the same page — `#/room/E23S45`, with
   the time range as `?range=`. `public/route.js` owns the grammar (and rejects a range with
   no `LOD_BY_RANGE` flag behind it, which would otherwise run an unflagged full-resolution
