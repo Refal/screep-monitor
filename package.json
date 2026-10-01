@@ -19,10 +19,12 @@
   "overrides": {
     "uuid": "^11.1.1",
     "retry-request": "^9.0.1",
-    "teeny-request": "^11.0.1"
+    "teeny-request": "^11.0.1",
+    "glob": "^13.0.6",
+    "node-domexception": "npm:@nolyfill/domexception@^1.0.28"
   },
   "allowScripts": {
     "@firebase/util@1.15.3": true,
-    "protobufjs@7.6.5": true
+    "protobufjs@7.6.6": true
   }
 }
