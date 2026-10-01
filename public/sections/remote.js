@@ -290,10 +290,11 @@ function remoteLogAggressorsCell(ep) {
     return naCell("unnamed", "no owner was recorded for these hostiles — usually Invader NPCs");
 }
 
-function remoteLogColumns(msPerTick) {
+// A corridor episode has no home by definition, so its table drops that column.
+function remoteLogColumns(msPerTick, corridor) {
     return [
         { key: "room", label: "Room", primary: true, cell: ep => roomLinkCell(ep.room) },
-        { key: "home", label: "Home", cell: ep => remoteHomeCell(ep.home) },
+        ...(corridor ? [] : [{ key: "home", label: "Home", cell: ep => remoteHomeCell(ep.home) }]),
         { key: "when", label: "When", cell: ep => remoteWhenCell(ep, msPerTick) },
         { key: "ticks", label: "Ticks", tier: 3,
           hint: "first through last tick the hostiles were actually seen — both ends come from the sighting's own age, not from the snapshots that carried it",
@@ -306,14 +307,22 @@ function remoteLogColumns(msPerTick) {
     ];
 }
 
-export function renderRemoteLog() {
+// Remotes (episodes with a home) and corridor sightings (no home) share one
+// episode builder and are split into two tables here.
+function renderEpisodeLog(tableId, corridor, noneText) {
     const { episodes, covered, total } = remoteEpisodes(history);
-    renderTable("remote-log", remoteLogColumns(observedMsPerTick(history)),
-        covered === 0 ? [] : episodes.slice(0, ATTACK_LOG_MAX_ROWS),
+    renderTable(tableId, remoteLogColumns(observedMsPerTick(history), corridor),
+        covered === 0 ? [] : episodes.filter(ep => !ep.home === corridor).slice(0, ATTACK_LOG_MAX_ROWS),
         covered === 0
             ? { text: "no remote detail in this range", why: REMOTE_DEGRADED_TITLE }
-            : { text: "no remote incursions observed in this range" });
-    $("remote-log-note").textContent = covered < total
+            : { text: noneText });
+    $(`${tableId}-note`).textContent = covered < total
         ? `${covered} of ${total} snapshots in range carried remote detail — gaps are payload degradation, not quiet periods`
         : `${covered} of ${total} snapshots in range carried remote detail`;
 }
+
+export const renderRemoteLog = () =>
+    renderEpisodeLog("remote-log", false, "no remote incursions observed in this range");
+
+export const renderCorridorLog = () =>
+    renderEpisodeLog("corridor-log", true, "no corridor sightings observed in this range");

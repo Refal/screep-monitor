@@ -10,7 +10,7 @@ import { renderDepositLedgerTable, renderDepositTiles } from "./deposit.js";
 import { renderEmpireCharts } from "./overview.js";
 import { renderPowerFleetTable, renderPowerLedgerTable, renderPowerTiles } from "./power.js";
 import { renderRemoteEconomyTiles } from "./remote-economy.js";
-import { renderRemoteLog, renderRemoteTable, renderRemoteTiles } from "./remote.js";
+import { renderCorridorLog, renderRemoteLog, renderRemoteTable, renderRemoteTiles } from "./remote.js";
 import { renderRoomsTable } from "./rooms.js";
 
 // Each overview section is a <details> (see index.html). A collapsed one is
@@ -40,6 +40,7 @@ export const SECTIONS = [
     } },
     { id: "attacks",    render: renderAttackLog, history: true },
     { id: "remote-log", render: renderRemoteLog, history: true },
+    { id: "corridor-log", render: renderCorridorLog, history: true },
 ];
 
 export const dirtySections = new Set();

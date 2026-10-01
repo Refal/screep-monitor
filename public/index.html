@@ -235,7 +235,7 @@
             </table>
         </div>
         <div class="viz-legend">
-            <span>“keepers” is an SK room’s standing guards — routine, and excluded from Recent remote activity below</span>
+            <span>“keepers” is an SK room’s standing guards — routine, and excluded from the Recent remote and corridor activity logs below</span>
             <span>a level-0 core is a harmless reserving core; the bot keeps farming next to it</span>
             <span>“Last seen” past 300 ticks is a memory of a room that has gone dark, not a live reading</span>
             <span>a row carried from the bot’s persisted memory has no vision — its hostile count is unknown, not zero</span>
@@ -279,6 +279,17 @@
             </table>
         </div>
         <p id="remote-log-note" class="viz-legend"></p>
+        </details>
+
+        <details class="section" data-section="corridor-log">
+            <summary>Recent corridor activity</summary>
+        <div class="table-wrap">
+            <table id="corridor-log">
+                <thead></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <p id="corridor-log-note" class="viz-legend"></p>
         </details>
         </div>
 
