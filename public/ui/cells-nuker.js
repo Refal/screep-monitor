@@ -55,8 +55,12 @@ function nukerChip(label, amount, cap) {
     const chip = document.createElement("span");
     chip.className = "chip";
     const fill = amount / cap;
-    chip.style.background = amount === 0 ? cssVar("--grid") : cssVar(`--fill-${rampLevel(Math.min(1, fill))}`);
-    chip.title = `${label} ${fmtInt.format(amount)} / ${fmtInt.format(cap)} (${Math.round(fill * 100)}%)`;
+    // rampLevel goes green at 85%, but a nuker can't launch until each stock
+    // is full — so green is reserved for amount >= cap, anything short tops
+    // out at level 4. Floor the % so a non-green chip never reads "100%".
+    const level = amount >= cap ? 5 : Math.min(4, rampLevel(fill));
+    chip.style.background = amount === 0 ? cssVar("--grid") : cssVar(`--fill-${level}`);
+    chip.title = `${label} ${fmtInt.format(amount)} / ${fmtInt.format(cap)} (${Math.floor(fill * 100)}%)`;
     return chip;
 }
 
