@@ -366,7 +366,7 @@ export const NUKER_COOLDOWN = 100000; // ticks after a launch
 // everywhere). Colouring zone hits against these rather than an absolute
 // threshold is the point: a healthy RCL6 rampart and a neglected RCL8 one
 // must not read the same.
-export const ZONE_RAMPART_TARGETS = { 1: 2_000, 2: 10_000, 3: 20_000, 4: 200_000, 5: 1_000_000, 6: 2_200_000, 7: 11_200_000, 8: 300_000_000, default: 10_000 };
+export const ZONE_RAMPART_TARGETS = { 1: 2_000, 2: 10_000, 3: 20_000, 4: 200_000, 5: 1_000_000, 6: 2_200_000, 7: 15_200_000, 8: 300_000_000, default: 10_000 };
 
 // Storage class hysteresis — screeps2 config/config.storageClass.ts, copied
 // verbatim. Only used to explain `sc` in words; the bot resolves the class
