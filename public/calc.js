@@ -1041,6 +1041,128 @@ export function siegeVerdictFor(latest, home, room) {
     return (latest?.sv ?? []).find(v => v.h === home && v.rm === room) ?? null;
 }
 
+// ---------------------------------------------------------------------------
+// Player campaigns (pc) — the bot's multi-day attacks on another player's
+// room. NOT the stronghold sieges above: `sv` / SIEGE_VERDICT never apply here.
+// Row: { tg, ow, ph, pa, hr?, oc?, vd?, vs?, va?, rg?, rh?, te?, ke?, sm?, st?,
+// lb? }; `ph` assess | starve | probe | press | hold | breach | cleanup, then
+// terminal done | abandoned. `rh` / `te` are known only at a vision (~every
+// 1000 ticks), so they are step values: they repeat between visions and change
+// once per vision. Like dv/sv, never degraded — absent means no campaign.
+// Every field past tg/ow/ph/pa is optional and unknown codes render muted.
+
+export const CAMPAIGN_PHASE = {
+    assess:    { word: "assess", tone: "na", explain: "sizing up the target; no force committed" },
+    starve:    { word: "starve", tone: "good", explain: "denying the target's remote income to wear down its ring and energy" },
+    probe:     { word: "probe", tone: "good", explain: "testing the ring with a small force" },
+    press:     { word: "press", tone: "short", explain: "pressing the attack on the ring" },
+    hold:      { word: "hold", tone: "serious", explain: "paused until the hold reason clears" },
+    breach:    { word: "breach", tone: "serious", explain: "breaking through the ring" },
+    cleanup:   { word: "cleanup", tone: "good", explain: "clearing what is left of the target" },
+    done:      { word: "done", tone: "good", explain: "finished" },
+    abandoned: { word: "abandoned", tone: "na", explain: "given up" },
+};
+
+export const CAMPAIGN_VERDICT = {
+    go:                  { word: "go", tone: "good", explain: "a breach force can be fielded" },
+    "no-seat":           { word: "no seat", tone: "serious", explain: "no home can field the force" },
+    unhealable:          { word: "unhealable", tone: "serious", explain: "the target's damage outruns what the force can heal" },
+    "too-many-waves":    { word: "too many waves", tone: "serious", explain: "the breach would need more waves than the cap" },
+    "safe-mode-horizon": { word: "safe-mode horizon", tone: "short", explain: "the breach would outlast the target's safe mode" },
+    "no-vision":         { word: "no vision", tone: "short", explain: "no recent sight of the target" },
+    unreachable:         { word: "unreachable", tone: "serious", explain: "no route to the target" },
+};
+
+const CAMPAIGN_HOLD = {
+    "safe-mode": "target is in safe mode",
+    "home-attacked": "a home room is under attack",
+    "boosts-missing": "a required boost is out of stock",
+};
+
+const CAMPAIGN_OUTCOME = {
+    unclaimed: "target room was unclaimed",
+    "owner-changed": "target changed owner",
+    cleared: "target cleared",
+    "abandoned-flat": "abandoned: no progress",
+    "abandoned-starve": "abandoned: starve did not work",
+};
+
+const CAMPAIGN_PHASE_ORDER = Object.keys(CAMPAIGN_PHASE);
+const campaignTerminal = c => c.ph === "done" || c.ph === "abandoned";
+const campaignRank = c => {
+    const i = CAMPAIGN_PHASE_ORDER.indexOf(c.ph);
+    return i < 0 ? CAMPAIGN_PHASE_ORDER.length : i;
+};
+
+export function campaignPhaseInfo(code) {
+    return verdictInfo(CAMPAIGN_PHASE, code);
+}
+
+// Active campaigns first (phase order, then target), terminal ones last.
+export function campaigns(latest) {
+    return [...(latest?.pc ?? [])].sort((a, b) =>
+        campaignTerminal(a) - campaignTerminal(b) || campaignRank(a) - campaignRank(b) || a.tg.localeCompare(b.tg));
+}
+
+export function campaignHoldText(c) {
+    if (c.hr == null) return null;
+    return CAMPAIGN_HOLD[c.hr] ?? c.hr;
+}
+
+export function campaignOutcomeText(c) {
+    if (c.oc == null) return null;
+    return CAMPAIGN_OUTCOME[c.oc] ?? c.oc;
+}
+
+// Verdict word plus its go-seat detail "pair from E1S1 · 2 waves"; null when
+// the bot published no verdict yet.
+export function campaignVerdict(c) {
+    if (c.vd == null) return null;
+    const info = verdictInfo(CAMPAIGN_VERDICT, c.vd);
+    const vs = c.vd === "go" && Array.isArray(c.vs) ? c.vs : null;
+    const detail = vs ? `${vs[0]} from ${vs[1]} · ${vs[2]} wave${vs[2] === 1 ? "" : "s"} · breach ${compact(vs[3])} ticks` : null;
+    return { ...info, detail };
+}
+
+// Safe mode as text: null when the field is absent, "inactive" when no ticks
+// are left. Charges are shown either way — they decide whether it can recur.
+export function campaignSafeModeText(c) {
+    if (!Array.isArray(c.sm)) return null;
+    const [charges, left] = c.sm;
+    return left > 0 ? `active · ${compact(left)} ticks left · ${charges} charge${charges === 1 ? "" : "s"}`
+        : `inactive · ${charges} charge${charges === 1 ? "" : "s"}`;
+}
+
+// Starve line as {inScope, covered, kills, lost} from `st`; null when absent.
+export function campaignStarve(c) {
+    if (!Array.isArray(c.st)) return null;
+    const [inScope, covered, kills, lost] = c.st;
+    return { inScope, covered, kills, lost };
+}
+
+// Series for one target across history rows, one value per row (aligned to the
+// chart's labels). A row without the target or the field is null, so a chart
+// with spanGaps off breaks there instead of bridging an absence.
+export function campaignTrend(rows, target) {
+    const out = { rh: [], te: [], kills: [], lost: [] };
+    for (const r of rows) {
+        const c = (r.pc ?? []).find(x => x.tg === target);
+        out.rh.push(c?.rh ?? null);
+        out.te.push(c?.te ?? null);
+        out.kills.push(c?.st?.[2] ?? null);
+        out.lost.push(c?.st?.[3] ?? null);
+    }
+    return out;
+}
+
+// Every target that ever appears in the loaded rows, active ones in `latest`
+// first, so a chart can show a campaign's whole trend.
+export function campaignTargets(rows, latest) {
+    const seen = new Set(campaigns(latest).map(c => c.tg));
+    for (const r of rows) for (const c of r.pc ?? []) seen.add(c.tg);
+    return [...seen];
+}
+
 // Routes on the power pipeline belong to the Power section; everything else
 // the army does is an "operation". Harvest armies are always kind 'offense',
 // and their squads carry `pw`/`pf`; a defense or manual squad sent to a bank

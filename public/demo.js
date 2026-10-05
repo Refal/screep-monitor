@@ -454,6 +454,27 @@ function demoSv(i, n) {
     return rows;
 }
 
+// Player campaigns. E33S31 is a starve whose ring hits and stored energy fall
+// in steps, one per vision (every 50 rows here), while kills pull ahead of
+// losses; E36S29 is a fresh assess with no vision yet; E28S33 finished. Never
+// degraded, like dv / sv.
+function demoPc(i, n) {
+    const vision = Math.floor(i / 50);
+    const rows = [
+        {
+            tg: "E33S31", ow: "Marauder", ph: "starve", pa: 30000 + i * 120, vd: "safe-mode-horizon", va: (i % 50) * 120,
+            rg: [24, 11, 2, 0], rh: 21000000 - vision * 1700000, te: 410000 - vision * 38000, ke: 9, sm: [2, 0],
+            st: [4, 3, 6 + Math.floor(i / 12), 2 + Math.floor(i / 40)], lb: ["towerDrain", 2.4],
+        },
+        { tg: "E36S29", ow: "Drifter", ph: "assess", pa: i * 120, va: 4000 },
+    ];
+    if (i >= Math.floor(n * 0.5)) rows[0].sm = [1, Math.max(0, 15000 - (i - Math.floor(n * 0.5)) * 120)];
+    if (i >= Math.floor(n * 0.2)) {
+        rows.push({ tg: "E28S33", ow: "Squatter", ph: "done", oc: "cleared", pa: 90000, vd: "go", vs: ["quad", "E24S48", 2, 1800, 4000000] });
+    }
+    return rows;
+}
+
 // Remote energy ledger. Mature routes swing their window between 10,500 and
 // 12,000 ticks the way the bot's bucketed ring does, so the "mature" cutoff is
 // exercised; E24S48 is only booked partway through (a young row that ramps up
@@ -679,6 +700,7 @@ export function synthDemo(rangeHours, maxPoints) {
             ...(dpl?.length ? { dpl } : {}),
             dv: demoDv(i, n),
             sv: demoSv(i, n),
+            pc: demoPc(i, n),
             // Always published and never degraded — that is the whole point of
             // the scalar, so it stays outside the `degraded` branch above. It
             // is absent only in the pre-power stretch, where the bot had no

@@ -89,6 +89,16 @@ cache is refilling after a global reset", never "dropped to fit". Neither is wri
 everything that looks threatened (`dv` only covers remotes a home plans), so the dashboard
 never presents a missing verdict as one that is coming.
 
+`pc` (player campaigns) is one row per multi-day attack on another player's room, not to be
+confused with the `sv` stronghold sieges: target `tg`/owner `ow`, phase `ph` (`assess`,
+`starve`, `probe`, `press`, `hold`, `breach`, `cleanup`, then terminal `done`/`abandoned`)
+and ticks in it `pa`, plus optional hold reason, outcome, breach verdict, ring counts, safe
+mode `[charges, ticks left]`, starve coverage `[in scope, covered, kills, lost]` and the best
+attrition option. Ring hits `rh` and target energy `te` are step values that change only at a
+vision (about every 1000 ticks), so the charts draw steps, on separate axes since ring hits run
+in millions; a row without the campaign breaks the line rather than bridging it. Same contract as `dv`/`sv`: omit-on-empty, never degraded,
+unknown codes render muted.
+
 `rl` (remote energy ledger) is one row per home→remote route: `in` is energy the route's haulers
 delivered home, `out` is what its creeps cost to spawn (reserver, builder and defender spend
 included on purpose), and `w` is the number of ticks those two sums cover. **`w` is per row**:
@@ -204,6 +214,10 @@ ever urgent is "is anything on fire?".
 - **Rooms at a glance** (below the empire tiles, never collapsed): one line per owned room,
   split by class. Levelling rooms get an RCL progress bar, ETA and storage, sorted soonest first;
   max-level rooms get zone / nuker / labs / storage / spawn, anything coloured first.
+- **Player campaigns** (`public/sections/campaigns.js`, `pc` in `public/calc.js`): tiles and a
+  table per campaign (phase, verdict, ring, safe mode, starve coverage, best attrition, vision
+  age) plus two step charts of the starve trend: target ring hits and stored energy, and
+  denial kills against losses. Falling lines mean the starve works.
 - **Sections** are native `<details data-section="…">` accordions. A collapsed one is
   `display: none`, and a Chart.js chart built inside a zero-sized container bakes a wrong
   `devicePixelRatio` it does not recover from, so `SECTIONS` in `public/sections/index.js` renders

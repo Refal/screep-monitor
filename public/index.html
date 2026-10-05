@@ -26,6 +26,7 @@
 <link rel="modulepreload" href="sections/army.js">
 <link rel="modulepreload" href="sections/attacks.js">
 <link rel="modulepreload" href="sections/boosts.js">
+<link rel="modulepreload" href="sections/campaigns.js">
 <link rel="modulepreload" href="sections/defense.js">
 <link rel="modulepreload" href="sections/deposit.js">
 <link rel="modulepreload" href="sections/index.js">
@@ -123,6 +124,27 @@
             <span>one row per defense or siege the army is running or has decided on — a verdict with no squad (“undefendable”, a siege on hold) still gets a row</span>
             <span>verdicts are the planners’ cached decisions, sampled every 20 ticks; after a global reset they are empty until the planners run again</span>
             <span>power-bank squads are in the Power section</span>
+        </div>
+        </details>
+
+        <details class="section" data-section="campaigns">
+            <summary>Player campaigns · starve trend and verdicts (latest snapshot)</summary>
+        <div class="tiles" id="campaign-tiles"></div>
+        <div class="table-wrap">
+            <table id="campaign-table">
+                <thead></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div class="charts" id="campaign-charts" hidden>
+            <div class="card"><h3>Target ring hits</h3><div class="plot"><canvas id="c-campaign-ring"></canvas></div></div>
+            <div class="card"><h3>Target stored energy (storage + terminal)</h3><div class="plot"><canvas id="c-campaign-energy"></canvas></div></div>
+            <div class="card"><h3>Starve denial · creeps killed vs lost (solid: killed, dashed: lost)</h3><div class="plot"><canvas id="c-campaign-denial"></canvas></div></div>
+        </div>
+        <div class="viz-legend">
+            <span>one row per player campaign the bot runs; finished ones are listed last</span>
+            <span>ring hits and target energy are known only at a vision (about every 1000 ticks), so the charts step; falling lines mean the starve works</span>
+            <span>a campaign is not a stronghold siege — those are in Army</span>
         </div>
         </details>
 

@@ -264,6 +264,14 @@ describe("buildSnapshotDoc", () => {
         assert.deepEqual(full.sv, sv);
     });
 
+    test("player campaigns: pc omit-on-empty, passes through whole", () => {
+        const bare = buildSnapshotDoc({ ...entry(100), tsMs: 0 });
+        assert.equal("pc" in bare, false);
+        assert.equal("pc" in buildSnapshotDoc({ ...entry(100), tsMs: 0, pc: [] }), false);
+        const pc = [{ tg: "W9N9", ow: "Foe", ph: "starve", pa: 4000, sm: [1, 0], st: [3, 2, 5, 1], rh: 900000, te: 120000 }];
+        assert.deepEqual(buildSnapshotDoc({ ...entry(100), tsMs: 0, pc }).pc, pc);
+    });
+
     test("remote ledger: rl omit-on-empty, pass through whole", () => {
         const bare = buildSnapshotDoc({ ...entry(100), tsMs: 0 });
         assert.equal("rl" in bare, false);

@@ -18,6 +18,7 @@ import {
     armyOperations, armySummary, verdictInfo, siegeDetailText,
     DEFENSE_VERDICT, siegeVerdictFor, worstTone,
     powerGateState, powerFleetRows, haulerSummary, powerStockPoint, powerStockSeries,
+    campaigns, campaignTrend, campaignVerdict, campaignPhaseInfo, campaignHoldText, campaignSafeModeText, campaignStarve,
     remoteLedgerRows, remoteLedgerSummary, LEDGER_MATURE_TICKS, powerLedgerRows, depositLedgerRows,
 } from "../public/calc.js";
 import { degradeLatest } from "../public/demo.js";
@@ -2034,5 +2035,55 @@ describe("powerLedgerRows", () => {
     test("the demo's degraded row drops pwl, so it reads unknown", () => {
         const rows = [{ rooms: { W1N1: { thr: { h: 0 }, roles: {} } }, pwl: [{ h: "W1N1", p: 1, e: 1, w: 1 }] }];
         assert.equal(powerLedgerRows(degradeLatest(rows).at(-1)).absent, "unknown");
+    });
+});
+
+describe("player campaigns (pc)", () => {
+    const row = (tg, ph, extra = {}) => ({ tg, ow: "Foe", ph, pa: 100, ...extra });
+
+    test("active campaigns come first in phase order, terminal ones last", () => {
+        const latest = { pc: [row("W3N3", "done"), row("W2N2", "breach"), row("W9N9", "abandoned"), row("W1N1", "starve"), row("W0N1", "starve")] };
+        assert.deepEqual(campaigns(latest).map(c => c.tg), ["W0N1", "W1N1", "W2N2", "W3N3", "W9N9"]);
+        assert.deepEqual(campaigns({}), []);
+    });
+
+    test("trend carries one value per row from rh, te and the st tuple", () => {
+        const at = (rh, te, st) => ({ pc: [row("W1N1", "starve", { rh, te, st })] });
+        const rows = [at(900, 50, [1, 1, 0, 0]), at(900, 50, [1, 1, 1, 0]), at(900, 50, [1, 1, 1, 0]),
+            at(800, 40, [1, 1, 2, 1]), at(800, 40, [1, 1, 2, 1])];
+        const t = campaignTrend(rows, "W1N1");
+        assert.deepEqual(t.rh, [900, 900, 900, 800, 800]);
+        assert.deepEqual(t.te, [50, 50, 50, 40, 40]);
+        assert.deepEqual(t.kills, [0, 1, 1, 2, 2]);
+        assert.deepEqual(t.lost, [0, 0, 0, 1, 1]);
+    });
+
+    test("trend is null where the target or the field is absent", () => {
+        const rows = [{ pc: [row("W1N1", "assess")] }, {}, { pc: [row("W2N2", "assess", { rh: 5 })] },
+            { pc: [row("W1N1", "starve", { rh: 7 })] }, { pc: [row("W1N1", "starve", { rh: 7 })] }];
+        assert.deepEqual(campaignTrend(rows, "W1N1").rh, [null, null, null, 7, 7]);
+        assert.deepEqual(campaignTrend(rows, "W3N3").rh, [null, null, null, null, null]);
+    });
+
+    test("unknown phase and verdict codes render as themselves, muted", () => {
+        assert.deepEqual(campaignPhaseInfo("regroup"), { word: "regroup", tone: "na", explain: 'unrecognized planner code "regroup"' });
+        const v = campaignVerdict(row("W1N1", "press", { vd: "mystery" }));
+        assert.equal(v.word, "mystery");
+        assert.equal(v.tone, "na");
+        assert.equal(campaignHoldText(row("W1N1", "hold", { hr: "new-reason" })), "new-reason");
+    });
+
+    test("a go verdict carries its seat detail; missing optional fields give null", () => {
+        const go = campaignVerdict(row("W1N1", "probe", { vd: "go", vs: ["pair", "W5N5", 1, 900, 40000] }));
+        assert.equal(go.tone, "good");
+        assert.match(go.detail, /pair from W5N5 · 1 wave · breach/);
+        const bare = row("W1N1", "assess");
+        assert.equal(campaignVerdict(bare), null);
+        assert.equal(campaignSafeModeText(bare), null);
+        assert.equal(campaignStarve(bare), null);
+        assert.equal(campaignHoldText(bare), null);
+        assert.match(campaignSafeModeText(row("W1N1", "hold", { sm: [1, 5000] })), /^active/);
+        assert.match(campaignSafeModeText(row("W1N1", "hold", { sm: [0, 0] })), /^inactive/);
+        assert.deepEqual(campaignStarve(row("W1N1", "starve", { st: [4, 3, 6, 2] })), { inScope: 4, covered: 3, kills: 6, lost: 2 });
     });
 });

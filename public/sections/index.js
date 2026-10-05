@@ -5,6 +5,7 @@ import { renderRemoteEconomyTable } from "../ui/cells-economy.js";
 import { renderArmyTable, renderArmyTiles } from "./army.js";
 import { renderAttackLog } from "./attacks.js";
 import { renderBoostMatrix, renderLabsTable } from "./boosts.js";
+import { renderCampaignCharts, renderCampaignTable, renderCampaignTiles } from "./campaigns.js";
 import { renderDefenseTable, renderDefenseTiles } from "./defense.js";
 import { renderDepositLedgerTable, renderDepositTiles } from "./deposit.js";
 import { renderEmpireCharts } from "./overview.js";
@@ -26,6 +27,7 @@ import { renderRoomsTable } from "./rooms.js";
 export const SECTIONS = [
     { id: "defense",    render: () => { renderDefenseTiles(); renderDefenseTable(); } },
     { id: "army",       render: () => { renderArmyTiles(); renderArmyTable(); } },
+    { id: "campaigns",  render: () => { renderCampaignTiles(); renderCampaignTable(); renderCampaignCharts(); } },
     { id: "power",      render: () => { renderPowerTiles(); renderPowerFleetTable(); renderPowerLedgerTable(); } },
     { id: "deposit",    render: () => { renderDepositTiles(); renderDepositLedgerTable(); } },
     { id: "boosts",     render: renderBoostMatrix },
