@@ -341,7 +341,7 @@ export function boostFloor(raw) {
 // be under-observed during a real fight (the payload gets big when there's a
 // lot going on).
 
-// CRITICAL_RAMPAT_SAFE — screeps2 config/config.buildPriority.ts:33. Ramparts
+// CRITICAL_RAMPAT_SAFE — screeps2 config/config.buildPriority.ts:43. Ramparts
 // under this get repair priority 0 in the bot itself, so it's an absolute
 // cliff, not a fraction-of-target ramp level.
 export const CRITICAL_RAMPART_HITS = 4000;
@@ -372,8 +372,8 @@ export const ZONE_RAMPART_TARGETS = { 1: 2_000, 2: 10_000, 3: 20_000, 4: 200_000
 // verbatim. Only used to explain `sc` in words; the bot resolves the class
 // itself (classifyStorageRoom) and the dashboard never re-derives it.
 export const OUTPOST_MAX_RCL = 6;
-export const VAULT_GRADUATION_HITS = 5_000_000;
-export const VAULT_FLOOR_HITS = 3_000_000;
+export const VAULT_GRADUATION_HITS = 6_000_000;
+export const VAULT_FLOOR_HITS = 3_500_000;
 
 // `sc` (vault/outpost) plus `scm` (pin/config, only when an override decided
 // it) → cell word and its explanation. null when the snapshot predates `sc`.

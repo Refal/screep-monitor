@@ -487,7 +487,7 @@ describe("storageClassInfo", () => {
         assert.deepEqual(storageClassInfo({ rcl: { l: 5 }, sc: "outpost" }),
             { word: "outpost", why: "RCL ≤ 6 — always outpost" });
         assert.deepEqual(storageClassInfo({ rcl: { l: 8 }, sc: "vault" }),
-            { word: "vault", why: "auto: zone ≥ 5.0M graduates to vault, < 3.0M reverts" });
+            { word: "vault", why: "auto: zone ≥ 6.0M graduates to vault, < 3.5M reverts" });
     });
     test("an override that decided the class is named in word and reason", () => {
         assert.deepEqual(storageClassInfo({ rcl: { l: 7 }, sc: "vault", scm: "pin" }),
