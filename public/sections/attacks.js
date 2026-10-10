@@ -22,12 +22,13 @@ function attackLogRaahCell(ep) {
 
 function attackLogColumns() {
     return [
-        { key: "room", label: "Room", primary: true, cell: ep => roomLinkCell(ep.room) },
-        { key: "when", label: "When", cell: attackWhenCell },
+        { key: "room", label: "Room", primary: true, sort: ep => ep.room, cell: ep => roomLinkCell(ep.room) },
+        { key: "when", label: "When", sort: ep => ep.toMs.getTime(), cell: attackWhenCell },
         { key: "ticks", label: "Ticks", tier: 3,
           hint: "first through last tick hostiles were observed — the link replays from the first",
+          sort: ep => ep.toTick - ep.fromTick,
           cell: ep => episodeTicksCell(ep, "replay from the first tick hostiles were observed") },
-        { key: "peakH", label: "Peak hostiles",
+        { key: "peakH", label: "Peak hostiles", sort: ep => ep.peakH,
           cell: ep => textCell(`${ep.peakH}${ep.boosted ? " ⚡" : ""}`) },
         { key: "peakDmg", label: "Peak RA/A/H", cell: attackLogRaahCell },
         { key: "owners", label: "Aggressors",

@@ -1,5 +1,5 @@
 // Army section.
-import { armyOperations, armySummary, hasThreatDetail, routeStatusText } from "../calc.js";
+import { armyOperations, armySummary, hasThreatDetail, operationRank, routeStatusText } from "../calc.js";
 import { cssVar } from "../dom.js";
 import { latest, route } from "../state.js";
 import { ARMY_DEGRADED_TITLE, routeDetailTitle, SAMPLED_NOTE, ticksText, TONE_COLOR } from "../ui/format.js";
@@ -71,18 +71,21 @@ function opWhereCell(op) {
 }
 
 const ARMY_COLUMNS = [
-    { key: "target", label: "Target", primary: true, cell: op => roomLinkCell(op.target) },
-    { key: "home", label: "Home", hint: "the colony that fields the squad; for a defense nobody took, the homes that gave up", cell: opHomeCell },
+    { key: "target", label: "Target", primary: true, sort: op => op.target, cell: op => roomLinkCell(op.target) },
+    { key: "home", label: "Home", hint: "the colony that fields the squad; for a defense nobody took, the homes that gave up",
+      sort: op => op.home ?? op.gaveUp[0], cell: opHomeCell },
     { key: "kind", label: "Kind",
       hint: "defense — a squad protecting a room; siege — an attack on an invader core or stronghold; manual — launched by hand",
-      cell: op => textCell(op.kind) },
+      sort: op => op.kind, cell: op => textCell(op.kind) },
     { key: "verdict", label: "Verdict",
       hint: `the planner's latest decision: covered / holding / undefendable for defense, the committed objective or the reason it is holding for a siege. It is the planner's cache, ${SAMPLED_NOTE}`,
-      cell: verdictBadgeCell },
+      // Same urgency the default order uses, so ▲ is "most urgent first".
+      sort: operationRank, cell: verdictBadgeCell },
     { key: "squads", label: "Squads",
       hint: "forming at home, staging, in transit, or deployed in the target room. Engaged squads never respawn, so “lost” is permanent",
       cell: opSquadsCell },
-    { key: "next", label: "Next", hint: "when the planner looks again: an undefendable retry, a core activation, a boost recheck", cell: opNextCell },
+    { key: "next", label: "Next", hint: "when the planner looks again: an undefendable retry, a core activation, a boost recheck",
+      sort: op => op.retryIn, cell: opNextCell },
     { key: "where", label: "Where", tier: 3, hint: "alive members at home / in the target room / on the way", cell: opWhereCell },
 ];
 

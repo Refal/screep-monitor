@@ -74,19 +74,19 @@ function ratioCell(row) {
 
 function ledgerColumns(msPerTick) {
     return [
-        { key: "home", label: "Home", primary: true, cell: r => roomLinkCell(r.home) },
+        { key: "home", label: "Home", primary: true, sort: r => r.home, cell: r => roomLinkCell(r.home) },
         { key: "deposits", label: "Deposits in",
           hint: "deposit units the home's deposit haulers handed over at home, per type",
-          cell: depositsCell },
+          sort: r => r.total, cell: depositsCell },
         { key: "energy", label: "Energy out",
           hint: "energy spent spawning deposit harvesters and haulers",
-          cell: r => ledgerAmountCell(r.e, r.energyRate, "energy", r.w) },
+          sort: r => r.e, cell: r => ledgerAmountCell(r.e, r.energyRate, "energy", r.w) },
         { key: "ratio", label: "Energy / unit",
           hint: "energy out per deposit unit in, summed across types. “measuring” = the home has not been booked for a full window yet; spend is booked at spawn, deposits on delivery",
-          cell: ratioCell },
+          sort: r => (r.mature ? r.energyPerUnit : null), cell: ratioCell },   // "measuring" is no verdict
         { key: "window", label: "Window", tier: 3,
           hint: "how much game time the sums cover; a home booked recently covers less than the full ring",
-          cell: r => ledgerWindowCell(r, msPerTick) },
+          sort: r => r.w, cell: r => ledgerWindowCell(r, msPerTick) },
     ];
 }
 

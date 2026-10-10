@@ -1,7 +1,7 @@
 // Defense section.
 import {
     compact, CRITICAL_RAMPART_HITS, fmtDuration, fmtHits, isCriticalZone, isOutgunned, netTowerDps,
-    observedMsPerTick, quietRooms, sortByPosture,
+    observedMsPerTick, postureRank, quietRooms, sortByPosture,
 } from "../calc.js";
 import { $, fmtInt } from "../dom.js";
 import { history, latest } from "../state.js";
@@ -90,22 +90,30 @@ export function renderDefenseTiles() {
 
 function defenseColumns() {
     return [
-        { key: "room", label: "Room", primary: true, cell: ([n]) => roomLinkCell(n) },
-        { key: "posture", label: "Posture", cell: ([, r]) => postureBadge(r.thr) },
-        { key: "hostiles", label: "Hostiles", cell: ([, r]) => hostilesCell(r.thr) },
+        { key: "room", label: "Room", primary: true, sort: ([n]) => n, cell: ([n]) => roomLinkCell(n) },
+        { key: "posture", label: "Posture", sort: ([, r]) => postureRank(r.thr), cell: ([, r]) => postureBadge(r.thr) },
+        { key: "hostiles", label: "Hostiles", sort: ([, r]) => r.thr?.h, cell: ([, r]) => hostilesCell(r.thr) },
         { key: "dmgIn", label: "RA/A/H", hint: "hostile ranged / attack (melee) / heal damage per tick, boosts folded in",
           cell: ([, r]) => raahCell(r.thr) },
-        { key: "towers", label: "Towers", hint: "towers with energy / built", cell: ([, r]) => towersCell(r.thr) },
+        { key: "towers", label: "Towers", hint: "towers with energy / built",
+          // "no tower" is an absence, not a critical 0 armed.
+          sort: ([, r]) => (r.thr?.twrTotal ? r.thr.twrArmed : null), cell: ([, r]) => towersCell(r.thr) },
         { key: "netDps", label: "Net dps",
           hint: "tower dps on the hostile the towers hit weakest (at its actual range) minus hostile heal/tick — negative means towers alone cannot break the heal",
+          // Blank where the cell is: no thr, or no hostiles to price towers against.
+          sort: ([, r]) => (r.thr?.h > 0 ? netTowerDps(r.thr) : null),
           cell: ([, r]) => netDpsCell(r.thr) },
-        { key: "safeMode", label: "Safe mode", cell: ([, r]) => safeModeCell(r.thr) },
+        { key: "safeMode", label: "Safe mode",
+          // Active safe mode outranks any charge count (the cell shows it instead
+          // of charges); active rooms then order by ticks left.
+          sort: ([, r]) => (r.thr?.sm !== undefined ? 1000 + r.thr.sm : r.thr?.smAvail),
+          cell: ([, r]) => safeModeCell(r.thr) },
         { key: "zone", label: "Zone",
           hint: "weakest rampart inside the configured defender zone — the one you actually fight behind",
-          cell: ([, r]) => zoneCell(r.thr?.defRmp, r.rcl.l) },
+          sort: ([, r]) => r.thr?.defRmp, cell: ([, r]) => zoneCell(r.thr?.defRmp, r.rcl.l) },
         { key: "sc", label: "Class",
           hint: "storage class — a vault holds the empire's war chest, an outpost keeps only what its own defense consumes; above RCL 6 a room graduates to vault at 5.0M zone hits and reverts below 3.0M, unless pinned or overridden in config",
-          cell: ([, r]) => storageClassCell(r) },
+          sort: ([, r]) => r.sc, cell: ([, r]) => storageClassCell(r) },
         { key: "defenders", label: "Defenders",
           hint: "home defense fleet from the live spawn manifest, plus this room's standing remote guards; on-demand squads are in the Army section",
           cell: ([, r]) => defCell(r.thr, r.roles) },

@@ -34,17 +34,19 @@ function labCell(lab, value) {
 
 function labsColumns() {
     return [
-        { key: "room", label: "Room", primary: true, cell: ([n]) => roomLinkCell(n) },
-        { key: "status", label: "Status", cell: ([, r]) => labStatusCell(r.lab) },
-        { key: "reaction", label: "Reaction",
+        { key: "room", label: "Room", primary: true, sort: ([n]) => n, cell: ([n]) => roomLinkCell(n) },
+        { key: "status", label: "Status", sort: ([, r]) => r.lab?.s, cell: ([, r]) => labStatusCell(r.lab) },
+        { key: "reaction", label: "Reaction", sort: ([, r]) => r.lab?.o,
           cell: ([, r]) => labCell(r.lab, r.lab?.o ? `${r.lab.i1?.[0] ?? "?"} + ${r.lab.i2?.[0] ?? "?"} → ${r.lab.o}` : null) },
         { key: "in1", label: "In 1", tier: 3, hint: "contents of the first input lab",
           cell: ([, r]) => labCell(r.lab, r.lab?.i1 ? `${r.lab.i1[0]} ${fmtInt.format(r.lab.i1[1])}` : null) },
         { key: "in2", label: "In 2", tier: 3, hint: "contents of the second input lab",
           cell: ([, r]) => labCell(r.lab, r.lab?.i2 ? `${r.lab.i2[0]} ${fmtInt.format(r.lab.i2[1])}` : null) },
         { key: "out", label: "Output", hint: "output compound held across the output labs",
+          sort: ([, r]) => r.lab?.ot,
           cell: ([, r]) => labCell(r.lab, r.lab?.ot != null ? fmtInt.format(r.lab.ot) : null) },
         { key: "cd", label: "Cooldown", tier: 3, hint: "longest remaining cooldown among the output labs",
+          sort: ([, r]) => r.lab?.cd,
           cell: ([, r]) => labCell(r.lab, r.lab?.cd != null ? String(r.lab.cd) : null) },
         { key: "lc", label: "Labs i/o/b", tier: 3, hint: "lab counts: input / output / boost",
           cell: ([, r]) => labCell(r.lab, r.lab ? r.lab.lc.join("/") : null) },
@@ -64,6 +66,7 @@ function boostMatrixColumns(bmax) {
         label: purpose === "build/repair" ? "build" : purpose,
         sym: tiers[0],
         hint: `${purpose} boosts, T1 · T2 · T3 — ${tiers.join(" · ")}`,
+        sort: ([, r]) => tiers.reduce((sum, sym) => sum + ((r.bst ?? {})[sym] ?? 0), 0),
         cell: ([name, r]) => chipsCell(
             tiers.map((sym, i) => boostChip(`${name} · ${purpose} T${i + 1} · ${sym}`, (r.bst ?? {})[sym] ?? 0, bmax[sym], false)),
             tiers.map(sym => boostChipText((r.bst ?? {})[sym] ?? 0, bmax[sym], false)).join(" · ")),
@@ -73,12 +76,13 @@ function boostMatrixColumns(bmax) {
         label: sym,
         group: i === 0,
         hint: `${label} — raw reaction input, shown as stock rather than boostable parts`,
+        sort: ([, r]) => (r.bst ?? {})[sym] ?? 0,
         cell: ([name, r]) => chipsCell(
             [boostChip(`${name} · ${label}`, (r.bst ?? {})[sym] ?? 0, bmax[sym], true)],
             boostChipText((r.bst ?? {})[sym] ?? 0, bmax[sym], true)),
     }));
     return [
-        { key: "room", label: "Room", primary: true, cell: ([n]) => roomLinkCell(n) },
+        { key: "room", label: "Room", primary: true, sort: ([n]) => n, cell: ([n]) => roomLinkCell(n) },
         ...ladders,
         ...raw,
     ];

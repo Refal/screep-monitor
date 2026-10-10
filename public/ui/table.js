@@ -1,4 +1,5 @@
 // Shared table renderer: one column spec per table, desktop table and mobile card layouts.
+import { cmpRoom } from "../calc.js";
 import { $ } from "../dom.js";
 
 // Single full-width "nothing to show" row. Both activity logs distinguish
@@ -34,6 +35,8 @@ function naRow(colSpan, text, title) {
 //            mode folded behind the row's own expand toggle
 //   primary  exactly one column: sticky on desktop, card title on mobile
 //   group    first column of a visual group (left border)
+//   sort     optional (row) => number | string; makes the header clickable.
+//            Left off composite cells (chips, RA/A/H) that have no one value
 function applyColMeta(cell, col) {
     cell.dataset.label = col.sym ? `${col.label} ${col.sym}` : col.label;
     if (col.tier && col.tier !== 1) cell.dataset.tier = String(col.tier);
@@ -41,16 +44,67 @@ function applyColMeta(cell, col) {
     if (col.group) cell.classList.add("raw-group");
 }
 
-function buildHead(spec) {
+// Click-to-sort, on top of the order each caller already chose. A header
+// cycles ascending → descending → off, and "off" is the caller's own order,
+// so a table never loses the order it was designed around. State is per table
+// id and lives here, not in state.js, so the controller's re-renders keep it
+// without any section knowing sorting exists. Desktop only: card mode hides
+// the <thead>, and cards keep the caller's order.
+const sortState = new Map();    // tableId -> { key, dir: 1 | -1 }
+const lastArgs = new Map();     // tableId -> renderTable arguments, for the re-render on click
+
+const isBlank = v => v == null || Number.isNaN(v);
+
+// Blanks sink to the bottom in both directions — "no reading" is never the
+// biggest or the smallest value. Strings compare as room names (numeric-aware).
+export function compareSortValues(a, b, dir) {
+    if (isBlank(a) || isBlank(b)) return isBlank(a) - isBlank(b);
+    const c = typeof a === "string" || typeof b === "string" ? cmpRoom(String(a), String(b)) : a - b;
+    return dir * c;
+}
+
+function cycleSort(tableId, key) {
+    const cur = sortState.get(tableId);
+    if (cur?.key !== key) sortState.set(tableId, { key, dir: 1 });
+    else if (cur.dir === 1) sortState.set(tableId, { key, dir: -1 });
+    else sortState.delete(tableId);
+    renderTable(tableId, ...lastArgs.get(tableId));
+    // The <thead> was rebuilt; hand focus back so a keyboard user can keep cycling.
+    $(tableId).querySelector(`th[data-sort-key="${key}"] .th-sort`)?.focus();
+}
+
+function sortedRows(tableId, spec, rows) {
+    const state = sortState.get(tableId);
+    const col = state && spec.find(c => c.key === state.key && c.sort);
+    if (!col) return rows;
+    // Array.prototype.sort is stable: ties keep the caller's order.
+    return rows
+        .map(row => ({ row, v: col.sort(row) }))
+        .sort((a, b) => compareSortValues(a.v, b.v, state.dir))
+        .map(e => e.row);
+}
+
+function buildHead(tableId, spec) {
     const tr = document.createElement("tr");
+    const state = sortState.get(tableId);
     for (const col of spec) {
         const th = document.createElement("th");
-        th.textContent = col.label;
+        // A real <button> so the header sorts from the keyboard too.
+        const label = col.sort ? document.createElement("button") : th;
+        if (col.sort) {
+            label.type = "button";
+            label.className = "th-sort";
+            label.addEventListener("click", () => cycleSort(tableId, col.key));
+            th.append(label);
+            th.dataset.sortKey = col.key;
+            if (state?.key === col.key) th.setAttribute("aria-sort", state.dir === 1 ? "ascending" : "descending");
+        }
+        label.append(col.label);
         if (col.sym) {
             const sym = document.createElement("span");
             sym.className = "th-sym";
             sym.textContent = col.sym;
-            th.append(" ", sym);
+            label.append(" ", sym);
         }
         // Desktop-only redundancy: the same string is rendered as visible text
         // by the section's hints disclosure, which is what touch actually gets.
@@ -95,8 +149,13 @@ function renderColumnHints(table, spec) {
 // `rowAttrs(row)` optionally names boolean attributes to set on that row's
 // <tr>, so a caller can mark rows without pairing <tr>s back to rows itself.
 export function renderTable(tableId, spec, rows, empty, rowAttrs) {
+    lastArgs.set(tableId, [spec, rows, empty, rowAttrs]);
+    // A column that comes and goes (Nukes, Progress) takes its sort with it,
+    // rather than the sort silently reviving when the column reappears.
+    const state = sortState.get(tableId);
+    if (state && !spec.some(c => c.key === state.key && c.sort)) sortState.delete(tableId);
     const table = $(tableId);
-    table.querySelector("thead").replaceChildren(buildHead(spec));
+    table.querySelector("thead").replaceChildren(buildHead(tableId, spec));
     renderColumnHints(table, spec);
     const tbody = table.querySelector("tbody");
     if (!rows.length) {
@@ -106,7 +165,7 @@ export function renderTable(tableId, spec, rows, empty, rowAttrs) {
         return;
     }
     const expandable = spec.some(c => c.tier === 3);
-    tbody.replaceChildren(...rows.map(row => {
+    tbody.replaceChildren(...sortedRows(tableId, spec, rows).map(row => {
         const tr = document.createElement("tr");
         for (const attr of rowAttrs?.(row) ?? []) tr.setAttribute(attr, "");
         for (const col of spec) {
@@ -158,5 +217,5 @@ export function textCell(text, cls) {
 // The three all-rooms tables (labs, boosts, rooms) all list every owned room
 // alphabetically; the defense table is the one that sorts by severity instead.
 export function byRoomName(rooms) {
-    return Object.entries(rooms).sort(([a], [b]) => a.localeCompare(b));
+    return Object.entries(rooms).sort(([a], [b]) => cmpRoom(a, b));
 }

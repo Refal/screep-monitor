@@ -1,6 +1,6 @@
 // Overview tiles, rooms-at-a-glance, data-gap note and empire charts.
 import {
-    average, compact, fmtDuration, fmtHits, levelEta, pct, powerStockPoint, zoneTarget,
+    average, cmpRoom, compact, fmtDuration, fmtHits, levelEta, pct, powerStockPoint, zoneTarget,
 } from "../calc.js";
 import { avgLineDataset, lineDataset, rateDatasets, renderLine } from "../charts/core.js";
 import { $, fmtInt } from "../dom.js";
@@ -126,9 +126,9 @@ function maxedGlanceRow([room, r]) {
 export function renderRoomsGlance() {
     const entries = Object.entries(latest.rooms);
     const growing = entries.filter(([, r]) => r.rcl?.pt).map(e => ({ room: e[0], ...growingGlanceRow(e) }))
-        .sort((a, b) => (a.eta?.etaTicks ?? Infinity) - (b.eta?.etaTicks ?? Infinity) || a.room.localeCompare(b.room));
+        .sort((a, b) => (a.eta?.etaTicks ?? Infinity) - (b.eta?.etaTicks ?? Infinity) || cmpRoom(a.room, b.room));
     const maxed = entries.filter(([, r]) => !r.rcl?.pt).map(e => ({ room: e[0], ...maxedGlanceRow(e) }))
-        .sort((a, b) => a.attention - b.attention || a.room.localeCompare(b.room));
+        .sort((a, b) => a.attention - b.attention || cmpRoom(a.room, b.room));
     const groups = [];
     if (maxed.length) groups.push(glanceGroup(`Max level · ${pluralCount(maxed.length, "room")}`, maxed.map(x => x.el)));
     if (growing.length) groups.push(glanceGroup(`Levelling · ${pluralCount(growing.length, "room")}`, growing.map(x => x.el)));

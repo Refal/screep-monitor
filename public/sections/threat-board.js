@@ -1,6 +1,6 @@
 // Threat board at the top of the overview.
 import {
-    armyOperations, compact, defenderSummary, empireVerdict, fmtHits, isCriticalZone, quietRooms,
+    armyOperations, cmpRoom, compact, defenderSummary, empireVerdict, fmtHits, isCriticalZone, quietRooms,
     REMOTE_STALE_AGE_TICKS, remoteDeployPhase, routeOrAbsence, routeStatusText, SIEGE_VERDICT,
     siegeDetailText, siegeVerdictFor, threatItems, verdictInfo, watchItems, worstTone, zoneTarget,
 } from "../calc.js";
@@ -241,7 +241,7 @@ export function renderThreatBoard() {
     if (v.degraded) {
         $("clear-line").textContent =
             `${pluralCount(v.rooms, "room")} owned, none covered by this snapshot · `
-            + Object.keys(latest.rooms).sort().join(" ");
+            + Object.keys(latest.rooms).sort(cmpRoom).join(" ");
         return;
     }
     // A watch room is named on the watch line instead, so no room is listed twice.

@@ -217,6 +217,16 @@ h2 { font-size: 15px; margin: 24px 0 10px; color: var(--text-secondary); font-we
 .table-wrap { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th { color: var(--text-muted); font-weight: 500; }
+/* Sortable header (renderTable's `sort` columns): looks like the plain header
+   text, arrow from aria-sort. Only reachable at table widths — card mode hides
+   the <thead>. */
+.th-sort { all: unset; cursor: pointer; white-space: nowrap; }
+.th-sort:hover, th[aria-sort] .th-sort { color: var(--text-primary); }
+.th-sort:focus-visible { outline: 2px solid var(--text-muted); outline-offset: 2px; border-radius: 2px; }
+.th-sort::after { content: "↕"; margin-left: 3px; opacity: 0; font-size: 0.9em; }
+.th-sort:hover::after { opacity: 0.5; }
+th[aria-sort="ascending"] .th-sort::after { content: "▲"; opacity: 1; }
+th[aria-sort="descending"] .th-sort::after { content: "▼"; opacity: 1; }
 tbody td { font-variant-numeric: tabular-nums; }
 
 .table-wrap table, .table-wrap tbody, .table-wrap tr, .table-wrap td { display: block; }

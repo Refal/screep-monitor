@@ -229,6 +229,12 @@ ever urgent is "is anything on fire?".
   Rooms), then Empire charts and Remote threats, then the logs. On a phone the Defense table
   folds its clear rooms behind a "+ N clear rooms" toggle, so a quiet empire isn't ten
   identical cards.
+- **Every table has a designed default order** (severity, urgency, newest first, or room name),
+  and room names always compare numerically (`cmpRoom` in `public/calc.js`, so E9S5 < E10S5). On
+  desktop, a column with a `sort` accessor in its spec has a clickable header that cycles
+  ▲ → ▼ → back to that default (`renderTable` in `public/ui/table.js`). The choice survives data
+  refreshes but not a page reload. Card mode hides the headers, so phones always see the
+  default order.
 - **The room view reorders by room class** (`orderRoomView` in `public/sections/room-view.js`, which moves
   the DOM nodes so tab order matches). A levelling room leads with RCL progress tiles and
   the economy charts; a max-level room leads with a short strip (RCL/UPW, labs, storage),

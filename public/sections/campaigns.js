@@ -89,18 +89,18 @@ function visionAgeCell(c) {
 }
 
 const CAMPAIGN_COLUMNS = [
-    { key: "target", label: "Target", primary: true, cell: c => roomLinkCell(c.tg) },
-    { key: "owner", label: "Owner", cell: c => textCell(c.ow) },
+    { key: "target", label: "Target", primary: true, sort: c => c.tg, cell: c => roomLinkCell(c.tg) },
+    { key: "owner", label: "Owner", sort: c => c.ow, cell: c => textCell(c.ow) },
     { key: "phase", label: "Phase", hint: "the campaign's phase and how long it has been in it, with the hold reason or outcome underneath", cell: phaseCell },
     { key: "verdict", label: "Verdict", hint: "whether a breach force can be fielded; for a go, the doctrine, home, waves and breach time", cell: verdictCell },
     { key: "ring", label: "Ring", tier: 3, cell: ringCell },
-    { key: "ringHits", label: "Ring hits", hint: `summed hits of the target's ring barriers at the last vision — ${VISION_NOTE}`, cell: c => numberCell(c.rh) },
-    { key: "energy", label: "Target energy", hint: `storage plus terminal energy at the last vision — ${VISION_NOTE}`, cell: c => numberCell(c.te) },
-    { key: "keys", label: "Key structures", tier: 3, hint: "hostile spawns plus towers", cell: keyStructuresCell },
+    { key: "ringHits", label: "Ring hits", hint: `summed hits of the target's ring barriers at the last vision — ${VISION_NOTE}`, sort: c => c.rh, cell: c => numberCell(c.rh) },
+    { key: "energy", label: "Target energy", hint: `storage plus terminal energy at the last vision — ${VISION_NOTE}`, sort: c => c.te, cell: c => numberCell(c.te) },
+    { key: "keys", label: "Key structures", tier: 3, hint: "hostile spawns plus towers", sort: c => c.ke, cell: keyStructuresCell },
     { key: "safeMode", label: "Safe mode", hint: "charges left and ticks of active safe mode", cell: safeModeCell },
     { key: "starve", label: "Starve", hint: "denial rooms covered of those in scope, creeps killed against lost", cell: starveCell },
     { key: "attrition", label: "Best attrition", tier: 3, cell: attritionCell },
-    { key: "vision", label: "Vision age", tier: 3, hint: "ticks since the bot last saw the target room", cell: visionAgeCell },
+    { key: "vision", label: "Vision age", tier: 3, hint: "ticks since the bot last saw the target room", sort: c => c.va, cell: visionAgeCell },
 ];
 
 function campaignTiles(list) {

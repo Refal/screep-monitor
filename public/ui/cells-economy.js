@@ -37,26 +37,26 @@ export function ledgerWindowCell(row, msPerTick) {
     return td;
 }
 
-const remoteColumn = { key: "remote", label: "Remote", primary: true, cell: r => roomLinkCell(r.remote) };
+const remoteColumn = { key: "remote", label: "Remote", primary: true, sort: r => r.remote, cell: r => roomLinkCell(r.remote) };
 
 // Overview only: the room view lists one home's routes, so this column would
 // repeat the same room on every row.
-const homeColumn = { key: "home", label: "Home", hint: "the colony whose creeps farm this remote and receive its energy", cell: r => roomLinkCell(r.home) };
+const homeColumn = { key: "home", label: "Home", hint: "the colony whose creeps farm this remote and receive its energy", sort: r => r.home, cell: r => roomLinkCell(r.home) };
 
 function routeColumns(msPerTick) {
     return [
         { key: "in", label: "In /t",
           hint: "energy per tick remote haulers delivered to the home's storage, or to spawns and extensions before it has storage",
-          cell: r => textCell(fmtRate.format(r.inRate)) },
+          sort: r => r.inRate, cell: r => textCell(fmtRate.format(r.inRate)) },
         { key: "out", label: "Out /t",
           hint: "energy per tick spent spawning this remote's miners, haulers, reservers, builders and defenders",
-          cell: r => textCell(fmtRate.format(r.outRate)) },
+          sort: r => r.outRate, cell: r => textCell(fmtRate.format(r.outRate)) },
         { key: "net", label: "Net /t",
           hint: "in minus out. “measuring” = the route has not been booked for a full window yet, so a negative number is not a verdict",
-          cell: economyNetCell },
+          sort: r => (r.mature ? r.netRate : null), cell: economyNetCell },   // "measuring" is no verdict
         { key: "window", label: "Window", tier: 3,
           hint: "how much game time the in and out sums cover; a route added recently covers less than the full ring",
-          cell: r => ledgerWindowCell(r, msPerTick) },
+          sort: r => r.w, cell: r => ledgerWindowCell(r, msPerTick) },
     ];
 }
 

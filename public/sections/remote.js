@@ -1,7 +1,7 @@
 // Remote threats section and remote-threat log.
 import {
     compact, fmtDuration, fmtHits, hasThreatDetail, MAX_REMOTE_THREATS, observedMsPerTick,
-    REMOTE_STALE_AGE_TICKS, remoteDeployPhase, remoteEpisodes, remoteThreatClass, routeOrAbsence,
+    REMOTE_STALE_AGE_TICKS, remoteClassRank, remoteDeployPhase, remoteEpisodes, remoteThreatClass, routeOrAbsence,
     routeStatusText, sortRemoteThreats,
 } from "../calc.js";
 import { ATTACK_LOG_MAX_ROWS } from "../constants.js";
@@ -208,28 +208,29 @@ function remoteResponseCell(entry) {
 
 function remoteColumns(msPerTick) {
     return [
-        { key: "room", label: "Room", primary: true, cell: e => roomLinkCell(e.room) },
+        { key: "room", label: "Room", primary: true, sort: e => e.room, cell: e => roomLinkCell(e.room) },
         { key: "class", label: "Class",
           hint: "how actionable this is, using the bot's own ranking: armed stronghold, then any non-Keeper hostile, then a level-0 core, then Keepers only",
-          cell: remoteClassCell },
+          sort: remoteClassRank, cell: remoteClassCell },
         { key: "home", label: "Home",
           hint: "home room farming this remote; “corridor” means an incidental sighting that belongs to no home",
-          cell: e => remoteHomeCell(e.home) },
+          sort: e => e.home, cell: e => remoteHomeCell(e.home) },
         { key: "response", label: "Response",
           hint: "squads the home room has fielded for this room, from the bot's army records: forming = still spawning at home, deployed = alive members in the room. Engaged squads never respawn, so “lost” is permanent",
           cell: remoteResponseCell },
-        { key: "hostiles", label: "Hostiles", cell: remoteHostilesCell },
+        // h: 0 reads "no vision" / "none cached" — unknown, so blank rather than zero.
+        { key: "hostiles", label: "Hostiles", sort: e => (e.h === 0 ? null : e.h), cell: remoteHostilesCell },
         { key: "dmgIn", label: "RA/A/H", hint: "hostile ranged / attack (melee) / heal damage per tick, boosts folded in",
           cell: remoteRaahCell },
         { key: "core", label: "Core",
           hint: "invader core hits and level — L0 is a harmless reserving core, L1-5 an armed stronghold",
-          cell: remoteCoreCell },
+          sort: e => e.coreLvl, cell: remoteCoreCell },
         { key: "deploy", label: "Deploys/Expires",
           hint: "counts down to activation while the core is still vulnerable, or to its own collapse once armed",
           cell: e => remoteDeployCell(e, msPerTick) },
         { key: "age", label: "Last seen",
           hint: "the bot's own cached age for this sighting, not the snapshot's age",
-          cell: e => remoteAgeCell(e, msPerTick) },
+          sort: e => e.age, cell: e => remoteAgeCell(e, msPerTick) },
     ];
 }
 
@@ -293,15 +294,16 @@ function remoteLogAggressorsCell(ep) {
 // A corridor episode has no home by definition, so its table drops that column.
 function remoteLogColumns(msPerTick, corridor) {
     return [
-        { key: "room", label: "Room", primary: true, cell: ep => roomLinkCell(ep.room) },
-        ...(corridor ? [] : [{ key: "home", label: "Home", cell: ep => remoteHomeCell(ep.home) }]),
-        { key: "when", label: "When", cell: ep => remoteWhenCell(ep, msPerTick) },
+        { key: "room", label: "Room", primary: true, sort: ep => ep.room, cell: ep => roomLinkCell(ep.room) },
+        ...(corridor ? [] : [{ key: "home", label: "Home", sort: ep => ep.home, cell: ep => remoteHomeCell(ep.home) }]),
+        { key: "when", label: "When", sort: ep => ep.toTick, cell: ep => remoteWhenCell(ep, msPerTick) },
         { key: "ticks", label: "Ticks", tier: 3,
           hint: "first through last tick the hostiles were actually seen — both ends come from the sighting's own age, not from the snapshots that carried it",
           // toTick is likewise back-dated: the last tick SEEN, not the last
           // snapshot that listed the sighting.
+          sort: ep => ep.toTick - ep.fromTick,
           cell: ep => episodeTicksCell(ep, "replay from the first tick the hostiles were seen, back-dated by the sighting's own age") },
-        { key: "peakH", label: "Peak hostiles", cell: remotePeakCell },
+        { key: "peakH", label: "Peak hostiles", sort: ep => ep.peakH, cell: remotePeakCell },
         { key: "peakDmg", label: "Peak RA/A/H", cell: remoteLogRaahCell },
         { key: "owners", label: "Aggressors", cell: remoteLogAggressorsCell },
     ];

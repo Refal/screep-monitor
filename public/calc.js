@@ -17,6 +17,12 @@ export const compact = n => {
 };
 export const pct = (p, pt) => (pt ? (100 * p / pt) : 0);
 
+// Room names carry numbers of varying width (E9S5, E10S5), so a plain string
+// compare puts E10S5 first. Every room-name ordering on the page goes through
+// this one so the tables, the select and the clear-rooms line agree.
+const roomCollator = new Intl.Collator(undefined, { numeric: true });
+export const cmpRoom = (a, b) => roomCollator.compare(a, b);
+
 export const PARTS_PER_BOOST = 30; // LAB_BOOST_MINERAL
 export const MIN_RAW_STOCK = 100;  // LabManager.MIN_STORAGE_AMOUNT — below this a reagent is unusable
 
@@ -438,6 +444,7 @@ export function roomPosture(thr) {
 // actually burning; a payload that's silent about a room is not the same as
 // a payload that says it's fine.
 const POSTURE_RANK = { exposed: 0, engaged: 1, unknown: 2, clear: 3 };
+export const postureRank = thr => POSTURE_RANK[roomPosture(thr).level];
 
 // ---------- the empire verdict ----------
 // One answer to "is anything on fire?", for the board that sits above
@@ -522,7 +529,7 @@ export function threatItems(latest) {
         // Within a kind: the hardest hit first, then by name so the order is
         // stable across polls.
         || (b.thr?.h ?? b.entry?.h ?? 0) - (a.thr?.h ?? a.entry?.h ?? 0)
-        || a.room.localeCompare(b.room));
+        || cmpRoom(a.room, b.room));
 }
 
 // A spawnless or nuked room is never "clear" — see empireVerdict/threatItems,
@@ -533,7 +540,7 @@ export function clearRooms(latest) {
     return Object.entries(latest?.rooms ?? {})
         .filter(([, r]) => roomPosture(r.thr).level === "clear" && !hasNoSpawn(r) && !hasIncomingNuke(r))
         .map(([name]) => name)
-        .sort();
+        .sort(cmpRoom);
 }
 // The threat board's quiet tier: rooms the bot calls clear that a reader
 // should still look at. Today that is one condition — an RCL8 room whose
@@ -546,7 +553,7 @@ export function watchItems(latest) {
     return Object.entries(latest?.rooms ?? {})
         .filter(([name, r]) => clear.has(name) && r.rcl?.l === 8 && isCriticalZone(r.thr?.defRmp))
         .map(([room, r]) => ({ room, kind: "zone", hits: r.thr.defRmp }))
-        .sort((a, b) => a.hits - b.hits || a.room.localeCompare(b.room));
+        .sort((a, b) => a.hits - b.hits || cmpRoom(a.room, b.room));
 }
 
 // The clear rooms left once the watch line has taken its own: the rooms the
@@ -559,9 +566,9 @@ export function quietRooms(latest) {
 
 export function sortByPosture(entries) {
     return [...entries].sort(([nameA, roomA], [nameB, roomB]) => {
-        const rankA = POSTURE_RANK[roomPosture(roomA.thr).level];
-        const rankB = POSTURE_RANK[roomPosture(roomB.thr).level];
-        return rankA !== rankB ? rankA - rankB : nameA.localeCompare(nameB);
+        const rankA = postureRank(roomA.thr);
+        const rankB = postureRank(roomB.thr);
+        return rankA !== rankB ? rankA - rankB : cmpRoom(nameA, nameB);
     });
 }
 
@@ -740,6 +747,7 @@ export function remoteThreatClass(entry) {
 }
 
 const REMOTE_CLASS_RANK = { stronghold: 0, hostiles: 1, core: 2, keepers: 3 };
+export const remoteClassRank = entry => REMOTE_CLASS_RANK[remoteThreatClass(entry)];
 
 // Sign convention published by screeps2 StatsManager (docs/stats-history-ring.md): exp > 0 is
 // the absolute tick an armed stronghold's core collapses; exp < 0 is -(absolute tick) it
@@ -757,10 +765,10 @@ export function remoteDeployPhase(exp, tick) {
 // bot's own comparator does.
 export function sortRemoteThreats(entries) {
     return [...entries].sort((a, b) =>
-        REMOTE_CLASS_RANK[remoteThreatClass(a)] - REMOTE_CLASS_RANK[remoteThreatClass(b)]
+        remoteClassRank(a) - remoteClassRank(b)
         || b.h - a.h
         || a.age - b.age
-        || a.room.localeCompare(b.room));
+        || cmpRoom(a.room, b.room));
 }
 
 // Whether a snapshot still carries first-step detail — the probe that makes an
@@ -977,7 +985,7 @@ export function armyRouteFor(latest, home, target) {
 export function armyRoutesForHome(latest, home) {
     return armyRoutes(latest)
         .filter(r => r.home === home)
-        .sort((a, b) => a.target.localeCompare(b.target));
+        .sort((a, b) => cmpRoom(a.target, b.target));
 }
 
 // What a route-status cell should show for one (home,target) pair: an actual
@@ -1101,7 +1109,7 @@ export function campaignPhaseInfo(code) {
 // Active campaigns first (phase order, then target), terminal ones last.
 export function campaigns(latest) {
     return [...(latest?.pc ?? [])].sort((a, b) =>
-        campaignTerminal(a) - campaignTerminal(b) || campaignRank(a) - campaignRank(b) || a.tg.localeCompare(b.tg));
+        campaignTerminal(a) - campaignTerminal(b) || campaignRank(a) - campaignRank(b) || cmpRoom(a.tg, b.tg));
 }
 
 export function campaignHoldText(c) {
@@ -1180,7 +1188,7 @@ export function worstTone(tones) {
     return tones.reduce((w, t) => (w == null || (TONE_RANK[t] ?? 3) < (TONE_RANK[w] ?? 3) ? t : w), null);
 }
 
-function operationRank(op) {
+export function operationRank(op) {
     const tone = op.verdict ? TONE_RANK[op.verdict.tone] ?? 3 : 3;
     if (tone <= 1) return tone;
     if (op.route?.dead > 0) return 1.5;
@@ -1221,7 +1229,7 @@ export function armyOperations(latest) {
         });
     }
     return ops.sort((a, b) => operationRank(a) - operationRank(b)
-        || a.target.localeCompare(b.target) || (a.home ?? "").localeCompare(b.home ?? ""));
+        || cmpRoom(a.target, b.target) || cmpRoom(a.home ?? "", b.home ?? ""));
 }
 
 // Empire-wide counts for the Army tile row. Power routes are counted apart —
@@ -1277,7 +1285,7 @@ export function remoteLedgerRows(latest, home) {
     // Verdict-grade rows first, worst net first; young rows last, oldest first.
     rows.sort((a, b) => b.mature - a.mature
         || (a.mature ? a.netRate - b.netRate : b.w - a.w)
-        || a.remote.localeCompare(b.remote) || a.home.localeCompare(b.home));
+        || cmpRoom(a.remote, b.remote) || cmpRoom(a.home, b.home));
     return { rows, absent: null };
 }
 
@@ -1324,7 +1332,7 @@ export function powerLedgerRows(latest) {
             mature: r.w >= LEDGER_MATURE_TICKS,
         }))
         // Verdict-grade rows first, then the homes bringing in the most power.
-        .sort((a, b) => b.mature - a.mature || b.p - a.p || a.home.localeCompare(b.home));
+        .sort((a, b) => b.mature - a.mature || b.p - a.p || cmpRoom(a.home, b.home));
     return { rows, absent: null };
 }
 
@@ -1354,7 +1362,7 @@ export function depositLedgerRows(latest) {
             };
         })
         // Verdict-grade rows first, then the homes bringing in the most deposits.
-        .sort((a, b) => b.mature - a.mature || b.total - a.total || a.home.localeCompare(b.home));
+        .sort((a, b) => b.mature - a.mature || b.total - a.total || cmpRoom(a.home, b.home));
     return { rows, absent: null };
 }
 
@@ -1412,10 +1420,10 @@ export function powerFleetRows(latest) {
         })));
     const haulers = ph.map(h => ({ kind: "haulers", rm: h.rm, live: h.lv === 1, hl: h.hl }));
     // Room, live first, squads before haulers, then squads by (home, id).
-    return [...squads, ...haulers].sort((a, b) => a.rm.localeCompare(b.rm)
+    return [...squads, ...haulers].sort((a, b) => cmpRoom(a.rm, b.rm)
         || Number(b.live) - Number(a.live)
         || Number(a.kind === "haulers") - Number(b.kind === "haulers")
-        || (a.home ?? "").localeCompare(b.home ?? "") || (a.id ?? 0) - (b.id ?? 0));
+        || cmpRoom(a.home ?? "", b.home ?? "") || (a.id ?? 0) - (b.id ?? 0));
 }
 
 // `hl` is [count, carried power, min ticksToLive]. The min ttl is 0 while

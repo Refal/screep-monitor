@@ -137,16 +137,17 @@ function fleetDetailCell(row) {
 }
 
 const POWER_FLEET_COLUMNS = [
-    { key: "room", label: "Bank room", primary: true, cell: fleetRoomCell },
+    { key: "room", label: "Bank room", primary: true, sort: r => r.rm, cell: fleetRoomCell },
     { key: "home", label: "Home",
       hint: "the home room that fielded the squad; hauler counts are published per bank, not per home",
+      sort: r => (r.kind === "squad" ? r.home : null),
       cell: r => r.kind === "squad" ? textCell(r.home) : naCell("per bank", "hauler counts are published per bank, not per home") },
     { key: "unit", label: "Unit",
       hint: "w<n> is a harvest wave, fight is its fight squad; haulers are every power hauler assigned to that bank",
       cell: fleetUnitCell },
     { key: "status", label: "Status",
       hint: "the squad's own status from the bot's army records (not its route's); for haulers, how many are out and whether they have left home yet",
-      cell: fleetStatusCell },
+      sort: r => (r.kind === "squad" ? r.status : null), cell: fleetStatusCell },
     { key: "detail", label: "Detail", tier: 3,
       hint: "where the squad's members are, and how many are lost for good (engaged squads never respawn); for haulers, the power they carry and the shortest life left",
       cell: fleetDetailCell },
@@ -194,22 +195,22 @@ function ledgerBoostsCell(row) {
 
 function ledgerColumns(msPerTick) {
     return [
-        { key: "home", label: "Home", primary: true, cell: r => roomLinkCell(r.home) },
+        { key: "home", label: "Home", primary: true, sort: r => r.home, cell: r => roomLinkCell(r.home) },
         { key: "power", label: "Power in",
           hint: "power the home's power haulers handed over at home",
-          cell: r => ledgerAmountCell(r.p, r.powerRate, "power", r.w) },
+          sort: r => r.p, cell: r => ledgerAmountCell(r.p, r.powerRate, "power", r.w) },
         { key: "energy", label: "Energy out",
           hint: "energy spent on power ops: spawn cost of power-bank squads and haulers, plus lab boost energy",
-          cell: r => ledgerAmountCell(r.e, r.energyRate, "energy", r.w) },
+          sort: r => r.e, cell: r => ledgerAmountCell(r.e, r.energyRate, "energy", r.w) },
         { key: "ratio", label: "Energy / power",
           hint: "energy out per unit of power in. “measuring” = the home has not been booked for a full window yet; spend is booked at spawn, power on delivery",
-          cell: ledgerRatioCell },
+          sort: r => (r.mature ? r.energyPerPower : null), cell: ledgerRatioCell },   // "measuring" is no verdict
         { key: "boosts", label: "Boosts",
           hint: "boost compound units consumed by power-op creeps within the window",
           cell: ledgerBoostsCell },
         { key: "window", label: "Window", tier: 3,
           hint: "how much game time the sums cover; a home booked recently covers less than the full ring",
-          cell: r => ledgerWindowCell(r, msPerTick) },
+          sort: r => r.w, cell: r => ledgerWindowCell(r, msPerTick) },
     ];
 }
 
