@@ -494,6 +494,8 @@ describe("storageClassInfo", () => {
             { word: "vault (pinned)", why: "pinned via console setStorageClass" });
         assert.deepEqual(storageClassInfo({ rcl: { l: 8 }, sc: "outpost", scm: "config" }),
             { word: "outpost (config)", why: "STORAGE_CLASS_BY_SHARD_AND_ROOM override" });
+        assert.deepEqual(storageClassInfo({ rcl: { l: 5 }, sc: "drain", scm: "pin" }),
+            { word: "drain (pinned)", why: "pinned via console setStorageClass" });
     });
 });
 

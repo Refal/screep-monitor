@@ -381,7 +381,7 @@ export const OUTPOST_MAX_RCL = 6;
 export const VAULT_GRADUATION_HITS = 6_000_000;
 export const VAULT_FLOOR_HITS = 3_500_000;
 
-// `sc` (vault/outpost) plus `scm` (pin/config, only when an override decided
+// `sc` (vault/outpost/drain) plus `scm` (pin/config, only when an override decided
 // it) → cell word and its explanation. null when the snapshot predates `sc`.
 export function storageClassInfo(room) {
     if (!room?.sc) return null;
