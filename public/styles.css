@@ -356,6 +356,7 @@ td.short    { color: var(--status-warning); }
 td.serious  { color: var(--status-serious); }
 td.critical { color: var(--status-critical); }
 td.na       { color: var(--text-muted); }
+td .muted   { color: var(--text-muted); }
 
 .room-link {
     color: inherit; text-decoration: underline dotted var(--text-muted); text-underline-offset: 2px;

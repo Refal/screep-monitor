@@ -4,7 +4,7 @@
  * locally.
  *
  * Payload shape: segment SEGMENT holds a manifest+head snapshot
- * (t, gcl, gpl, cpu, cr, rooms, bmax?, rt?, ar?, pb?, ph?, pba, dv?, sv?, pc?, rl?, pwl?, dpl?, buckets), where `buckets`
+ * (t, gcl, gpl, cpu, cr, rooms, bmax?, rt?, ar?, pb?, ph?, pba, dv?, sv?, pc?, rl?, pwl?, dpl?, dpo?, buckets), where `buckets`
  * is how many history bucket segments the bot keeps, at
  * SEGMENT+1 .. SEGMENT+buckets. Each bucket is a JSON array of the snapshots
  * published during one fixed window of game ticks (oldest first); the bot
@@ -31,7 +31,7 @@
  *                                    not separately configured)
  *
  * Firestore layout:
- *   snapshots/<autoId>  { ts, tick, gcl, gpl?, cpu, cr, rooms, bmax?, rt?, ar?, pb?, ph?, pba?, dv?, sv?, pc?, rl?, pwl?, dpl?,
+ *   snapshots/<autoId>  { ts, tick, gcl, gpl?, cpu, cr, rooms, bmax?, rt?, ar?, pb?, ph?, pba?, dv?, sv?, pc?, rl?, pwl?, dpl?, dpo?,
  *                         b5?, b30?, b120? }
  *   meta/latest         same shape, plus `lod` (bucket-tracking state); also
  *                       used to dedup by tick and to trigger the once-a-day
@@ -244,6 +244,9 @@ export function buildSnapshotDoc(entry) {
         ...(entry.pwl?.length ? { pwl: entry.pwl } : {}),
         // Deposit ledger: per-home rows, same contract and degradation step as `pwl`.
         ...(entry.dpl?.length ? { dpl: entry.dpl } : {}),
+        // Open deposit ops: kept even when empty — `[]` is "no op running", while a
+        // missing field is a bot that predates `dpo`. Never degraded by the bot.
+        ...(Array.isArray(entry.dpo) ? { dpo: entry.dpo } : {}),
     };
     for (const flag of Object.keys(LOD_BUCKET_MS)) if (entry[flag]) doc[flag] = true;
     return doc;

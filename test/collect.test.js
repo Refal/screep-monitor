@@ -296,6 +296,13 @@ describe("buildSnapshotDoc", () => {
         assert.deepEqual(buildSnapshotDoc({ ...entry(100), tsMs: 0, dpl }).dpl, dpl);
     });
 
+    test("deposit ops: dpo absent stays absent, empty passes through, rows pass through whole", () => {
+        assert.equal("dpo" in buildSnapshotDoc({ ...entry(100), tsMs: 0 }), false);
+        assert.deepEqual(buildSnapshotDoc({ ...entry(100), tsMs: 0, dpo: [] }).dpo, []);
+        const dpo = [{ h: "W1N1", rm: "W0N5", t: "silicon", s: 5000 }];
+        assert.deepEqual(buildSnapshotDoc({ ...entry(100), tsMs: 0, dpo }).dpo, dpo);
+    });
+
     test("per-room pw rides through `rooms` with no collector change", () => {
         const pwRoom = { ...room, pw: [12_000, 3000, 80, 1] };
         const doc = buildSnapshotDoc({ ...entry(100), tsMs: 0, rooms: { W1N1: pwRoom } });

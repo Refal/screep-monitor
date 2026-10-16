@@ -1944,7 +1944,6 @@ describe("depositLedgerRows", () => {
         assert.equal(r.depositRate, 0.25);
         assert.equal(r.energyRate, 2);
         assert.equal(r.energyPerUnit, 8);
-        assert.equal(r.mature, true);
     });
 
     test("no `d` yet is an empty list and a null ratio, not Infinity", () => {
@@ -1954,22 +1953,40 @@ describe("depositLedgerRows", () => {
         assert.equal(r.energyPerUnit, null);
     });
 
-    test("a row is mature from exactly LEDGER_MATURE_TICKS; w of 0 gives zero rates", () => {
+    test("the ratio shows from the first delivery, however young the window; w of 0 gives zero rates", () => {
         const { rows } = depositLedgerRows(snap([
-            { h: "W1N1", e: 1, d: { metal: 10 }, w: LEDGER_MATURE_TICKS - 1 },
-            { h: "W2N1", e: 1, d: { metal: 1 }, w: LEDGER_MATURE_TICKS },
-            { h: "W3N1", e: 5, d: { mist: 5 }, w: 0 },
+            { h: "W1N1", e: 900, w: 300 },
+            { h: "W2N1", e: 2000, d: { metal: 10 }, w: 400 },
+            { h: "W3N1", e: 5, d: { mist: 50 }, w: 0 },
         ]));
-        assert.deepEqual(rows.map(r => [r.home, r.mature]), [["W2N1", true], ["W1N1", false], ["W3N1", false]]);
-        assert.equal(rows[2].depositRate, 0);
-        assert.equal(rows[2].energyRate, 0);
+        // rows with a ratio first, most units first; the no-delivery row last
+        assert.deepEqual(rows.map(r => [r.home, r.energyPerUnit]), [["W3N1", 0.1], ["W2N1", 200], ["W1N1", null]]);
+        assert.equal(rows[0].depositRate, 0);
+        assert.equal(rows[0].energyRate, 0);
+    });
+
+    test("op status: active when dpo lists the home, finished when not, unknown without dpo", () => {
+        const dpl = [{ h: "W1N1", e: 1, d: { metal: 1 }, w: 1 }, { h: "W2N1", e: 1, d: { metal: 1 }, w: 1 }];
+        const dpo = [{ h: "W1N1", rm: "W0N5", t: "metal", s: 100 }, { h: "W9N9", rm: "W0N9", t: "mist", s: 50 }, { rm: "bad" }];
+        const known = depositLedgerRows({ ...snap(dpl), dpo });
+        assert.deepEqual(known.rows.map(r => [r.home, r.op, r.ops.length]), [["W1N1", "active", 1], ["W2N1", "finished", 0]]);
+        assert.equal(known.ops.length, 2);   // the home with no ledger row yet still counts
+        assert.deepEqual(depositLedgerRows({ ...snap(dpl), dpo: [] }).rows.map(r => r.op), ["finished", "finished"]);
+        const legacy = depositLedgerRows(snap(dpl));
+        assert.deepEqual(legacy.rows.map(r => r.op), ["unknown", "unknown"]);
+        assert.equal(legacy.ops, null);
+    });
+
+    test("dpo survives a degraded snapshot that dropped dpl", () => {
+        const { rows, absent, ops } = depositLedgerRows({ rooms: { W1N1: {} }, dpo: [{ h: "W1N1", rm: "W0N5", t: "metal", s: 1 }] });
+        assert.deepEqual([rows, absent, ops.length], [[], "unknown", 1]);
     });
 
     test("absent dpl reads as none when threat detail survived, unknown when degraded", () => {
         assert.equal(depositLedgerRows(snap(undefined)).absent, "none");
         assert.equal(depositLedgerRows({ rooms: { W1N1: {} } }).absent, "unknown");
         assert.equal(depositLedgerRows(null).absent, "unknown");
-        assert.deepEqual(depositLedgerRows(snap([])), { rows: [], absent: null });
+        assert.deepEqual(depositLedgerRows(snap([])), { rows: [], absent: null, ops: null });
     });
 
     test("malformed rows are dropped and non-numeric deposit units ignored", () => {

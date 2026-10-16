@@ -538,9 +538,9 @@ function demoPwl(i, f) {
 }
 
 // Deposit ledger (dpl), one row per branch the table distinguishes: E21S41 a
-// mature home hauling two types, E23S44 a mature single-type home, and
-// E21S49 young — harvester and hauler spend booked, nothing delivered yet,
-// so no `d` at all ("none yet" / "no deposits yet").
+// home hauling two types, E23S44 a single-type home, and E21S49 young —
+// harvester and hauler spend booked, nothing delivered yet, so no `d` at all
+// ("none yet" / "no deposits yet").
 function demoDpl(i, f) {
     const swing = 12000 - (i * 89) % 1500;
     const rows = [
@@ -550,6 +550,16 @@ function demoDpl(i, f) {
     const w = Math.min(3000, Math.max(300, Math.round(f * 3000)));
     rows.push({ h: "E21S49", e: Math.round(w * 2.5), w });
     return rows;
+}
+
+// Open deposit ops (dpo): E21S41 still running (its ratio reads "running"),
+// E23S44 absent so its op reads finished, E21S49 running with nothing
+// delivered yet. Always published and never degraded, like `pba`.
+function demoDpo(tick) {
+    return [
+        { h: "E21S41", rm: "E20S40", t: "silicon", s: tick - 2400 },
+        { h: "E21S49", rm: "E20S50", t: "biomass", s: tick - 600 },
+    ];
 }
 
 // One contiguous stretch mid-window where the published payload outgrew its
@@ -706,6 +716,7 @@ export function synthDemo(rangeHours, maxPoints) {
             // is absent only in the pre-power stretch, where the bot had no
             // such field at all.
             ...(prePower ? {} : { pba: 1 }),
+            ...(prePower ? {} : { dpo: demoDpo(76680000 + i * 120) }),
             bmax: {
                 UH: 3000, UH2O: 1000, XUH2O: 500,
                 KO: 3000, KHO2: 1000,

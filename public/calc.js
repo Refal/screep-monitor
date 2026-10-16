@@ -1341,11 +1341,24 @@ export function powerLedgerRows(latest) {
 // haulers handed over at home (`d`, per type, omitted before the first
 // delivery), over `w` ticks. screeps2 docs/stats-history-ring.md ("Deposit
 // harvesting") is the contract. Same bucket ring and degradation step as
-// `pwl`, so maturity and absence read the same way. Deposit creeps are never
-// boosted, so there is no compound column. Units are summed across types for
-// the ratio: energy per unit hauled, not per unit of value.
+// `pwl`, so absence reads the same way. Deposit creeps are never boosted, so
+// there is no compound column. Units are summed across types for the ratio:
+// energy per unit hauled, not per unit of value.
+//
+// No maturity gate: an op is over long before LEDGER_MATURE_TICKS, so the
+// ratio is read from the first delivery. What tells a running ratio (spend
+// still front-loaded) from a final one is `dpo`, the bot's open ops. It is
+// always published and never degraded, so a home missing from it has
+// finished; `dpo` itself missing is a snapshot from before the bot shipped it.
+export function depositOps(latest) {
+    return Array.isArray(latest?.dpo)
+        ? latest.dpo.filter(o => typeof o?.h === "string" && typeof o.rm === "string")
+        : null;
+}
+
 export function depositLedgerRows(latest) {
-    if (!latest?.dpl) return { rows: [], absent: hasThreatDetail(latest ?? {}) ? "none" : "unknown" };
+    const ops = depositOps(latest);
+    if (!latest?.dpl) return { rows: [], absent: hasThreatDetail(latest ?? {}) ? "none" : "unknown", ops };
     const rows = latest.dpl
         .filter(r => typeof r?.h === "string" && Number.isFinite(r.e) && Number.isFinite(r.w))
         .map(r => {
@@ -1353,17 +1366,20 @@ export function depositLedgerRows(latest) {
                 .filter(([, units]) => Number.isFinite(units))
                 .sort(([a], [b]) => a.localeCompare(b));
             const total = deposits.reduce((sum, [, units]) => sum + units, 0);
+            const homeOps = ops ? ops.filter(o => o.h === r.h) : [];
             return {
                 home: r.h, e: r.e, w: r.w, deposits, total,
                 depositRate: r.w > 0 ? total / r.w : 0,
                 energyRate: r.w > 0 ? r.e / r.w : 0,
                 energyPerUnit: total > 0 ? r.e / total : null,
-                mature: r.w >= LEDGER_MATURE_TICKS,
+                op: ops == null ? "unknown" : homeOps.length ? "active" : "finished",
+                ops: homeOps,
             };
         })
-        // Verdict-grade rows first, then the homes bringing in the most deposits.
-        .sort((a, b) => b.mature - a.mature || b.total - a.total || cmpRoom(a.home, b.home));
-    return { rows, absent: null };
+        // Rows with a ratio first, then the homes bringing in the most deposits.
+        .sort((a, b) => (b.energyPerUnit != null) - (a.energyPerUnit != null)
+            || b.total - a.total || cmpRoom(a.home, b.home));
+    return { rows, absent: null, ops };
 }
 
 // ---------------------------------------------------------------------------

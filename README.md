@@ -156,7 +156,15 @@ deposit harvester and hauler bodies cost at spawn, `d` the deposit units its hau
 over at home per type (omitted before the first delivery), and `w` the ticks covered. Deposit
 creeps are never boosted, so there is no compound column. `depositLedgerRows` totals `d`
 across types for the energy-per-unit ratio (per unit hauled, not per unit of value), with the
-same maturity rule and "none" vs "unknown" absence branch as `pwl`.
+same "none" vs "unknown" absence branch as `pwl`. There is **no** maturity gate: an op is over
+long before `LEDGER_MATURE_TICKS`, so the ratio shows from the first delivery.
+
+`dpo` lists the bot's open deposit ops (`Memory.depositOps`): `h` home, `rm` deposit room, `t`
+deposit type, `s` the `startedAt` tick. Unlike the ledgers it is **always present** (`[]` = no
+op running; the collector keeps an empty list) and is **never degraded**, so a home missing
+from it has finished its op. That is what splits a "running" ratio — spend booked at spawn
+still outweighs deposits booked on delivery — from a final one. A snapshot with no `dpo` at all
+predates the bot shipping it, and the Op column reads "unknown" there.
 
 `sc` / `scm` are per-room too and likewise need no collector change: `sc` is the room's
 resolved storage class (`vault` holds the war chest, `outpost` keeps only what its own
@@ -257,8 +265,8 @@ ever urgent is "is anything on fire?".
   here) has complete history. Bank rooms are highway rooms, so their names link out to
   screeps.com rather than to a per-room view.
 - **Deposit harvesting** is a latest-snapshot section built from `dpl` alone — tiles for the
-  empire-wide totals and one ledger row per home of deposits in, by type, against energy out.
-  It is the only deposit data the bot publishes.
+  empire-wide totals and one ledger row per home of deposits in, by type, against energy out,
+  plus `dpo` for whether each home's op is still running.
 - **The per-room view is a hash route**, not a tail on the same page — `#/room/E23S45`, with
   the time range as `?range=`. `public/route.js` owns the grammar (and rejects a range with
   no `LOD_BY_RANGE` flag behind it, which would otherwise run an unflagged full-resolution
