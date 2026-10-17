@@ -1,4 +1,5 @@
 // renderAll and the header status line.
+import { observedMsPerTick } from "./calc.js";
 import { STALE_AFTER_MS } from "./constants.js";
 import { $, fmtInt, setStatus } from "./dom.js";
 import { applyRoute, reconcileRoute } from "./nav.js";
@@ -8,7 +9,7 @@ import { renderDataGapNote, renderRoomsGlance, renderTiles } from "./sections/ov
 import { renderRoomCharts } from "./sections/room-view.js";
 import { renderRoomSelect } from "./sections/rooms.js";
 import { renderThreatBoard } from "./sections/threat-board.js";
-import { latest, route } from "./state.js";
+import { history, latest, route } from "./state.js";
 
 // Renders whichever view the route selects. Skipping the hidden one is not
 // just an economy: Chart.js sizes a canvas from its container, so building the
@@ -51,6 +52,10 @@ export function renderStatus() {
         ? when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
         : when.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
     const stale = ageMs > STALE_AFTER_MS;
-    setStatus(`tick ${fmtInt.format(latest.tick)} · updated ${stamp} (${age} min ago)${stale ? " · stale" : ""}`);
+    // The same ratio every tick→time ETA uses, so the conversion is visible.
+    const msPerTick = observedMsPerTick(history);
+    const rate = msPerTick != null ? ` · ~${(msPerTick / 1000).toFixed(2)}s/tick` : "";
+    setStatus(`tick ${fmtInt.format(latest.tick)} · updated ${stamp} (${age} min ago)${rate}${stale ? " · stale" : ""}`);
     $("status").classList.toggle("stale", stale);
+    $("status").title = msPerTick != null ? "s/tick: average over the selected range, used for all tick→time estimates" : "";
 }
