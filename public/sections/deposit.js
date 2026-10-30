@@ -1,11 +1,11 @@
 // Deposit harvesting section.
-import { compact, depositLedgerRows, observedMsPerTick } from "../calc.js";
+import { compact, depositLedgerRows, observedMsPerTick, roomUrl } from "../calc.js";
 import { cssVar, fmtInt } from "../dom.js";
 import { history, latest } from "../state.js";
 import { pluralCount } from "../ui/cells-defense.js";
 import { fmtRate, ledgerAmountCell, ledgerWindowCell } from "../ui/cells-economy.js";
 import { chipsCell } from "../ui/cells-labs.js";
-import { makeBadge, roomLinkCell } from "../ui/links.js";
+import { makeBadge, roomLink, roomLinkCell } from "../ui/links.js";
 import { naCell, renderTable, textCell } from "../ui/table.js";
 import { renderTileRow } from "../ui/tiles.js";
 
@@ -103,12 +103,29 @@ function opCell(row) {
     return chipsCell([badge], row.ops.map(o => `${o.t} in ${o.rm}`).join(" · "));
 }
 
+// Only open ops carry a room: `dpl` rows are per home and never record where
+// the deposit was, so a finished op has nothing to show. Deposits sit in
+// highway rooms, never owned, so this links straight to screeps.com.
+function depositRoomCell(row) {
+    if (row.op === "unknown") return naCell("unknown", OPS_UNKNOWN);
+    if (!row.ops.length) return naCell("—", "op finished; the ledger (dpl) does not record the deposit room");
+    const td = document.createElement("td");
+    row.ops.forEach((o, i) => {
+        if (i) td.append(" · ");
+        td.append(roomLink({ href: roomUrl(o.rm), text: o.rm, title: `${o.t} deposit in highway room ${o.rm} — open it on screeps.com` }));
+    });
+    return td;
+}
+
 function ledgerColumns(msPerTick) {
     return [
         { key: "home", label: "Home", primary: true, sort: r => r.home, cell: r => roomLinkCell(r.home) },
         { key: "op", label: "Op",
           hint: "whether the bot still has a deposit op open for this home; the ledger window outlives the op",
           sort: r => ({ active: 0, finished: 1 })[r.op] ?? null, cell: opCell },
+        { key: "room", label: "Deposit room",
+          hint: "where the open op's deposit is; finished ops leave no room in the ledger",
+          sort: r => r.ops[0]?.rm ?? null, cell: depositRoomCell },
         { key: "deposits", label: "Deposits in",
           hint: "deposit units the home's deposit haulers handed over at home, per type",
           sort: r => r.total, cell: depositsCell },
