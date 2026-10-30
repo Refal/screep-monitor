@@ -36,4 +36,4 @@ export const STALE_PROBE_MS = 2.5 * 60e3;
 
 export const STALE_AFTER_MS = 15 * 60e3;
 
-export const ATTACK_LOG_MAX_ROWS = 30;
+export const ATTACK_LOG_MAX_ROWS = 60;
