@@ -456,6 +456,13 @@ gh workflow run collect                # first manual run
 ## Operations
 
 - Dashboard: `https://<project-id>.web.app` (public read-only; game stats only).
+- Incident timeline: `node scripts/timeline.mjs <room> --end <tick> [--start <tick> | --ticks <n>]`
+  prints a change-only timeline of army squads, defense/siege verdicts, spawn queue, role
+  deficits and remote threats for one room, read back from `snapshots` by tick range. It is the
+  window-narrowing step of the screeps2 `/postmortem` skill. `GAP` rows mark holes wider than two
+  publish intervals, `DEGRADED` rows mark snapshots whose roles/thr/rt/ar were dropped to fit.
+  Credentials come from `GOOGLE_APPLICATION_CREDENTIALS`, else `./service-account.json` next to
+  this file (never commit it). Reads only, a few hundred documents per run.
 - Retention: the collector deletes snapshots older than 21 days on the first run of each UTC
   day (`RETENTION_DAYS` in `public/calc.js`, shared with the dashboard so the longest
   selectable range — the 21d button — always matches the prune window; asserted in
