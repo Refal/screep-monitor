@@ -89,6 +89,11 @@ cache is refilling after a global reset", never "dropped to fit". Neither is wri
 everything that looks threatened (`dv` only covers remotes a home plans), so the dashboard
 never presents a missing verdict as one that is coming.
 
+`ds` is one row per threatened room the defense planner skipped before any verdict exists —
+`r` is `stronghold`, `mineral-dormant` or `non-combat`, `h` the aggressive hostile count. The
+dashboard shows each as a "not defended · …" Army row so "nothing sent" is visible. Same contract
+as `dv`: omit-on-empty, never degraded.
+
 `pc` (player campaigns) is one row per multi-day attack on another player's room, not to be
 confused with the `sv` stronghold sieges: target `tg`/owner `ow`, phase `ph` (`assess`,
 `starve`, `probe`, `press`, `hold`, `breach`, `cleanup`, then terminal `done`/`abandoned`)

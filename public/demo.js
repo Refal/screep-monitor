@@ -709,6 +709,7 @@ export function synthDemo(rangeHours, maxPoints) {
             ...(pwl?.length ? { pwl } : {}),
             ...(dpl?.length ? { dpl } : {}),
             dv: demoDv(i, n),
+            ds: [{ rm: "E26S45", r: "stronghold", h: 5 }],
             sv: demoSv(i, n),
             pc: demoPc(i, n),
             // Always published and never degraded — that is the whole point of

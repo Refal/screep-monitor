@@ -16,7 +16,7 @@ import {
     squadSummary, routeSummary, routePhase, routeStatusText, armyRoutes, armyRouteFor, armyRoutesForHome,
     excludeRoutedGuards, routeOrAbsence,
     armyOperations, armySummary, verdictInfo, siegeDetailText,
-    DEFENSE_VERDICT, siegeVerdictFor, worstTone,
+    DEFENSE_VERDICT, DEFENSE_SKIP, siegeVerdictFor, worstTone,
     powerGateState, powerFleetRows, haulerSummary, powerStockPoint, powerStockSeries,
     campaigns, campaignTrend, campaignVerdict, campaignPhaseInfo, campaignHoldText, campaignSafeModeText, campaignStarve,
     remoteLedgerRows, remoteLedgerSummary, LEDGER_MATURE_TICKS, powerLedgerRows, depositLedgerRows,
@@ -1681,6 +1681,15 @@ describe("armyOperations", () => {
         assert.equal(by("W3N1").route.target, "W3N1");
         assert.equal(by("W9N9"), undefined);
         assert.equal(ops.length, 5);
+    });
+    test("a ds-only room gets a verdict-less defense row with the DEFENSE_SKIP verdict", () => {
+        const l = { rooms: {}, ar: [], ds: [{ rm: "W2N1", r: "stronghold", h: 5 }] };
+        const ops = armyOperations(l);
+        assert.equal(ops.length, 1);
+        assert.equal(ops[0].kind, "defense");
+        assert.equal(ops[0].route, null);
+        assert.equal(ops[0].verdict, DEFENSE_SKIP.stronghold);
+        assert.equal(ops[0].detail, "5 hostiles");
     });
     test("an offense route without power tags or haulers stays an operation", () => {
         const l = { rooms: {}, ar: [{ home: "W1N1", target: "W8N8", kind: "offense", sq: [sq({ id: 8 })] }] };

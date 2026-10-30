@@ -1022,6 +1022,14 @@ export const DEFENSE_VERDICT = {
     undefendable: { word: "undefendable", tone: "critical", explain: "no plan wins — the planner retries after a cooldown" },
 };
 
+// `ds` row: { rm, r, h } — a threatened room the defense planner skipped before any
+// verdict: `r` stronghold | mineral-dormant | non-combat, `h` aggressive hostile count.
+export const DEFENSE_SKIP = {
+    stronghold:        { word: "not defended · armed stronghold", tone: "serious", explain: "armed stronghold is siege territory — no defense squad is sent" },
+    "mineral-dormant": { word: "not defended · mineral dormant", tone: "short", explain: "mineral-only remote on regen cooldown — nothing of ours to protect" },
+    "non-combat":      { word: "not defended · non-combat hostiles", tone: "na", explain: "hostiles present but none combat-relevant (transit or contained)" },
+};
+
 export const SIEGE_VERDICT = {
     core:              { word: "sieging core", tone: "good", explain: "committed: attacking the invader core" },
     stronghold:        { word: "sieging stronghold", tone: "good", explain: "committed: attacking the armed stronghold" },
@@ -1198,10 +1206,10 @@ export function operationRank(op) {
 }
 
 // One row per thing the army is doing or has decided about, the join of
-// three sources: non-power `ar` routes, `dv` verdicts (joined to the defense
-// routes aimed at that room) and `sv` verdicts (joined on home + target). A
-// verdict with no route still gets a row — "undefendable, nobody sent" is the
-// row that matters most. Most urgent first.
+// four sources: non-power `ar` routes, `dv` verdicts (joined to the defense
+// routes aimed at that room), `ds` skips (same join) and `sv` verdicts (joined
+// on home + target). A verdict or skip with no route still gets a row —
+// "undefendable, nobody sent" is the row that matters most. Most urgent first.
 export function armyOperations(latest) {
     const routes = armyRoutes(latest ?? {}).filter(r => !isPowerRoute(latest, r));
     const ops = [];
@@ -1210,6 +1218,13 @@ export function armyOperations(latest) {
         const verdict = verdictInfo(DEFENSE_VERDICT, v.v);
         const matched = routes.filter(r => r.kind === "defense" && r.target === v.rm);
         const base = { target: v.rm, kind: "defense", code: v.v, verdict, detail: null, retryIn: v.in ?? null, gaveUp: v.uh ?? [] };
+        if (!matched.length) ops.push({ ...base, home: null, route: null });
+        for (const r of matched) { used.add(r); ops.push({ ...base, home: r.home, route: r }); }
+    }
+    for (const v of latest?.ds ?? []) {
+        const verdict = verdictInfo(DEFENSE_SKIP, v.r);
+        const matched = routes.filter(r => r.kind === "defense" && r.target === v.rm);
+        const base = { target: v.rm, kind: "defense", code: v.r, verdict, detail: `${v.h} hostiles`, retryIn: null, gaveUp: [] };
         if (!matched.length) ops.push({ ...base, home: null, route: null });
         for (const r of matched) { used.add(r); ops.push({ ...base, home: r.home, route: r }); }
     }
