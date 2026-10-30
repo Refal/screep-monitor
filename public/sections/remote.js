@@ -8,7 +8,7 @@ import { ATTACK_LOG_MAX_ROWS } from "../constants.js";
 import { $, cssVar, fmtInt } from "../dom.js";
 import { history, latest } from "../state.js";
 import {
-    ARMY_DEGRADED_TITLE, episodeTicksCell, REMOTE_DEGRADED_TITLE, routeDetailTitle,
+    ARMY_DEGRADED_TITLE, episodeTicksCell, REMOTE_DEGRADED_TITLE, routeDetailTitle, truncationNote,
 } from "../ui/format.js";
 import { makeBadge, roomLinkCell } from "../ui/links.js";
 import { naCell, renderTable, textCell } from "../ui/table.js";
@@ -313,14 +313,16 @@ function remoteLogColumns(msPerTick, corridor) {
 // episode builder and are split into two tables here.
 function renderEpisodeLog(tableId, corridor, noneText) {
     const { episodes, covered, total } = remoteEpisodes(history);
+    const matching = episodes.filter(ep => !ep.home === corridor);
     renderTable(tableId, remoteLogColumns(observedMsPerTick(history), corridor),
-        covered === 0 ? [] : episodes.filter(ep => !ep.home === corridor).slice(0, ATTACK_LOG_MAX_ROWS),
+        covered === 0 ? [] : matching.slice(0, ATTACK_LOG_MAX_ROWS),
         covered === 0
             ? { text: "no remote detail in this range", why: REMOTE_DEGRADED_TITLE }
             : { text: noneText });
-    $(`${tableId}-note`).textContent = covered < total
+    const coverage = covered < total
         ? `${covered} of ${total} snapshots in range carried remote detail — gaps are payload degradation, not quiet periods`
         : `${covered} of ${total} snapshots in range carried remote detail`;
+    $(`${tableId}-note`).textContent = coverage + truncationNote(matching.length);
 }
 
 export const renderRemoteLog = () =>

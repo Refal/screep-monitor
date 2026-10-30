@@ -4,7 +4,7 @@ import { ATTACK_LOG_MAX_ROWS } from "../constants.js";
 import { $, fmtInt } from "../dom.js";
 import { history } from "../state.js";
 import { DEGRADED_TITLE } from "../ui/cells-defense.js";
-import { episodeTicksCell } from "../ui/format.js";
+import { episodeTicksCell, truncationNote } from "../ui/format.js";
 import { roomLinkCell } from "../ui/links.js";
 import { naCell, renderTable, textCell } from "../ui/table.js";
 
@@ -47,5 +47,5 @@ export function renderAttackLog() {
     const note = covered < total
         ? `${covered} of ${total} snapshots in range carried threat detail — gaps are payload degradation, not quiet periods`
         : `${covered} of ${total} snapshots in range carried threat detail`;
-    $("attack-log-note").textContent = note;
+    $("attack-log-note").textContent = note + truncationNote(episodes.length);
 }

@@ -1,5 +1,6 @@
 // Small formatters, tone classes and degraded-data captions shared by several sections.
 import { compact, fmtDuration, observedMsPerTick, roomHistoryUrl } from "../calc.js";
+import { ATTACK_LOG_MAX_ROWS } from "../constants.js";
 import { history, route } from "../state.js";
 import { roomLink } from "./links.js";
 
@@ -45,6 +46,11 @@ export function episodeTicksCell(ep, linkTitle) {
     );
     return td;
 }
+
+// The episode logs keep only the newest ATTACK_LOG_MAX_ROWS, so say when older ones were dropped.
+export const truncationNote = count => count > ATTACK_LOG_MAX_ROWS
+    ? ` · showing newest ${ATTACK_LOG_MAX_ROWS} of ${count} episodes`
+    : "";
 
 export const REMOTE_DEGRADED_TITLE = "remote detail dropped from this snapshot";
 
