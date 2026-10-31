@@ -531,7 +531,8 @@ function demoPh(i, n) {
 }
 
 // Power ledger (pwl), one row per branch the table distinguishes: E15S57 a
-// mature home with boosts, E27S41 a mature loot-only home (no `c`), and
+// home with boosts whose E15N5 squads are still live ("running"), E27S41 a
+// loot-only home (no `c`) whose E45N35 route ends at 0.9n (final figure), and
 // E18S59 young — spend booked, no power delivered yet ("no power yet").
 function demoPwl(i, f) {
     const swing = 12000 - (i * 97) % 1500;

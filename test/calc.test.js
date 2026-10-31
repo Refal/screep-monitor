@@ -2052,7 +2052,6 @@ describe("powerLedgerRows", () => {
         assert.equal(r.powerRate, 0.25);
         assert.equal(r.energyRate, 2.5);
         assert.equal(r.energyPerPower, 10);
-        assert.equal(r.mature, true);
         assert.deepEqual(r.compounds, []);
     });
 
@@ -2060,14 +2059,29 @@ describe("powerLedgerRows", () => {
         assert.equal(powerLedgerRows(snap([{ h: "W1N1", p: 0, e: 900, w: 300 }])).rows[0].energyPerPower, null);
     });
 
-    test("a row is mature from exactly LEDGER_MATURE_TICKS; w of 0 gives zero rates", () => {
+    test("no maturity gate: a short window keeps its ratio; ratio rows first; w of 0 gives zero rates", () => {
         const { rows } = powerLedgerRows(snap([
-            { h: "W1N1", p: 10, e: 1, w: LEDGER_MATURE_TICKS - 1 },
-            { h: "W2N1", p: 1, e: 1, w: LEDGER_MATURE_TICKS },
+            { h: "W1N1", p: 0, e: 900, w: 300 },
+            { h: "W2N1", p: 6600, e: 60200, w: 2000 },
             { h: "W3N1", p: 5, e: 5, w: 0 },
         ]));
-        assert.deepEqual(rows.map(r => [r.home, r.mature]), [["W2N1", true], ["W1N1", false], ["W3N1", false]]);
-        assert.equal(rows[2].powerRate, 0);
+        assert.deepEqual(rows.map(r => r.home), ["W2N1", "W3N1", "W1N1"]);
+        assert.equal(rows[0].energyPerPower, 60200 / 6600);
+        assert.equal(rows[1].powerRate, 0);
+    });
+
+    test("op is active while the home has a live squad or a live hauler group on its bank", () => {
+        const pwl = [{ h: "W1N1", p: 1, e: 1, w: 1 }, { h: "W2N1", p: 1, e: 1, w: 1 }, { h: "W3N1", p: 1, e: 1, w: 1 }];
+        const ar = [
+            { home: "W1N1", target: "W5N5", kind: "offense", sq: [sq({ id: 1, pw: 1 })] },
+            { home: "W2N1", target: "W6N6", kind: "offense", sq: [sq({ id: 2, pw: 1 })] },
+        ];
+        const op = latest => Object.fromEntries(powerLedgerRows(latest).rows.map(r => [r.home, r.op]));
+        assert.deepEqual(op({ ...snap(pwl), ar }), { W1N1: "active", W2N1: "active", W3N1: "finished" });
+        // W6N6's bank is gone (ph without lv): squad and haulers no longer live.
+        assert.deepEqual(op({ ...snap(pwl), ar, ph: [{ rm: "W6N6", hl: [1, 0, 0] }] }),
+            { W1N1: "active", W2N1: "finished", W3N1: "finished" });
+        assert.equal(op(snap(pwl)).W1N1, "finished");
     });
 
     test("compounds become a list sorted by compound", () => {

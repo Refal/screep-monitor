@@ -1,6 +1,6 @@
 // Power harvesting section.
 import {
-    compact, hasThreatDetail, haulerSummary, LEDGER_MATURE_TICKS, observedMsPerTick,
+    compact, hasThreatDetail, haulerSummary, observedMsPerTick,
     powerFleetRows, powerGateState, powerLedgerRows, powerStockPoint, roomUrl,
 } from "../calc.js";
 import { cssVar, fmtInt } from "../dom.js";
@@ -167,19 +167,24 @@ export function renderPowerFleetTable() {
             : POWER_ABSENCE.unknown);
 }
 
-// Measuring outranks the ratio: a young window has booked the spawn and lab
-// spend but usually not the delivery yet, so any ratio there is noise.
+// Shown from the first delivery. While the op is live the spend is
+// front-loaded (booked at spawn and lab, power on delivery), so the figure only
+// falls from here: "running" says so. Once the fleet is gone it is final.
 function ledgerRatioCell(row) {
     if (row.energyPerPower == null) {
         return naCell("no power yet", `${fmtInt.format(row.e)} energy spent and no power delivered home within the window`);
     }
-    const ratio = fmtRate.format(row.energyPerPower);
-    if (!row.mature) {
-        return naCell("measuring",
-            `${ratio} energy per power so far, but only ${fmtInt.format(row.w)} of ${fmtInt.format(LEDGER_MATURE_TICKS)} ticks are covered`);
+    const sums = `${fmtInt.format(row.e)} energy out ÷ ${fmtInt.format(row.p)} power in over ${fmtInt.format(row.w)} ticks`;
+    const td = textCell(fmtRate.format(row.energyPerPower));
+    if (row.op === "active") {
+        const marker = document.createElement("span");
+        marker.className = "muted";
+        marker.textContent = " running";
+        td.append(marker);
+        td.title = `${sums} · op still live: spend is booked at spawn and lab, power on delivery, so this falls as hauling goes on`;
+    } else {
+        td.title = `${sums} · the op has ended, so this is its final figure`;
     }
-    const td = textCell(ratio);
-    td.title = `${fmtInt.format(row.e)} energy out ÷ ${fmtInt.format(row.p)} power in over ${fmtInt.format(row.w)} ticks`;
     return td;
 }
 
@@ -203,8 +208,8 @@ function ledgerColumns(msPerTick) {
           hint: "energy spent on power ops: spawn cost of power-bank squads and haulers, plus lab boost energy",
           sort: r => r.e, cell: r => ledgerAmountCell(r.e, r.energyRate, "energy", r.w) },
         { key: "ratio", label: "Energy / power",
-          hint: "energy out per unit of power in. “measuring” = the home has not been booked for a full window yet; spend is booked at spawn, power on delivery",
-          sort: r => (r.mature ? r.energyPerPower : null), cell: ledgerRatioCell },   // "measuring" is no verdict
+          hint: "energy out per unit of power in. “running” = the op's squads or haulers are still out; spend is booked at spawn, power on delivery, so the figure falls until it ends",
+          sort: r => r.energyPerPower, cell: ledgerRatioCell },
         { key: "boosts", label: "Boosts",
           hint: "boost compound units consumed by power-op creeps within the window",
           cell: ledgerBoostsCell },

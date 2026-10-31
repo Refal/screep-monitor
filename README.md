@@ -150,10 +150,12 @@ dashboard does not read `pb` from older snapshots either. Four traps, all of the
 `pwl` (power ledger) is one row per home: `p` is power its haulers handed over at home, `e`
 the energy power ops cost it (spawn bodies of power-bank squads and haulers, plus lab boost
 energy), `c` the boost compound units consumed, and `w` the ticks covered. It is the same
-bucket ring as `rl`, so `w` is per row and `LEDGER_MATURE_TICKS` applies: a young home reads
-"measuring" rather than a ratio — spend is booked at spawn and at the lab, power only on
-delivery, so an op in progress always shows its cost first. `powerLedgerRows` reads it, with
-the same "none" vs "unknown" absence branch as `remoteLedgerRows`.
+bucket ring as `rl`, so `w` is per row. There is **no** maturity gate (as with `dpl`): an op
+is over long before `LEDGER_MATURE_TICKS`, so the ratio shows from the first delivery. Spend is
+booked at spawn and at the lab, power only on delivery, so a running op's figure is front-loaded:
+`powerLedgerRows` marks a home `active` ("running" in the table) while one of its power squads
+is live, or a live `ph` hauler group sits on a bank one of its squads targets, and `finished`
+(final figure) otherwise. It has the same "none" vs "unknown" absence branch as `remoteLedgerRows`.
 
 `dpl` (deposit ledger) is the same per-home ring for deposit harvesting: `e` is the energy
 deposit harvester and hauler bodies cost at spawn, `d` the deposit units its haulers handed

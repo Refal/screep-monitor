@@ -1397,12 +1397,27 @@ export function remoteLedgerSummary(latest) {
 // Power harvesting ledger (`pwl`): per home, power its haulers delivered (`p`)
 // against the energy power ops cost it (`e`: squad and hauler spawn bodies plus
 // lab boost energy) and the boost compounds consumed (`c`), over `w` ticks. The
-// same bucket ring as `rl`, so LEDGER_MATURE_TICKS applies and `w` is per row.
-// Spend is booked at spawn and at the lab, income on delivery: an op in
-// progress shows its cost before its power, which is what "measuring" covers.
-// `pwl` rides the same degradation step as `rl`, so absence reads the same way.
+// same bucket ring as `rl`, so `w` is per row. `pwl` rides the same
+// degradation step as `rl`, so absence reads the same way.
+//
+// No maturity gate, as with `dpl`: an op is over long before
+// LEDGER_MATURE_TICKS, so the ratio is read from the first delivery. Spend is
+// booked at spawn and at the lab, power on delivery, so while the op runs the
+// figure is front-loaded. The live fleet tells the two apart: a home is
+// "active" while one of its squads is live, or a live hauler group sits in a
+// room one of its squads targets. `ar` and `ph` degrade with `pwl`, so there is
+// no "unknown" reading here.
 export function powerLedgerRows(latest) {
     if (!latest?.pwl) return { rows: [], absent: hasThreatDetail(latest ?? {}) ? "none" : "unknown" };
+    const fleet = powerFleetRows(latest);
+    const squadRooms = new Map();
+    for (const u of fleet) {
+        if (u.kind !== "squad") continue;
+        if (!squadRooms.has(u.home)) squadRooms.set(u.home, new Set());
+        squadRooms.get(u.home).add(u.rm);
+    }
+    const isActive = home => fleet.some(u => u.live
+        && (u.kind === "squad" ? u.home === home : squadRooms.get(home)?.has(u.rm)));
     const rows = latest.pwl
         .filter(r => typeof r?.h === "string"
             && Number.isFinite(r.p) && Number.isFinite(r.e) && Number.isFinite(r.w))
@@ -1414,10 +1429,11 @@ export function powerLedgerRows(latest) {
             compounds: Object.entries(r.c ?? {})
                 .filter(([, units]) => Number.isFinite(units))
                 .sort(([a], [b]) => a.localeCompare(b)),
-            mature: r.w >= LEDGER_MATURE_TICKS,
+            op: isActive(r.h) ? "active" : "finished",
         }))
-        // Verdict-grade rows first, then the homes bringing in the most power.
-        .sort((a, b) => b.mature - a.mature || b.p - a.p || cmpRoom(a.home, b.home));
+        // Rows with a ratio first, then the homes bringing in the most power.
+        .sort((a, b) => (b.energyPerPower != null) - (a.energyPerPower != null)
+            || b.p - a.p || cmpRoom(a.home, b.home));
     return { rows, absent: null };
 }
 
