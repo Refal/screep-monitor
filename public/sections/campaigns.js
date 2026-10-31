@@ -1,6 +1,6 @@
 // Player campaigns section (pc). Stronghold sieges are the Army section's.
 import {
-    campaignHoldText, campaignOutcomeText, campaignPhaseInfo, campaignSafeModeText, campaignStarve,
+    campaignHoldText, campaignNow, campaignOutcomeText, campaignPhaseInfo, campaignPicketInfo, campaignSafeModeText, campaignStarve,
     campaignTargets, campaignTrend, campaignVerdict, campaigns, compact,
 } from "../calc.js";
 import { lineDataset, renderLine } from "../charts/core.js";
@@ -27,13 +27,23 @@ function phaseCell(c) {
     const hold = campaignHoldText(c);
     const outcome = campaignOutcomeText(c);
     const td = badgeCell(info, `${info.word} · ${ticksText(c.pa)}`);
-    const note = hold ?? outcome;
+    const parked = c.ph === "starve" && c.vd != null && c.vd !== "go";
+    const steady = !parked ? null
+        : campaignStarve(c)?.inScope > 0 ? "steady state: breach skipped, starve keeps running" : "parked in starve: breach skipped";
+    const note = hold ?? outcome ?? steady;
     if (note) {
         const el = document.createElement("div");
         el.className = "cell-note";
         el.textContent = note;
         td.append(el);
     }
+    return td;
+}
+
+function nowCell(c) {
+    const now = campaignNow(c);
+    const td = textCell(now.text, toneClass(now.tone));
+    td.title = "what the bot is doing to this campaign right now";
     return td;
 }
 
@@ -67,6 +77,7 @@ function safeModeCell(c) {
 function starveCell(c) {
     const s = campaignStarve(c);
     if (!s) return naCell("—", "only the starve phase publishes starve coverage");
+    if (s.inScope === 0) return naCell("nothing to starve", `no reserved remotes of ${c.ow} within 2 hops known`);
     const td = textCell(`${s.covered}/${s.inScope} covered · ${s.kills} killed : ${s.lost} lost`,
         s.lost > s.kills ? toneClass("short") : undefined);
     td.title = "denial rooms covered of those in scope; creeps we killed against creeps we lost";
@@ -76,8 +87,14 @@ function starveCell(c) {
 function attritionCell(c) {
     if (!Array.isArray(c.lb)) return naCell("—", NOT_PUBLISHED);
     const td = textCell(`${c.lb[0]} · ratio ${compact(c.lb[1])}`);
-    td.title = "the best priced attrition option and the ratio of their credits lost to ours";
+    td.title = "ledger estimate only; the bot does not run this lever";
     return td;
+}
+
+function picketCell(c) {
+    const info = campaignPicketInfo(c);
+    if (!info) return naCell("—", NOT_PUBLISHED);
+    return badgeCell(info, info.word);
 }
 
 function keyStructuresCell(c) {
@@ -91,6 +108,7 @@ function visionAgeCell(c) {
 const CAMPAIGN_COLUMNS = [
     { key: "target", label: "Target", primary: true, sort: c => c.tg, cell: c => roomLinkCell(c.tg) },
     { key: "owner", label: "Owner", sort: c => c.ow, cell: c => textCell(c.ow) },
+    { key: "now", label: "Now", hint: "what the bot is doing to this campaign right now", cell: nowCell },
     { key: "phase", label: "Phase", hint: "the campaign's phase and how long it has been in it, with the hold reason or outcome underneath", cell: phaseCell },
     { key: "verdict", label: "Verdict", hint: "whether a breach force can be fielded; for a go, the doctrine, home, waves and breach time", cell: verdictCell },
     { key: "ring", label: "Ring", tier: 3, cell: ringCell },
@@ -99,7 +117,8 @@ const CAMPAIGN_COLUMNS = [
     { key: "keys", label: "Key structures", tier: 3, hint: "hostile spawns plus towers", sort: c => c.ke, cell: keyStructuresCell },
     { key: "safeMode", label: "Safe mode", hint: "charges left and ticks of active safe mode", cell: safeModeCell },
     { key: "starve", label: "Starve", hint: "denial rooms covered of those in scope, creeps killed against lost", cell: starveCell },
-    { key: "attrition", label: "Best attrition", tier: 3, cell: attritionCell },
+    { key: "attrition", label: "Attrition estimate", tier: 3, hint: "ledger only — the bot does not run this lever; ratio = their credits lost per credit we'd spend", cell: attritionCell },
+    { key: "picket", label: "Picket", tier: 3, hint: "the boosted raider kept outside the ring: committed, pending, or why it was skipped", cell: picketCell },
     { key: "vision", label: "Vision age", tier: 3, hint: "ticks since the bot last saw the target room", sort: c => c.va, cell: visionAgeCell },
 ];
 
@@ -111,12 +130,11 @@ function campaignTiles(list) {
     }];
     for (const c of list) {
         const info = campaignPhaseInfo(c.ph);
-        const v = campaignVerdict(c);
         const s = campaignStarve(c);
         const safe = c.sm?.[1] > 0;
         const parts = [
-            v ? `verdict: ${v.word}` : null,
-            s ? `starve ${s.covered}/${s.inScope} · ${s.kills}:${s.lost}` : null,
+            campaignNow(c).text,
+            s?.inScope > 0 ? `kills ${s.kills}:${s.lost}` : null,
             safe ? `SAFE MODE ${ticksText(c.sm[1])} left` : null,
         ].filter(Boolean);
         tiles.push({

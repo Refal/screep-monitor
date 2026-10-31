@@ -467,7 +467,11 @@ function demoPc(i, n) {
         {
             tg: "E33S31", ow: "Marauder", ph: "starve", pa: 30000 + i * 120, vd: "safe-mode-horizon", va: (i % 50) * 120,
             rg: [24, 11, 2, 0], rh: 21000000 - vision * 1700000, te: 410000 - vision * 38000, ke: 9, sm: [2, 0],
-            st: [4, 3, 6 + Math.floor(i / 12), 2 + Math.floor(i / 40)], lb: ["towerDrain", 2.4],
+            st: [4, 3, 6 + Math.floor(i / 12), 2 + Math.floor(i / 40)], lb: ["towerDrain", 2.4], pk: "fielded",
+        },
+        {
+            tg: "E19S53", ow: "BigCatCat", ph: "starve", pa: 52000 + i * 120, vd: "safe-mode-horizon", va: (i % 50) * 120,
+            rg: [30, 8, 3, 0], rh: 15000000, te: 320000, ke: 6, sm: [7, 0], st: [0, 0, 0, 0], lb: ["blockade", 6.8], pk: "pending",
         },
         { tg: "E36S29", ow: "Drifter", ph: "assess", pa: i * 120, va: 4000 },
     ];

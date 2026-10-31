@@ -1077,7 +1077,7 @@ export function siegeVerdictFor(latest, home, room) {
 // Player campaigns (pc) — the bot's multi-day attacks on another player's
 // room. NOT the stronghold sieges above: `sv` / SIEGE_VERDICT never apply here.
 // Row: { tg, ow, ph, pa, hr?, oc?, vd?, vs?, va?, rg?, rh?, te?, ke?, sm?, st?,
-// lb? }; `ph` assess | starve | probe | press | hold | breach | cleanup, then
+// lb?, pk? }; `ph` assess | starve | probe | press | hold | breach | cleanup, then
 // terminal done | abandoned. `rh` / `te` are known only at a vision (~every
 // 1000 ticks), so they are step values: they repeat between visions and change
 // once per vision. Like dv/sv, never degraded — absent means no campaign.
@@ -1100,9 +1100,19 @@ export const CAMPAIGN_VERDICT = {
     "no-seat":           { word: "no seat", tone: "serious", explain: "no home can field the force" },
     unhealable:          { word: "unhealable", tone: "serious", explain: "the target's damage outruns what the force can heal" },
     "too-many-waves":    { word: "too many waves", tone: "serious", explain: "the breach would need more waves than the cap" },
-    "safe-mode-horizon": { word: "safe-mode horizon", tone: "short", explain: "the breach would outlast the target's safe mode" },
+    "safe-mode-horizon": { word: "safe-mode horizon", tone: "short", explain: "the breach must fit one ~30k window between safe modes; it does not" },
     "no-vision":         { word: "no vision", tone: "short", explain: "no recent sight of the target" },
     unreachable:         { word: "unreachable", tone: "serious", explain: "no route to the target" },
+};
+
+export const CAMPAIGN_PICKET = {
+    fielded:      { word: "committed", tone: "good", explain: "picket squad committed: spawning, travelling or on station" },
+    pending:      { word: "pending", tone: "na", explain: "planned but not out yet: war chest, boosts or an energy gate" },
+    "no-targets": { word: "no targets", tone: "na", explain: "nothing outside the ring worth picketing" },
+    unreachable:  { word: "unreachable", tone: "na", explain: "no route for a picket" },
+    "no-tile":    { word: "no tile", tone: "na", explain: "no safe tile to hold a picket" },
+    unhealable:   { word: "unhealable", tone: "na", explain: "the target's damage outruns what a picket can heal" },
+    "too-slow":   { word: "too slow", tone: "na", explain: "a picket could not arrive in time" },
 };
 
 const CAMPAIGN_HOLD = {
@@ -1136,6 +1146,46 @@ export function campaigns(latest) {
         campaignTerminal(a) - campaignTerminal(b) || campaignRank(a) - campaignRank(b) || cmpRoom(a.tg, b.tg));
 }
 
+export function campaignPicketInfo(c) {
+    return c.pk == null ? null : verdictInfo(CAMPAIGN_PICKET, c.pk);
+}
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+function breachSkippedText(c) {
+    const word = verdictInfo(CAMPAIGN_VERDICT, c.vd).word;
+    return c.vd === "safe-mode-horizon" && Array.isArray(c.sm) ? `${word}, ${plural(c.sm[0], "charge")}` : word;
+}
+
+// One plain sentence of what the bot is doing to the campaign, with a tone.
+// A skip verdict with nothing covered and no picket out is "waiting"; otherwise
+// only levers that are actually running are listed.
+export function campaignNow(c) {
+    const info = campaignPhaseInfo(c.ph);
+    if (campaignTerminal(c)) return { text: campaignOutcomeText(c) ?? info.explain, tone: "na" };
+    if (c.ph === "hold") return { text: `on hold: ${campaignHoldText(c) ?? "reason not published"}`, tone: "serious" };
+    const s = campaignStarve(c);
+    const picket = campaignPicketInfo(c);
+    const skipped = c.vd != null && c.vd !== "go";
+    if (skipped && !(s?.covered > 0) && c.pk !== "fielded") {
+        const parts = [`breach skipped (${breachSkippedText(c)})`];
+        if (s?.inScope === 0) parts.push("nothing to starve");
+        else if (s) parts.push(`starve 0/${s.inScope} covered`);
+        if (picket) parts.push(`picket ${picket.word}`);
+        return { text: `waiting — ${parts.join("; ")}`, tone: "na" };
+    }
+    const running = [];
+    if (s?.covered > 0) running.push(`starving ${s.covered}/${plural(s.inScope, "remote")}`);
+    else if (s?.inScope > 0) running.push(`starve 0/${s.inScope} covered`);
+    if (c.pk === "fielded") running.push("picket committed");
+    if (c.ph === "probe") running.push("probe wave out");
+    if (c.ph === "press") running.push("press wave out");
+    if (c.ph === "breach") running.push("breaching the ring");
+    if (c.ph === "cleanup") running.push("clearing what is left");
+    if (!running.length) return { text: info.explain, tone: info.tone };
+    return { text: running.join(" · "), tone: s?.covered > 0 && c.ph === "starve" ? "good" : info.tone };
+}
+
 export function campaignHoldText(c) {
     if (c.hr == null) return null;
     return CAMPAIGN_HOLD[c.hr] ?? c.hr;
@@ -1150,7 +1200,10 @@ export function campaignOutcomeText(c) {
 // the bot published no verdict yet.
 export function campaignVerdict(c) {
     if (c.vd == null) return null;
-    const info = verdictInfo(CAMPAIGN_VERDICT, c.vd);
+    const info = { ...verdictInfo(CAMPAIGN_VERDICT, c.vd) };
+    if (c.vd === "safe-mode-horizon" && Array.isArray(c.sm)) {
+        info.explain = `${plural(c.sm[0], "charge")}: the breach must fit one ~30k window between safe modes; it does not`;
+    }
     const vs = c.vd === "go" && Array.isArray(c.vs) ? c.vs : null;
     const detail = vs ? `${vs[0]} from ${vs[1]} · ${vs[2]} wave${vs[2] === 1 ? "" : "s"} · breach ${compact(vs[3])} ticks` : null;
     return { ...info, detail };

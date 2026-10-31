@@ -18,7 +18,7 @@ import {
     armyOperations, armySummary, verdictInfo, siegeDetailText,
     DEFENSE_VERDICT, DEFENSE_SKIP, defenseSkipInfo, siegeVerdictFor, worstTone,
     powerGateState, powerFleetRows, haulerSummary, powerStockPoint, powerStockSeries,
-    campaigns, campaignTrend, campaignVerdict, campaignPhaseInfo, campaignHoldText, campaignSafeModeText, campaignStarve,
+    campaigns, campaignTrend, campaignVerdict, campaignPhaseInfo, campaignHoldText, campaignSafeModeText, campaignStarve, campaignNow,
     remoteLedgerRows, remoteLedgerSummary, LEDGER_MATURE_TICKS, powerLedgerRows, depositLedgerRows,
 } from "../public/calc.js";
 import { degradeLatest } from "../public/demo.js";
@@ -2141,5 +2141,30 @@ describe("player campaigns (pc)", () => {
         assert.match(campaignSafeModeText(row("W1N1", "hold", { sm: [1, 5000] })), /^active/);
         assert.match(campaignSafeModeText(row("W1N1", "hold", { sm: [0, 0] })), /^inactive/);
         assert.deepEqual(campaignStarve(row("W1N1", "starve", { st: [4, 3, 6, 2] })), { inScope: 4, covered: 3, kills: 6, lost: 2 });
+    });
+    const NOW_CASES = [
+        { name: "idle: skip verdict, nothing to starve, picket pending",
+            c: row("W1N1", "starve", { vd: "safe-mode-horizon", sm: [7, 0], st: [0, 0, 0, 0], pk: "pending" }),
+            text: "waiting — breach skipped (safe-mode horizon, 7 charges); nothing to starve; picket pending", tone: "na" },
+        { name: "skip verdict, remotes in scope but none covered",
+            c: row("W1N1", "starve", { vd: "safe-mode-horizon", sm: [7, 0], st: [3, 0, 0, 0], pk: "pending" }),
+            text: "waiting — breach skipped (safe-mode horizon, 7 charges); starve 0/3 covered; picket pending", tone: "na" },
+        { name: "starving with a fielded picket",
+            c: row("W1N1", "starve", { vd: "safe-mode-horizon", sm: [2, 0], st: [3, 2, 0, 0], pk: "fielded" }),
+            text: "starving 2/3 remotes · picket committed", tone: "good" },
+        { name: "probe wave out", c: row("W1N1", "probe", { vd: "go", vs: ["pair", "W5N5", 1, 900, 40000] }),
+            text: "probe wave out", tone: "good" },
+        { name: "hold", c: row("W1N1", "hold", { hr: "safe-mode" }), text: "on hold: target is in safe mode", tone: "serious" },
+        { name: "terminal outcome", c: row("W1N1", "done", { oc: "cleared" }), text: "target cleared", tone: "na" },
+    ];
+    for (const { name, c, text, tone } of NOW_CASES) {
+        test(`campaignNow: ${name}`, () => {
+            assert.deepEqual(campaignNow(c), { text, tone });
+        });
+    }
+
+    test("the safe-mode-horizon explain names the charge count without mutating the table", () => {
+        assert.match(campaignVerdict(row("W1N1", "starve", { vd: "safe-mode-horizon", sm: [7, 0] })).explain, /^7 charges:/);
+        assert.doesNotMatch(campaignVerdict(row("W1N1", "starve", { vd: "safe-mode-horizon" })).explain, /charge/);
     });
 });

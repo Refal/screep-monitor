@@ -98,7 +98,7 @@ confused with the `sv` stronghold sieges: target `tg`/owner `ow`, phase `ph` (`a
 `starve`, `probe`, `press`, `hold`, `breach`, `cleanup`, then terminal `done`/`abandoned`)
 and ticks in it `pa`, plus optional hold reason, outcome, breach verdict, ring counts, safe
 mode `[charges, ticks left]`, starve coverage `[in scope, covered, kills, lost]` and the best
-attrition option. Ring hits `rh` and target energy `te` are step values that change only at a
+attrition option, and the picket `pk` (`fielded`, `pending`, or a skip reason; absent before assess). Ring hits `rh` and target energy `te` are step values that change only at a
 vision (about every 1000 ticks), so the charts draw steps, on separate axes since ring hits run
 in millions; a row without the campaign breaks the line rather than bridging it. Same contract as `dv`/`sv`: omit-on-empty, never degraded,
 unknown codes render muted.
