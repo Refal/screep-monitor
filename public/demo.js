@@ -312,6 +312,7 @@ function demoRt(i, n, f) {
         core: Math.round(2_000_000 * (1 - 0.35 * f)), coreLvl: 3,
         age: 2 + (i % 5),
         exp: 76680000 + Math.floor(n * 1.4) * 120,
+        nd: "stronghold",
     });
     // A core still deploying — negative exp, the "before deployment" case the
     // bot commit added. Its activation tick sits past the end of the demo
@@ -339,7 +340,7 @@ function demoRt(i, n, f) {
     });
     // Incidental corridor sighting: no home room farms this one.
     if (f > 0.8) {
-        entries.push({ room: "E20S50", h: 1, owners: ["Tigga"], melee: 0, ranged: 60, heal: 30, age: 6 });
+        entries.push({ room: "E20S50", h: 1, owners: ["Tigga"], melee: 0, ranged: 60, heal: 30, age: 6, nd: "non-combat" });
     }
     // Cached memory of a room that has gone dark — age past the cache TTL.
     entries.push({
@@ -709,7 +710,6 @@ export function synthDemo(rangeHours, maxPoints) {
             ...(pwl?.length ? { pwl } : {}),
             ...(dpl?.length ? { dpl } : {}),
             dv: demoDv(i, n),
-            ds: [{ rm: "E26S45", r: "stronghold", h: 5 }],
             sv: demoSv(i, n),
             pc: demoPc(i, n),
             // Always published and never degraded — that is the whole point of

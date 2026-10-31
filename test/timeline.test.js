@@ -61,9 +61,9 @@ describe("roomFacts matching", () => {
         assert.equal(roomFacts(d, TARGET).get("defense verdict"), `undefendable (gave up: ${HOME}; retry in 120)`);
     });
     test("defense skip, remote threat and ledger rows", () => {
-        const d = { tick: 1, ds: [{ rm: TARGET, r: "non-combat", h: 2 }], rt: [{ room: TARGET, h: 3, age: 5, coreLvl: 2, owners: ["Invader"] }], rl: [{ h: HOME, rm: TARGET, in: 204912, out: 109800, w: 2000 }] };
+        const d = { tick: 1, rt: [{ room: TARGET, h: 3, age: 5, coreLvl: 2, owners: ["Invader"], nd: "non-combat" }], rl: [{ h: HOME, rm: TARGET, in: 204912, out: 109800, w: 2000 }] };
         const facts = roomFacts(d, TARGET);
-        assert.equal(facts.get("defense skip"), "not defended · non-combat hostiles, 2 hostiles");
+        assert.equal(facts.get("defense skip"), "not defended · non-combat hostiles");
         assert.equal(facts.get("remote threat"), "3 hostiles, core L2 [Invader]");
         assert.equal(facts.get(`ledger ${HOME}→${TARGET}`), "in ~200k out ~110k");
     });

@@ -82,9 +82,6 @@ export function roomFacts(doc, room) {
         const extra = [v.uh?.length ? `gave up: ${v.uh.join(",")}` : null, v.in !== undefined ? `retry in ${v.in}` : null].filter(Boolean);
         facts.set("defense verdict", `${verdictInfo(DEFENSE_VERDICT, v.v).word}${extra.length ? ` (${extra.join("; ")})` : ""}`);
     }
-    for (const s of doc.ds ?? []) {
-        if (s.rm === room) facts.set("defense skip", `${verdictInfo(DEFENSE_SKIP, s.r).word}, ${s.h} hostiles`);
-    }
     for (const v of doc.sv ?? []) {
         if (v.h !== room && v.rm !== room) continue;
         const detail = siegeDetailText(v);
@@ -93,6 +90,7 @@ export function roomFacts(doc, room) {
     for (const t of doc.rt ?? []) {
         if (t.room !== room) continue;
         facts.set("remote threat", `${t.h} hostiles${t.coreLvl !== undefined ? `, core L${t.coreLvl}` : ""}${t.owners?.length ? ` [${t.owners.join(",")}]` : ""}`);
+        if (t.nd) facts.set("defense skip", verdictInfo(DEFENSE_SKIP, t.nd).word);
     }
     for (const l of doc.rl ?? []) {
         if (l.h === room || l.rm === room) facts.set(`ledger ${l.h}→${l.rm}`, `in ~${coarse(l.in)} out ~${coarse(l.out)}`);
@@ -114,9 +112,9 @@ export function roomFacts(doc, room) {
     return facts;
 }
 
-/** Kinds StatsManager never degrades (dv/ds/sv and owned-room scalars), so their absence is real on any snapshot. */
+/** Kinds StatsManager never degrades (dv/sv and owned-room scalars), so their absence is real on any snapshot. */
 function neverDegraded(kind) {
-    return kind === "defense verdict" || kind === "defense skip" || kind === "spawn queue" || kind.startsWith("siege ");
+    return kind === "defense verdict" || kind === "spawn queue" || kind.startsWith("siege ");
 }
 
 /**

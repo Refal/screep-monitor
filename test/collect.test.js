@@ -250,13 +250,6 @@ describe("buildSnapshotDoc", () => {
         assert.equal(full.pba, 1);
     });
 
-    test("defense skips: ds omit-on-empty, pass through whole", () => {
-        assert.equal("ds" in buildSnapshotDoc({ ...entry(100), tsMs: 0 }), false);
-        assert.equal("ds" in buildSnapshotDoc({ ...entry(100), tsMs: 0, ds: [] }), false);
-        const ds = [{ rm: "W2N1", r: "non-combat", h: 1 }];
-        assert.deepEqual(buildSnapshotDoc({ ...entry(100), tsMs: 0, ds }).ds, ds);
-    });
-
     test("planner verdicts: dv/sv omit-on-empty, pass through whole", () => {
         const bare = buildSnapshotDoc({ ...entry(100), tsMs: 0 });
         assert.equal("dv" in bare, false);

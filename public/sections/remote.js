@@ -1,6 +1,6 @@
 // Remote threats section and remote-threat log.
 import {
-    compact, fmtDuration, fmtHits, hasThreatDetail, MAX_REMOTE_THREATS, observedMsPerTick,
+    compact, defenseSkipInfo, fmtDuration, fmtHits, hasThreatDetail, MAX_REMOTE_THREATS, observedMsPerTick,
     REMOTE_STALE_AGE_TICKS, remoteClassRank, remoteDeployPhase, remoteEpisodes, remoteThreatClass, routeOrAbsence,
     routeStatusText, sortRemoteThreats,
 } from "../calc.js";
@@ -8,7 +8,7 @@ import { ATTACK_LOG_MAX_ROWS } from "../constants.js";
 import { $, cssVar, fmtInt } from "../dom.js";
 import { history, latest } from "../state.js";
 import {
-    ARMY_DEGRADED_TITLE, episodeTicksCell, REMOTE_DEGRADED_TITLE, routeDetailTitle, truncationNote,
+    ARMY_DEGRADED_TITLE, episodeTicksCell, toneClass, REMOTE_DEGRADED_TITLE, routeDetailTitle, truncationNote,
 } from "../ui/format.js";
 import { makeBadge, roomLinkCell } from "../ui/links.js";
 import { naCell, renderTable, textCell } from "../ui/table.js";
@@ -191,18 +191,26 @@ function remoteHostilesCell(entry) {
     return td;
 }
 
+function defenseSkipCell(skip) {
+    const td = textCell(skip.word, toneClass(skip.tone));
+    td.title = skip.explain;
+    return td;
+}
+
 // Joined from `ar` by (home, room). A corridor sighting has no home, so no
 // room could answer it — an absence with a meaning, worded as such.
 function remoteResponseCell(entry) {
-    if (!entry.home) return naCell("n/a", "corridor sighting — no home room answers it");
+    const skip = defenseSkipInfo(entry);
+    if (!entry.home) return skip ? defenseSkipCell(skip) : naCell("n/a", "corridor sighting — no home room answers it");
     const resolved = routeOrAbsence(latest, entry.home, entry.room);
     if (!resolved.route) {
+        if (skip) return defenseSkipCell(skip);
         return resolved.absent === "none"
             ? naCell("none", "no squad planned for this room in the bot's army records")
             : naCell("unknown", ARMY_DEGRADED_TITLE);
     }
     const td = textCell(routeStatusText(resolved.route), resolved.route.dead > 0 ? "critical" : undefined);
-    td.title = routeDetailTitle(resolved.route);
+    td.title = routeDetailTitle(resolved.route) + (skip ? ` · defense planner: ${skip.explain}` : "");
     return td;
 }
 
@@ -216,7 +224,7 @@ function remoteColumns(msPerTick) {
           hint: "home room farming this remote; “corridor” means an incidental sighting that belongs to no home",
           sort: e => e.home, cell: e => remoteHomeCell(e.home) },
         { key: "response", label: "Response",
-          hint: "squads the home room has fielded for this room, from the bot's army records: forming = still spawning at home, deployed = alive members in the room. Engaged squads never respawn, so “lost” is permanent",
+          hint: "squads the home room has fielded for this room, from the bot's army records: forming = still spawning at home, deployed = alive members in the room. Engaged squads never respawn, so “lost” is permanent. “not defended · …” is the defense planner's reason for sending nothing",
           cell: remoteResponseCell },
         // h: 0 reads "no vision" / "none cached" — unknown, so blank rather than zero.
         { key: "hostiles", label: "Hostiles", sort: e => (e.h === 0 ? null : e.h), cell: remoteHostilesCell },

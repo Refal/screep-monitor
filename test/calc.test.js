@@ -16,7 +16,7 @@ import {
     squadSummary, routeSummary, routePhase, routeStatusText, armyRoutes, armyRouteFor, armyRoutesForHome,
     excludeRoutedGuards, routeOrAbsence,
     armyOperations, armySummary, verdictInfo, siegeDetailText,
-    DEFENSE_VERDICT, DEFENSE_SKIP, siegeVerdictFor, worstTone,
+    DEFENSE_VERDICT, DEFENSE_SKIP, defenseSkipInfo, siegeVerdictFor, worstTone,
     powerGateState, powerFleetRows, haulerSummary, powerStockPoint, powerStockSeries,
     campaigns, campaignTrend, campaignVerdict, campaignPhaseInfo, campaignHoldText, campaignSafeModeText, campaignStarve,
     remoteLedgerRows, remoteLedgerSummary, LEDGER_MATURE_TICKS, powerLedgerRows, depositLedgerRows,
@@ -1623,6 +1623,17 @@ describe("armyRoutes / armyRouteFor / armyRoutesForHome", () => {
     });
 });
 
+describe("defenseSkipInfo", () => {
+    for (const [nd, expected] of [["stronghold", DEFENSE_SKIP.stronghold], ["non-combat", DEFENSE_SKIP["non-combat"]], [undefined, null]]) {
+        test(`rt row nd=${nd} maps to its DEFENSE_SKIP entry`, () => {
+            assert.equal(defenseSkipInfo({ room: "W2N1", h: 2, age: 1, ...(nd ? { nd } : {}) }), expected);
+        });
+    }
+    test("an unknown nd code falls back to verdictInfo's unrecognized entry", () => {
+        assert.equal(defenseSkipInfo({ nd: "brand-new" }).tone, "na");
+    });
+});
+
 describe("routeOrAbsence", () => {
     const withRoutes = { rooms: { W1N1: { thr: thr() } }, ar: [{ home: "W1N1", target: "W2N1", sq: [sq()] }] };
     const noArButThr = { rooms: { W1N1: { thr: thr() } } };
@@ -1682,14 +1693,8 @@ describe("armyOperations", () => {
         assert.equal(by("W9N9"), undefined);
         assert.equal(ops.length, 5);
     });
-    test("a ds-only room gets a verdict-less defense row with the DEFENSE_SKIP verdict", () => {
-        const l = { rooms: {}, ar: [], ds: [{ rm: "W2N1", r: "stronghold", h: 5 }] };
-        const ops = armyOperations(l);
-        assert.equal(ops.length, 1);
-        assert.equal(ops[0].kind, "defense");
-        assert.equal(ops[0].route, null);
-        assert.equal(ops[0].verdict, DEFENSE_SKIP.stronghold);
-        assert.equal(ops[0].detail, "5 hostiles");
+    test("a legacy top-level ds no longer yields army rows", () => {
+        assert.equal(armyOperations({ rooms: {}, ar: [], ds: [{ rm: "W2N1", r: "stronghold", h: 5 }] }).length, 0);
     });
     test("an offense route without power tags or haulers stays an operation", () => {
         const l = { rooms: {}, ar: [{ home: "W1N1", target: "W8N8", kind: "offense", sq: [sq({ id: 8 })] }] };
