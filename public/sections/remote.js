@@ -191,6 +191,17 @@ function remoteHostilesCell(entry) {
     return td;
 }
 
+// Same wording as the activity logs' Aggressors column, plus the h: 0
+// unknown-vs-empty split the other live cells make.
+function remoteAggressorsCell(entry) {
+    if (entry.h === 0) return naCell(entry.mem ? "no vision" : "none", noHostilesTitle(entry));
+    const all = entry.owners ?? [];
+    const owners = all.filter(o => o !== "Source Keeper");
+    if (owners.length) return textCell(owners.join(", "));
+    if (all.length) return naCell("Source Keeper", REMOTE_CLASS_TITLE.keepers);
+    return naCell("unnamed", "no owner was recorded for these hostiles — usually Invader NPCs");
+}
+
 function defenseSkipCell(skip) {
     const td = textCell(skip.word, toneClass(skip.tone));
     td.title = skip.explain;
@@ -228,6 +239,7 @@ function remoteColumns(msPerTick) {
           cell: remoteResponseCell },
         // h: 0 reads "no vision" / "none cached" — unknown, so blank rather than zero.
         { key: "hostiles", label: "Hostiles", sort: e => (e.h === 0 ? null : e.h), cell: remoteHostilesCell },
+        { key: "owners", label: "Aggressors", cell: remoteAggressorsCell },
         { key: "dmgIn", label: "RA/A/H", hint: "hostile ranged / attack (melee) / heal damage per tick, boosts folded in",
           cell: remoteRaahCell },
         { key: "core", label: "Core",
