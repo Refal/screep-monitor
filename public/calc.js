@@ -463,13 +463,17 @@ export function empireVerdict(latest) {
     // `nuked`/`spawnless`/`outgunned` REPLACE a room's posture here rather than
     // sitting beside it, so every room is counted exactly once and the
     // subtitle can't report one room twice. (`strongholds` below is a separate
-    // axis — it comes from `rt`, not from these rooms.)
+    // axis — it comes from `rt`, not from these rooms. Every armed stronghold
+    // keeps the verdict off "clear", but only the `deploying` ones get a card in
+    // threatItems; deployed ones are carded in the remote threats table.)
     const counts = { nuked: 0, spawnless: 0, outgunned: 0, exposed: 0, engaged: 0, unknown: 0, clear: 0 };
     for (const r of rooms) {
         counts[hasIncomingNuke(r) ? "nuked" : hasNoSpawn(r) ? "spawnless" : isOutgunned(r.thr) ? "outgunned" : roomPosture(r.thr).level]++;
     }
     const degraded = rooms.length > 0 && !hasThreatDetail(latest);
-    const strongholds = (latest?.rt ?? []).filter(e => remoteThreatClass(e) === "stronghold").length;
+    const held = (latest?.rt ?? []).filter(e => remoteThreatClass(e) === "stronghold");
+    const strongholds = held.length;
+    const deploying = held.filter(e => isDeployingStronghold(e, latest.tick)).length;
     // Worst first, and `unknown` outranks `clear` for the same reason
     // POSTURE_RANK puts it there: silence is not safety. `nuked` leads even
     // `spawnless` — a scheduled, unavoidable hit outranks a structural
@@ -484,7 +488,7 @@ export function empireVerdict(latest) {
         : strongholds ? "stronghold"
         : counts.unknown ? "unknown"
         : "clear";
-    return { level, counts, strongholds, degraded, rooms: rooms.length };
+    return { level, counts, strongholds, deploying, degraded, rooms: rooms.length };
 }
 
 // Every actionable item in one worst-first list, across two domains that the
@@ -492,8 +496,10 @@ export function empireVerdict(latest) {
 // non-owned rooms (from `rt`). Rooms that are genuinely clear are dropped;
 // `unknown` ones are NOT — see empireVerdict.
 //
-// Ranking is an extension of POSTURE_RANK rather than a new scheme. An armed
-// stronghold sorts below an engaged owned room on purpose: a remote has
+// Only strongholds still deploying come from `rt` (see isDeployingStronghold).
+//
+// Ranking is an extension of POSTURE_RANK rather than a new scheme. A
+// deploying stronghold sorts below an engaged owned room on purpose: a remote has
 // nothing to lose, an owned room has everything. `spawnless` leads even
 // `outgunned` — see empireVerdict. `nuked` leads even `spawnless` — see
 // empireVerdict.
@@ -521,7 +527,7 @@ export function threatItems(latest) {
         });
     }
     for (const entry of latest?.rt ?? []) {
-        if (remoteThreatClass(entry) !== "stronghold") continue;
+        if (!isDeployingStronghold(entry, latest.tick)) continue;
         items.push({ scope: "remote", kind: "stronghold", room: entry.room, entry });
     }
     return items.sort((a, b) =>
@@ -756,6 +762,15 @@ export const remoteClassRank = entry => REMOTE_CLASS_RANK[remoteThreatClass(entr
 export function remoteDeployPhase(exp, tick) {
     if (exp === undefined) return null;
     return exp > 0 ? { phase: "expires", ticks: exp - tick } : { phase: "deploys", ticks: -exp - tick };
+}
+
+// A stronghold (core level > 0) that has not finished deploying yet — the only
+// kind the threat board gives a card. Once deployed (or with no timer known) its
+// card is the remote threats table's; empireVerdict still counts it.
+export function isDeployingStronghold(entry, tick) {
+    if (remoteThreatClass(entry) !== "stronghold") return false;
+    const deploy = remoteDeployPhase(entry.exp, tick);
+    return deploy?.phase === "deploys" && deploy.ticks > 0;
 }
 
 // The bot already sorts and then slices to maxRemoteThreats, so the stored

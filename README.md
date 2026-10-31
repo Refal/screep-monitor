@@ -213,8 +213,9 @@ The page is priority-ordered rather than a flat scroll, because the only part of
 ever urgent is "is anything on fire?".
 
 - **Threat board** (top, always visible). Built from `empireVerdict` / `threatItems` /
-  `clearRooms` in `public/calc.js`. Lists *only* the rooms that are not clear plus armed
-  strongholds, worst first; clear rooms collapse to one line. **A snapshot whose threat
+  `clearRooms` in `public/calc.js`. Lists *only* the rooms that are not clear plus
+  strongholds still deploying, worst first (a deployed stronghold is counted in the verdict
+  but carded only in Remote threats); clear rooms collapse to one line. **A snapshot whose threat
   detail was degraded away must never produce a calm verdict** — `empireVerdict` returns
   `degraded` for that, and the board headlines it instead of a posture. There is a unit test
   pinning this, and `?demo=degraded` reaches it in a browser. A room with an incoming nuke

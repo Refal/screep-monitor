@@ -318,9 +318,11 @@ function demoRt(i, n, f) {
     // bot commit added. Its activation tick sits past the end of the demo
     // window (deliberately never reached), so the live remote table — which
     // only ever shows the latest row — keeps reading "deploys in ~Xm" rather
-    // than flashing past the transition on the very last sample.
+    // than flashing past the transition on the very last sample. It carries
+    // its level (a stronghold knows it before deploying), which is what puts
+    // it on the threat board.
     const deployAtTick = 76680000 + Math.floor(n * 1.5) * 120;
-    entries.push({ room: "E25S48", home: "E24S48", h: 0, coreLvl: 0, age: 3, exp: -deployAtTick });
+    entries.push({ room: "E25S48", home: "E24S48", h: 0, coreLvl: 4, age: 3, exp: -deployAtTick });
     // A raid with a beginning and an end — the episode-close path.
     const raidFrom = Math.floor(n * 0.3), raidTo = Math.floor(n * 0.65);
     if (i >= raidFrom && i < raidTo) {

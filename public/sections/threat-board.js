@@ -12,8 +12,9 @@ import { ticksText, toneClass } from "../ui/format.js";
 import { makeBadge, roomNameLink } from "../ui/links.js";
 
 // The page's answer to "is anything on fire?", above everything else so a
-// phone glance never has to scroll for it. Only non-clear rooms and armed
-// strongholds get a card, worst first (see threatItems); the clear rooms
+// phone glance never has to scroll for it. Only non-clear rooms and
+// strongholds still deploying get a card (deployed ones are only counted in
+// the subtitle — their card is the remote threats table), worst first (see threatItems); the clear rooms
 // collapse to one line. calc.js owns the judgment, this owns the wording.
 
 const VERDICT_TONE = {
@@ -37,7 +38,7 @@ const THREAT_KIND_LABEL = {
     outgunned: "outgunned",
     exposed: "exposed",
     engaged: "engaged",
-    stronghold: "armed stronghold",
+    stronghold: "stronghold deploying",
     unknown: "unknown",
 };
 
@@ -51,7 +52,11 @@ function verdictSubtitle(v, { quiet, watched }) {
     if (v.counts.outgunned) parts.push(`${v.counts.outgunned} outgunned`);
     if (v.counts.exposed) parts.push(`${v.counts.exposed} exposed`);
     if (v.counts.engaged) parts.push(`${v.counts.engaged} engaged`);
-    if (v.strongholds) parts.push(pluralCount(v.strongholds, "armed stronghold"));
+    // Deployed strongholds have no card here — they are counted so the verdict
+    // never reads calm, and pointed at the table that does list them.
+    const armed = v.strongholds - v.deploying;
+    if (v.deploying) parts.push(pluralCount(v.deploying, "deploying stronghold"));
+    if (armed) parts.push(`${pluralCount(armed, "armed stronghold")} (see remote threats)`);
     if (v.counts.unknown) parts.push(`${pluralCount(v.counts.unknown, "room")} unknown`);
     // Nothing else to say: the clear count carries its own noun.
     if (quiet || (!parts.length && !watched)) parts.push(parts.length ? `${quiet} clear` : `${pluralCount(quiet, "room")} clear`);
@@ -173,11 +178,8 @@ function strongholdCard(item) {
     card.append(threatCardHead(item));
     card.append(boardRow("Core", `level ${entry.coreLvl}${entry.core != null ? ` · ${fmtHits(entry.core)} hits` : ""}`,
         "critical"));
-    const deploy = remoteDeployPhase(entry.exp, latest.tick);
-    if (deploy) {
-        card.append(boardRow(deploy.phase === "deploys" ? "Deploys in" : "Expires in", ticksText(deploy.ticks),
-            deploy.phase === "deploys" ? undefined : "critical"));
-    }
+    // threatItems only lets through strongholds still deploying.
+    card.append(boardRow("Deploys in", ticksText(remoteDeployPhase(entry.exp, latest.tick).ticks)));
     if (entry.home) card.append(boardRow("Threatens", `${entry.home}'s remote mining`));
     const response = responseRow(entry);
     if (response) card.append(response);

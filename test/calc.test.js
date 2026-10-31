@@ -1119,14 +1119,31 @@ describe("empireVerdict", () => {
         assert.equal(empireVerdict({ rooms: { A: room({ thr: thr() }), B: room() } }).level, "unknown");
     });
 
-    test("an armed stronghold shows up when every owned room is quiet", () => {
+    test("a deploying stronghold shows up when every owned room is quiet", () => {
         const v = empireVerdict({
+            tick: 1000,
             rooms: { A: room({ thr: thr() }) },
-            rt: [{ room: "E1S1", h: 2, coreLvl: 3, age: 4 }],
+            rt: [{ room: "E1S1", h: 2, coreLvl: 3, age: 4, exp: -1500 }],
         });
         assert.equal(v.strongholds, 1);
+        assert.equal(v.deploying, 1);
         assert.equal(v.level, "stronghold");
     });
+
+    // A deployed stronghold gets no card (the remote threats table has it), but
+    // it must still keep the verdict off "all clear".
+    for (const [why, exp] of [["deployed", 5000], ["past its deploy tick", -900], ["with no timer", undefined]]) {
+        test(`a stronghold ${why} is counted but not as deploying`, () => {
+            const v = empireVerdict({
+                tick: 1000,
+                rooms: { A: room({ thr: thr() }) },
+                rt: [{ room: "E1S1", h: 2, coreLvl: 3, age: 4, exp }],
+            });
+            assert.equal(v.strongholds, 1);
+            assert.equal(v.deploying, 0);
+            assert.equal(v.level, "stronghold");
+        });
+    }
 
     test("a level-0 core is not a stronghold", () => {
         const v = empireVerdict({ rooms: { A: room({ thr: thr() }) }, rt: [{ room: "E1S1", h: 0, coreLvl: 0, age: 1 }] });
@@ -1230,7 +1247,8 @@ describe("threatItems", () => {
                 Outgunned: room({ thr: thr({ h: 2, twrArmed: 0, dps: 0, heal: 400 }) }),
                 Exposed: room({ thr: thr({ h: 2, twrArmed: 0 }) }),
             },
-            rt: [{ room: "Hold", h: 1, coreLvl: 4, age: 2 }],
+            tick: 1000,
+            rt: [{ room: "Hold", h: 1, coreLvl: 4, age: 2, exp: -2000 }],
         });
         assert.deepEqual(items.map(i => i.room), ["Outgunned", "Exposed", "Engaged", "Hold", "Unknown"]);
         assert.deepEqual(items.map(i => i.kind), ["outgunned", "exposed", "engaged", "stronghold", "unknown"]);
@@ -1254,19 +1272,24 @@ describe("threatItems", () => {
     test("an armed stronghold sorts below an engaged owned room", () => {
         // A remote has nothing to lose; an owned room has everything.
         const items = threatItems({
+            tick: 1000,
             rooms: { Owned: room({ thr: thr({ h: 1 }) }) },
-            rt: [{ room: "Hold", h: 9, coreLvl: 5, age: 1 }],
+            rt: [{ room: "Hold", h: 9, coreLvl: 5, age: 1, exp: -2000 }],
         });
         assert.deepEqual(items.map(i => i.room), ["Owned", "Hold"]);
     });
 
-    test("only strongholds come from rt", () => {
+    test("only deploying strongholds come from rt", () => {
         const items = threatItems({
+            tick: 1000,
             rooms: {},
             rt: [
                 { room: "Keep", h: 2, owners: ["Source Keeper"], age: 1 },
-                { room: "Core", h: 0, coreLvl: 0, age: 1 },
-                { room: "Hold", h: 1, coreLvl: 2, age: 1 },
+                { room: "Core", h: 0, coreLvl: 0, age: 1, exp: -2000 },
+                { room: "Hold", h: 1, coreLvl: 2, age: 1, exp: -2000 },
+                { room: "Armed", h: 3, coreLvl: 3, age: 1, exp: 9000 },
+                { room: "Late", h: 0, coreLvl: 3, age: 1, exp: -1000 },
+                { room: "NoTimer", h: 1, coreLvl: 2, age: 1 },
             ],
         });
         assert.deepEqual(items.map(i => i.room), ["Hold"]);
