@@ -801,16 +801,25 @@ export function hasThreatDetail(row) {
     return Object.values(row.rooms ?? {}).some(r => r.thr);
 }
 
+const NPC_OWNERS = new Set(["Invader", "Source Keeper"]);
+
+function isStandingNpcThreat(entry) {
+    const cls = remoteThreatClass(entry);
+    if (cls === "keepers") return true;
+    return cls === "stronghold" && (entry.owners ?? []).every(o => NPC_OWNERS.has(o));
+}
+
 // Collapses consecutive rt appearances per room into episodes for the remote
 // activity log — the rt analogue of hostileEpisodes, and deliberately the same
 // shape so the two logs read alike.
 //
 // Two differences from hostileEpisodes, both load-bearing:
 //
-//  - Keeper-only entries are excluded. An SK remote permanently caches its
-//    three standing guards, so logging them would give every SK room one
-//    endless episode in every range and bury the actual raids. A level-0 core
-//    still logs: a core landing in a remote is an event, even a harmless one.
+//  - Keeper-only and NPC-only stronghold entries are excluded. An SK remote
+//    permanently caches its three standing guards, and a stronghold's defenders
+//    stay until the core decays; both would be one endless episode in every
+//    range and bury the actual raids (the remote threats table carries them).
+//    A level-0 core, or a stronghold row listing a player owner, still logs.
 //  - BOTH ends of the tick range are the sighting's own, not the observing
 //    snapshot's: fromTick is min(row.tick - entry.age) and toTick is
 //    max(row.tick - entry.age). `age` recovers lookback the LOD sampling
@@ -839,8 +848,7 @@ export function remoteEpisodes(history) {
         covered++;
         const seen = new Set();
         for (const entry of row.rt ?? []) {
-            const cls = remoteThreatClass(entry);
-            if (cls === "keepers") continue;
+            if (isStandingNpcThreat(entry)) continue;
             seen.add(entry.room);
             let ep = open.get(entry.room);
             if (!ep) {

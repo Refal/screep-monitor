@@ -866,33 +866,36 @@ describe("remoteEpisodes", () => {
         assert.equal(episodes[1].fromTick, 0);
     });
 
-    // The bot carries a stronghold it has lost vision on out of Memory, so the
-    // room never leaves rt. Before that, every scout pass logged its own episode.
+    // Standing stronghold defenders are a fixture the remote threats table already shows.
     const carriedCore = (age) => ({ room: "W3N1", home: "W1N1", h: 0, age, coreLvl: 5, mem: 1 });
+    const strongholdRow = (owners) => ({ room: "W3N1", home: "W1N1", h: owners.length, age: 0, coreLvl: 4, owners });
 
-    test("a continuously carried stronghold is one episode, not one per scout pass", () => {
+    test("a stronghold carried across rows yields no episodes", () => {
         const history = [row(0, 0, [carriedCore(0)]), row(300, 1000, [carriedCore(300)]), row(600, 2000, [carriedCore(600)])];
-        const { episodes } = remoteEpisodes(history);
+        assert.deepEqual(remoteEpisodes(history).episodes, []);
+    });
+
+    test("a stronghold with Invader defenders yields no episodes", () => {
+        const defenders = strongholdRow(Array(8).fill("Invader"));
+        assert.deepEqual(remoteEpisodes([row(0, 0, [defenders]), row(100, 1000, [defenders])]).episodes, []);
+    });
+
+    test("a stronghold row listing a player owner still logs", () => {
+        const { episodes } = remoteEpisodes([row(0, 0, [strongholdRow(["Invader", "Kasami"])])]);
         assert.equal(episodes.length, 1);
-        assert.equal(episodes[0].room, "W3N1");
-        assert.equal(episodes[0].peakCoreLvl, 5);
-        assert.equal(episodes[0].peakH, 0);
+        assert.equal(episodes[0].peakCoreLvl, 4);
     });
 
-    test("a carried episode's toTick tracks the last real sighting, not the carrying snapshot", () => {
-        // age grows while the room is dark, then a scout pass at tick 600 resets it.
-        const history = [row(0, 0, [carriedCore(0)]), row(300, 1000, [carriedCore(300)]), row(600, 2000, [carriedCore(0)])];
-        const [ep] = remoteEpisodes(history).episodes;
-        assert.equal(ep.fromTick, 0);
-        assert.equal(ep.toTick, 600);   // the pass, not tick 300's back-dated 0
-        assert.equal(ep.staleTicks, 0);
+    test("a level-0 core still yields one episode", () => {
+        const core0 = { room: "W3N1", home: "W1N1", h: 0, age: 0, core: 1e5, coreLvl: 0 };
+        assert.equal(remoteEpisodes([row(0, 0, [core0]), row(100, 1000, [core0])]).episodes.length, 1);
     });
 
-    test("a carried episode with no re-sighting freezes at the last pass and reads stale", () => {
-        const history = [row(0, 0, [carriedCore(0)]), row(300, 1000, [carriedCore(300)]), row(900, 2000, [carriedCore(900)])];
+    test("an episode with no re-sighting freezes at the last pass and reads stale", () => {
+        const history = [row(0, 0, [raid({ age: 0 })]), row(300, 1000, [raid({ age: 300 })]), row(900, 2000, [raid({ age: 900 })])];
         const [ep] = remoteEpisodes(history).episodes;
         assert.equal(ep.toTick, 0);
-        assert.equal(ep.staleTicks, 900); // so it sorts below anything seen more recently
+        assert.equal(ep.staleTicks, 900);
     });
 
     test("a degraded row mid-incursion neither splits the episode nor ends it early", () => {
@@ -925,14 +928,14 @@ describe("remoteEpisodes", () => {
         assert.equal(covered, 2); // the rows still carried detail — they just held nothing worth logging
     });
 
-    test("logs a level-0 core, and tracks the worst core level seen", () => {
+    test("logs a level-0 core with its core level", () => {
         const history = [
             row(0, 0, [{ room: "W3N1", home: "W1N1", h: 0, age: 2, core: 1e5, coreLvl: 0 }]),
-            row(100, 1000, [{ room: "W3N1", home: "W1N1", h: 0, age: 2, core: 5e6, coreLvl: 4 }]),
+            row(100, 1000, [{ room: "W3N1", home: "W1N1", h: 0, age: 2, core: 1e5, coreLvl: 0 }]),
         ];
         const { episodes } = remoteEpisodes(history);
         assert.equal(episodes.length, 1);
-        assert.equal(episodes[0].peakCoreLvl, 4);
+        assert.equal(episodes[0].peakCoreLvl, 0);
         assert.deepEqual(episodes[0].owners, []);
     });
 

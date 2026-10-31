@@ -57,7 +57,7 @@ open a second episode starting before the first one's reported end. The episode 
 converting it to wall clock needs the ms-per-tick ratio, which only exists in the dashboard (`observedMsPerTick(history)`)
 — so `fromMs`/`toMs` stay the observing rows' own clocks and `remoteWhenCell` applies the
 lag. Third, `remoteEpisodes` and the `remote-tiles` headline counts both exclude
-Source-Keeper-only entries, since an SK remote permanently caches its standing guards: in the
+Source-Keeper-only entries (`remoteEpisodes` also drops NPC-only stronghold rows, which the remote threats table carries), since an SK remote permanently caches its standing guards: in the
 log they would produce one endless episode in every range, and in the tiles they would pin
 "Remote hostiles" at a non-zero count that never returns to 0 on a quiet empire. They still
 appear in the table, classed `keepers`, and are counted on the tiles' sub line.

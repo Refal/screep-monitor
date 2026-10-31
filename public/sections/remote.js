@@ -290,10 +290,8 @@ function remoteLogAggressorsCell(ep) {
     const owners = ep.owners.filter(o => o !== "Source Keeper");
     if (owners.length) return textCell(owners.join(", "));
     if (ep.peakCoreLvl !== undefined) {
-        const cell = textCell(`core L${ep.peakCoreLvl}`, ep.peakCoreLvl > 0 ? "critical" : undefined);
-        cell.title = ep.peakCoreLvl > 0
-            ? "armed stronghold, no hostile creeps recorded"
-            : "reserving core only, no hostile creeps — harmless";
+        const cell = textCell(`core L${ep.peakCoreLvl}`);
+        cell.title = "reserving core only, no hostile creeps — harmless";
         return cell;
     }
     return naCell("unnamed", "no owner was recorded for these hostiles — usually Invader NPCs");
