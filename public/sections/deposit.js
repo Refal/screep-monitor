@@ -62,7 +62,8 @@ function depositsCell(row) {
         badge.title = `${fmtInt.format(units)} ${type} handed over at home over ${fmtInt.format(row.w)} ticks`;
         return badge;
     });
-    return chipsCell(chips, row.deposits.map(([t, u]) => `${t} ${fmtInt.format(u)}`).join(" · "));
+    // The badges already print type and amount, so no card-mode text copy.
+    return chipsCell(chips);
 }
 
 // Ops are short, so the ratio shows from the first delivery rather than waiting

@@ -253,6 +253,8 @@ tbody td { font-variant-numeric: tabular-nums; }
 /* These three right-align inside a table cell; in a card they start-align
    with the value they belong to. */
 .table-wrap td .chips, .table-wrap td .nuker-fill, .table-wrap td .def-fill { justify-content: flex-start; }
+/* A row of labelled badges can outrun a phone-width card: wrap it. */
+.table-wrap td .chips { flex-wrap: wrap; row-gap: 3px; }
 /* Badges one per line (the power table's Committed column), start-aligned in a
    card and right-aligned in a table like every other chips cell. */
 .table-wrap td.chips-stack .chips { flex-direction: column; align-items: flex-start; gap: 3px; }
@@ -294,6 +296,7 @@ tbody td { font-variant-numeric: tabular-nums; }
     .table-wrap .row-expand-toggle { display: none; }
     .table-wrap td[data-tier="3"] { display: table-cell; }
     .table-wrap td .chips, .table-wrap td .nuker-fill, .table-wrap td .def-fill { justify-content: flex-end; }
+    .table-wrap td .chips { flex-wrap: nowrap; }
     .table-wrap td.chips-stack .chips { align-items: flex-end; }
     .table-wrap td .chip-values { display: none; }
     /* Qualified with .table-wrap on purpose: the card-mode `.table-wrap td`

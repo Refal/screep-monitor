@@ -195,7 +195,8 @@ function ledgerBoostsCell(row) {
         badge.title = `${fmtInt.format(units)} ${compound} consumed boosting power-op creeps`;
         return badge;
     });
-    return chipsCell(chips, row.compounds.map(([c, u]) => `${c} ${fmtInt.format(u)}`).join(" · "));
+    // The badges already print compound and amount, so no card-mode text copy.
+    return chipsCell(chips);
 }
 
 function ledgerColumns(msPerTick) {
