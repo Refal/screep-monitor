@@ -1233,6 +1233,21 @@ export function campaignStarve(c) {
     return { inScope, covered, kills, lost };
 }
 
+// Lifetime spend from `sp` as {picket, waves, denial}; picket and waves are
+// {energy, boosts: [[compound, units]] sorted} or null when that track booked
+// nothing, denial is energy or null. Null when `sp` is absent.
+export function campaignSpend(c) {
+    const sp = c.sp;
+    if (!sp || typeof sp !== "object") return null;
+    const track = t => Number.isFinite(t?.e) ? {
+        energy: t.e,
+        boosts: Object.entries(t.c ?? {}).filter(([, u]) => Number.isFinite(u)).sort(([a], [b]) => a.localeCompare(b)),
+    } : null;
+    const denial = Number.isFinite(sp.dn) ? sp.dn : null;
+    const out = { picket: track(sp.pk), waves: track(sp.wv), denial };
+    return out.picket || out.waves || out.denial != null ? out : null;
+}
+
 // Series for one target across history rows, one value per row (aligned to the
 // chart's labels). A row without the target or the field is null, so a chart
 // with spanGaps off breaks there instead of bridging an absence.

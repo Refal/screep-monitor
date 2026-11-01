@@ -18,7 +18,7 @@ import {
     armyOperations, armySummary, verdictInfo, siegeDetailText,
     DEFENSE_VERDICT, DEFENSE_SKIP, defenseSkipInfo, siegeVerdictFor, worstTone,
     powerGateState, powerFleetRows, haulerSummary, powerStockPoint, powerStockSeries,
-    campaigns, campaignTrend, campaignVerdict, campaignPhaseInfo, campaignHoldText, campaignSafeModeText, campaignStarve, campaignNow,
+    campaigns, campaignTrend, campaignVerdict, campaignPhaseInfo, campaignHoldText, campaignSafeModeText, campaignStarve, campaignSpend, campaignNow,
     remoteLedgerRows, remoteLedgerSummary, LEDGER_MATURE_TICKS, powerLedgerRows, depositLedgerRows,
 } from "../public/calc.js";
 import { degradeLatest } from "../public/demo.js";
@@ -2158,6 +2158,16 @@ describe("player campaigns (pc)", () => {
         assert.match(campaignSafeModeText(row("W1N1", "hold", { sm: [1, 5000] })), /^active/);
         assert.match(campaignSafeModeText(row("W1N1", "hold", { sm: [0, 0] })), /^inactive/);
         assert.deepEqual(campaignStarve(row("W1N1", "starve", { st: [4, 3, 6, 2] })), { inScope: 4, covered: 3, kills: 6, lost: 2 });
+    });
+    test("spend parses tracks with sorted boosts and is null when absent or empty", () => {
+        assert.equal(campaignSpend(row("W1N1", "assess")), null);
+        assert.equal(campaignSpend(row("W1N1", "starve", { sp: {} })), null);
+        assert.deepEqual(campaignSpend(row("W1N1", "starve", { sp: { pk: { e: 100, c: { XUH2O: 30, KH: 5 } }, dn: 7 } })), {
+            picket: { energy: 100, boosts: [["KH", 5], ["XUH2O", 30]] }, waves: null, denial: 7,
+        });
+        assert.deepEqual(campaignSpend(row("W1N1", "starve", { sp: { wv: { e: 9 } } })), {
+            picket: null, waves: { energy: 9, boosts: [] }, denial: null,
+        });
     });
     const NOW_CASES = [
         { name: "idle: skip verdict, nothing to starve, picket pending",

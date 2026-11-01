@@ -1,10 +1,10 @@
 // Player campaigns section (pc). Stronghold sieges are the Army section's.
 import {
-    campaignHoldText, campaignNow, campaignOutcomeText, campaignPhaseInfo, campaignPicketInfo, campaignSafeModeText, campaignStarve,
+    campaignHoldText, campaignNow, campaignOutcomeText, campaignPhaseInfo, campaignPicketInfo, campaignSafeModeText, campaignSpend, campaignStarve,
     campaignTargets, campaignTrend, campaignVerdict, campaigns, compact,
 } from "../calc.js";
 import { lineDataset, renderLine } from "../charts/core.js";
-import { $, cssVar } from "../dom.js";
+import { $, cssVar, fmtInt } from "../dom.js";
 import { history, latest } from "../state.js";
 import { TONE_COLOR, ticksText, toneClass } from "../ui/format.js";
 import { makeBadge, roomLinkCell } from "../ui/links.js";
@@ -97,6 +97,35 @@ function picketCell(c) {
     return badgeCell(info, info.word);
 }
 
+function trackText(label, t) {
+    const boosts = t.boosts.map(([compound, units]) => ` + ${compound} ${compact(units)}`).join("");
+    return `${label} ${compact(t.energy)} E${boosts}`;
+}
+
+function spendTotal(s) {
+    return (s.picket?.energy ?? 0) + (s.waves?.energy ?? 0) + (s.denial ?? 0);
+}
+
+function spendCell(c) {
+    const s = campaignSpend(c);
+    if (!s) return naCell("—", "nothing booked yet");
+    const total = spendTotal(s);
+    const parts = [
+        `${compact(total)} E`,
+        s.picket ? trackText("picket", s.picket) : null,
+        s.waves ? trackText("waves", s.waves) : null,
+        s.denial != null ? `denial ${compact(s.denial)} E` : null,
+    ].filter(Boolean);
+    const td = textCell(parts.join(" · "));
+    td.title = [
+        "lifetime totals since the campaign opened, not a window; spend booked before this deploy is not counted",
+        s.picket ? `picket: ${fmtInt.format(s.picket.energy)} E` : null,
+        s.waves ? `waves: ${fmtInt.format(s.waves.energy)} E` : null,
+        s.denial != null ? `denial: ${fmtInt.format(s.denial)} E` : null,
+    ].filter(Boolean).join("\n");
+    return td;
+}
+
 function keyStructuresCell(c) {
     return c.ke == null ? naCell("—", NOT_PUBLISHED) : textCell(`${c.ke} spawns + towers`);
 }
@@ -117,6 +146,7 @@ const CAMPAIGN_COLUMNS = [
     { key: "keys", label: "Key structures", tier: 3, hint: "hostile spawns plus towers", sort: c => c.ke, cell: keyStructuresCell },
     { key: "safeMode", label: "Safe mode", hint: "charges left and ticks of active safe mode", cell: safeModeCell },
     { key: "starve", label: "Starve", hint: "denial rooms covered of those in scope, creeps killed against lost", cell: starveCell },
+    { key: "spend", label: "Spend", sort: c => { const s = campaignSpend(c); return s ? spendTotal(s) : null; }, hint: "what the campaign has cost us: body and boost energy of the picket and waves, denial raiders, boost compounds; lifetime totals since siege() opened it", cell: spendCell },
     { key: "attrition", label: "Attrition estimate", tier: 3, hint: "ledger only — the bot does not run this lever; ratio = their credits lost per credit we'd spend", cell: attritionCell },
     { key: "picket", label: "Picket", tier: 3, hint: "the boosted raider kept outside the ring: committed, pending, or why it was skipped", cell: picketCell },
     { key: "vision", label: "Vision age", tier: 3, hint: "ticks since the bot last saw the target room", sort: c => c.va, cell: visionAgeCell },
