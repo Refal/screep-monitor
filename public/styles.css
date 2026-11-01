@@ -313,6 +313,32 @@ tbody td { font-variant-numeric: tabular-nums; }
     th[data-primary], td[data-primary] { position: sticky; left: 0; z-index: 1; background: var(--surface-1); }
 }
 
+/* The opposite of .compact: a table too wide to read as a row, with few enough
+   rows that a card each costs nothing (player campaigns). Card mode at every
+   width, nothing folded away; from 700px up each card lays its fields out as a
+   grid, label over value, so every field is on screen at once. Qualified as
+   .table-wrap.cards so it outranks the 700px block above. */
+.table-wrap.cards td[data-tier="3"] { display: grid; }
+.table-wrap.cards .row-expand-toggle { display: none; }
+@media (min-width: 700px) {
+    .table-wrap.cards { overflow-x: visible; }
+    .table-wrap.cards table, .table-wrap.cards tbody { display: block; }
+    .table-wrap.cards thead { display: none; }
+    .table-wrap.cards tr {
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 12px 24px; padding: 14px 16px; border-top: 1px solid var(--grid);
+    }
+    .table-wrap.cards tbody tr:first-child { border-top: 0; }
+    .table-wrap.cards td, .table-wrap.cards td[data-tier="3"] {
+        display: grid; grid-template-columns: 1fr; align-content: start; gap: 2px;
+        padding: 0; border: 0; text-align: left; white-space: normal;
+    }
+    .table-wrap.cards td::before { content: attr(data-label); color: var(--text-muted); font-size: 12px; }
+    .table-wrap.cards td[data-primary] { grid-column: 1 / -1; position: static; font-size: 15px; font-weight: 600; }
+    .table-wrap.cards td[data-primary]::before { content: none; }
+    .table-wrap.cards td.na[data-primary] { font-weight: 400; }
+}
+
 /* Card mode only: the defense board's quiet rows fold behind a toggle (see
    renderDefenseTable). Above 700px the table is dense enough to keep them. */
 .show-all-toggle { display: none; }
