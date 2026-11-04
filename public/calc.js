@@ -1135,6 +1135,7 @@ const CAMPAIGN_OUTCOME = {
     cleared: "target cleared",
     "abandoned-flat": "abandoned: no progress",
     "abandoned-starve": "abandoned: starve did not work",
+    "abandoned-losses": "abandoned: wave wiped before step-out",
 };
 
 const CAMPAIGN_PHASE_ORDER = Object.keys(CAMPAIGN_PHASE);
