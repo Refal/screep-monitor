@@ -1084,9 +1084,9 @@ export function siegeVerdictFor(latest, home, room) {
 // ---------------------------------------------------------------------------
 // Player campaigns (pc) — the bot's multi-day attacks on another player's
 // room. NOT the stronghold sieges above: `sv` / SIEGE_VERDICT never apply here.
-// Row: { tg, ow, ph, pa, hr?, oc?, vd?, vs?, va?, rg?, rh?, te?, ke?, sm?, st?,
+// Row: { tg, ow, ph, pa, hr?, oc?, vd?, vs?, va?, rg?, wb?, te?, ke?, sm?, st?,
 // lb?, pk? }; `ph` assess | starve | probe | press | hold | breach | cleanup, then
-// terminal done | abandoned. `rh` / `te` are known only at a vision (~every
+// terminal done | abandoned. `wb` / `te` are known only at a vision (~every
 // 1000 ticks), so they are step values: they repeat between visions and change
 // once per vision. Like dv/sv, never degraded — absent means no campaign.
 // Every field past tg/ow/ph/pa is optional and unknown codes render muted.
@@ -1252,10 +1252,10 @@ export function campaignSpend(c) {
 // chart's labels). A row without the target or the field is null, so a chart
 // with spanGaps off breaks there instead of bridging an absence.
 export function campaignTrend(rows, target) {
-    const out = { rh: [], te: [], kills: [], lost: [] };
+    const out = { wb: [], te: [], kills: [], lost: [] };
     for (const r of rows) {
         const c = (r.pc ?? []).find(x => x.tg === target);
-        out.rh.push(c?.rh ?? null);
+        out.wb.push(c?.wb?.[0] ?? null);
         out.te.push(c?.te ?? null);
         out.kills.push(c?.st?.[2] ?? null);
         out.lost.push(c?.st?.[3] ?? null);

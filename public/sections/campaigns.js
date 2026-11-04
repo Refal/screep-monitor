@@ -60,6 +60,17 @@ function numberCell(value, why) {
     return td;
 }
 
+function weakestBarrierCell(c) {
+    const td = numberCell(c.wb?.[0]);
+    if (c.wb) {
+        const el = document.createElement("div");
+        el.className = "cell-note";
+        el.textContent = `at ${c.wb[1]},${c.wb[2]}`;
+        td.append(el);
+    }
+    return td;
+}
+
 function ringCell(c) {
     if (!Array.isArray(c.rg)) return naCell("—", NOT_PUBLISHED);
     const [ramparts, walls, seats, open] = c.rg;
@@ -141,7 +152,7 @@ const CAMPAIGN_COLUMNS = [
     { key: "phase", label: "Phase", hint: "the campaign's phase and how long it has been in it, with the hold reason or outcome underneath", cell: phaseCell },
     { key: "verdict", label: "Verdict", hint: "whether a breach force can be fielded; for a go, the doctrine, home, waves and breach time", cell: verdictCell },
     { key: "ring", label: "Ring", tier: 3, cell: ringCell },
-    { key: "ringHits", label: "Ring hits", hint: `summed hits of the target's ring barriers at the last vision — ${VISION_NOTE}`, sort: c => c.rh, cell: c => numberCell(c.rh) },
+    { key: "weakest", label: "Weakest barrier", hint: `hits of the weakest barrier next to a breach seat at the last vision — ${VISION_NOTE}`, sort: c => c.wb?.[0], cell: weakestBarrierCell },
     { key: "energy", label: "Target energy", hint: `storage plus terminal energy at the last vision — ${VISION_NOTE}`, sort: c => c.te, cell: c => numberCell(c.te) },
     { key: "keys", label: "Key structures", tier: 3, hint: "hostile spawns plus towers", sort: c => c.ke, cell: keyStructuresCell },
     { key: "safeMode", label: "Safe mode", hint: "charges left and ticks of active safe mode", cell: safeModeCell },
@@ -186,7 +197,7 @@ export function renderCampaignTable() {
         { text: "no player campaigns", why: "the bot publishes pc only while a campaign exists" });
 }
 
-// Steps, not slopes: rh / te only change at a vision (see campaignTrend).
+// Steps, not slopes: wb / te only change at a vision (see campaignTrend).
 function stepDataset(label, data, colorVar, dashed) {
     const ds = lineDataset(label, data, colorVar);
     Object.assign(ds, { stepped: "after", spanGaps: false, pointRadius: 0, tension: 0 });
@@ -202,7 +213,7 @@ export function renderCampaignCharts() {
     targets.forEach((tg, i) => {
         const t = campaignTrend(history, tg);
         const color = SERIES[i % SERIES.length];
-        ring.push(stepDataset(`${tg} ring hits`, t.rh, color));
+        ring.push(stepDataset(`${tg} weakest barrier`, t.wb, color));
         energy.push(stepDataset(`${tg} energy`, t.te, color));
         denial.push(stepDataset(`${tg} killed`, t.kills, color));
         denial.push(stepDataset(`${tg} lost`, t.lost, color, true));

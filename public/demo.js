@@ -457,7 +457,7 @@ function demoSv(i, n) {
     return rows;
 }
 
-// Player campaigns. E33S31 is a starve whose ring hits and stored energy fall
+// Player campaigns. E33S31 is a starve whose weakest barrier and stored energy fall
 // in steps, one per vision (every 50 rows here), while kills pull ahead of
 // losses; E36S29 is a fresh assess with no vision yet; E28S33 finished. Never
 // degraded, like dv / sv.
@@ -466,13 +466,13 @@ function demoPc(i, n) {
     const rows = [
         {
             tg: "E33S31", ow: "Marauder", ph: "starve", pa: 30000 + i * 120, vd: "safe-mode-horizon", va: (i % 50) * 120,
-            rg: [24, 11, 2, 0], rh: 21000000 - vision * 1700000, te: 410000 - vision * 38000, ke: 9, sm: [2, 0],
+            rg: [24, 11, 2, 0], wb: [21000000 - vision * 1700000, 22, 31], te: 410000 - vision * 38000, ke: 9, sm: [2, 0],
             st: [4, 3, 6 + Math.floor(i / 12), 2 + Math.floor(i / 40)], lb: ["towerDrain", 2.4], pk: "fielded",
             sp: { pk: { e: 5200 + vision * 300, c: { XUH2O: 90, XKHO2: 60 } }, wv: { e: 41000 + vision * 2000, c: { XGHO2: 240 } }, dn: 7800 + vision * 450 },
         },
         {
             tg: "E19S53", ow: "BigCatCat", ph: "starve", pa: 52000 + i * 120, vd: "safe-mode-horizon", va: (i % 50) * 120,
-            rg: [30, 8, 3, 0], rh: 15000000, te: 320000, ke: 6, sm: [7, 0], st: [0, 0, 0, 0], lb: ["blockade", 6.8], pk: "pending",
+            rg: [30, 8, 3, 0], wb: [15000000, 14, 3], te: 320000, ke: 6, sm: [7, 0], st: [0, 0, 0, 0], lb: ["blockade", 6.8], pk: "pending",
         },
         { tg: "E36S29", ow: "Drifter", ph: "assess", pa: i * 120, va: 4000 },
     ];

@@ -268,7 +268,7 @@ describe("buildSnapshotDoc", () => {
         const bare = buildSnapshotDoc({ ...entry(100), tsMs: 0 });
         assert.equal("pc" in bare, false);
         assert.equal("pc" in buildSnapshotDoc({ ...entry(100), tsMs: 0, pc: [] }), false);
-        const pc = [{ tg: "W9N9", ow: "Foe", ph: "starve", pa: 4000, sm: [1, 0], st: [3, 2, 5, 1], rh: 900000, te: 120000 }];
+        const pc = [{ tg: "W9N9", ow: "Foe", ph: "starve", pa: 4000, sm: [1, 0], st: [3, 2, 5, 1], wb: [900000, 5, 6], te: 120000 }];
         assert.deepEqual(buildSnapshotDoc({ ...entry(100), tsMs: 0, pc }).pc, pc);
     });
 

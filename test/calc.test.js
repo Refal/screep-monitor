@@ -2120,22 +2120,22 @@ describe("player campaigns (pc)", () => {
         assert.deepEqual(campaigns({}), []);
     });
 
-    test("trend carries one value per row from rh, te and the st tuple", () => {
-        const at = (rh, te, st) => ({ pc: [row("W1N1", "starve", { rh, te, st })] });
+    test("trend carries one value per row from wb, te and the st tuple", () => {
+        const at = (hits, te, st) => ({ pc: [row("W1N1", "starve", { wb: [hits, 5, 6], te, st })] });
         const rows = [at(900, 50, [1, 1, 0, 0]), at(900, 50, [1, 1, 1, 0]), at(900, 50, [1, 1, 1, 0]),
             at(800, 40, [1, 1, 2, 1]), at(800, 40, [1, 1, 2, 1])];
         const t = campaignTrend(rows, "W1N1");
-        assert.deepEqual(t.rh, [900, 900, 900, 800, 800]);
+        assert.deepEqual(t.wb, [900, 900, 900, 800, 800]);
         assert.deepEqual(t.te, [50, 50, 50, 40, 40]);
         assert.deepEqual(t.kills, [0, 1, 1, 2, 2]);
         assert.deepEqual(t.lost, [0, 0, 0, 1, 1]);
     });
 
     test("trend is null where the target or the field is absent", () => {
-        const rows = [{ pc: [row("W1N1", "assess")] }, {}, { pc: [row("W2N2", "assess", { rh: 5 })] },
-            { pc: [row("W1N1", "starve", { rh: 7 })] }, { pc: [row("W1N1", "starve", { rh: 7 })] }];
-        assert.deepEqual(campaignTrend(rows, "W1N1").rh, [null, null, null, 7, 7]);
-        assert.deepEqual(campaignTrend(rows, "W3N3").rh, [null, null, null, null, null]);
+        const rows = [{ pc: [row("W1N1", "assess")] }, {}, { pc: [row("W2N2", "assess", { wb: [5, 1, 2] })] },
+            { pc: [row("W1N1", "starve", { wb: [7, 1, 2] })] }, { pc: [row("W1N1", "starve", { wb: [7, 1, 2] })] }];
+        assert.deepEqual(campaignTrend(rows, "W1N1").wb, [null, null, null, 7, 7]);
+        assert.deepEqual(campaignTrend(rows, "W3N3").wb, [null, null, null, null, null]);
     });
 
     test("unknown phase and verdict codes render as themselves, muted", () => {
