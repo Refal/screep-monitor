@@ -1,7 +1,7 @@
 // Threat board at the top of the overview.
 import {
     armyOperations, cmpRoom, compact, defenderSummary, empireVerdict, fmtHits, isCriticalZone, quietRooms,
-    REMOTE_STALE_AGE_TICKS, remoteDeployPhase, routeOrAbsence, routeStatusText, SIEGE_VERDICT,
+    REMOTE_STALE_AGE_TICKS, remoteDeployPhase, remoteResponse, SIEGE_VERDICT,
     siegeDetailText, siegeVerdictFor, threatItems, verdictInfo, watchItems, worstTone, zoneTarget,
 } from "../calc.js";
 import { $, cssVar, fmtInt } from "../dom.js";
@@ -158,17 +158,15 @@ function roomThreatCard(item) {
     return card;
 }
 
-// The home room's answer to a remote threat, from `ar`. A missing route is
-// "none" only when the snapshot kept its first-step detail — the same rule
-// the remote table's empty state follows.
+// The home room's answer to a remote threat: the `dv` verdict for the current
+// threat leads, so a leftover squad never reads as the answer to it.
 function responseRow(entry) {
     if (!entry.home) return null;
-    const resolved = routeOrAbsence(latest, entry.home, entry.room);
-    if (resolved.route) {
-        return boardRow("Response", routeStatusText(resolved.route), resolved.route.dead > 0 ? "critical" : undefined);
+    const r = remoteResponse(latest, entry);
+    if (r.absent) {
+        return boardRow("Response", r.absent === "none" ? "no squad planned" : "unknown — army detail dropped from this snapshot", "na");
     }
-    return boardRow("Response",
-        resolved.absent === "none" ? "no squad planned" : "unknown — army detail dropped from this snapshot", "na");
+    return boardRow("Response", r.text, toneClass(r.tone));
 }
 
 function strongholdCard(item) {

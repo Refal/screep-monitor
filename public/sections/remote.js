@@ -1,8 +1,8 @@
 // Remote threats section and remote-threat log.
 import {
-    compact, defenseSkipInfo, fmtDuration, fmtHits, hasThreatDetail, MAX_REMOTE_THREATS, observedMsPerTick,
-    REMOTE_STALE_AGE_TICKS, remoteClassRank, remoteDeployPhase, remoteEpisodes, remoteThreatClass, routeOrAbsence,
-    routeStatusText, sortRemoteThreats,
+    compact, fmtDuration, fmtHits, hasThreatDetail, MAX_REMOTE_THREATS, observedMsPerTick,
+    REMOTE_STALE_AGE_TICKS, remoteClassRank, remoteDeployPhase, remoteEpisodes, remoteResponse, remoteThreatClass,
+    sortRemoteThreats,
 } from "../calc.js";
 import { ATTACK_LOG_MAX_ROWS } from "../constants.js";
 import { $, cssVar, fmtInt } from "../dom.js";
@@ -202,26 +202,18 @@ function remoteAggressorsCell(entry) {
     return naCell("unnamed", "no owner was recorded for these hostiles — usually Invader NPCs");
 }
 
-function defenseSkipCell(skip) {
-    const td = textCell(skip.word, toneClass(skip.tone));
-    td.title = skip.explain;
-    return td;
-}
+const RESPONSE_ABSENT = {
+    corridor: ["n/a", "corridor sighting — no home room answers it"],
+    none: ["none", "no squad planned for this room in the bot's army records"],
+    unknown: ["unknown", ARMY_DEGRADED_TITLE],
+};
 
-// Joined from `ar` by (home, room). A corridor sighting has no home, so no
-// room could answer it — an absence with a meaning, worded as such.
 function remoteResponseCell(entry) {
-    const skip = defenseSkipInfo(entry);
-    if (!entry.home) return skip ? defenseSkipCell(skip) : naCell("n/a", "corridor sighting — no home room answers it");
-    const resolved = routeOrAbsence(latest, entry.home, entry.room);
-    if (!resolved.route) {
-        if (skip) return defenseSkipCell(skip);
-        return resolved.absent === "none"
-            ? naCell("none", "no squad planned for this room in the bot's army records")
-            : naCell("unknown", ARMY_DEGRADED_TITLE);
-    }
-    const td = textCell(routeStatusText(resolved.route), resolved.route.dead > 0 ? "critical" : undefined);
-    td.title = routeDetailTitle(resolved.route) + (skip ? ` · defense planner: ${skip.explain}` : "");
+    const r = remoteResponse(latest, entry);
+    if (r.absent) return naCell(...RESPONSE_ABSENT[r.absent]);
+    const td = textCell(r.text, toneClass(r.tone));
+    const planner = r.explain ? `defense planner: ${r.explain}` : "";
+    td.title = r.route ? routeDetailTitle(r.route) + (planner ? ` · ${planner}` : "") : planner;
     return td;
 }
 

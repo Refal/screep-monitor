@@ -16,7 +16,7 @@ import {
     squadSummary, routeSummary, routePhase, routeStatusText, armyRoutes, armyRouteFor, armyRoutesForHome,
     excludeRoutedGuards, routeOrAbsence,
     armyOperations, armySummary, verdictInfo, siegeDetailText,
-    DEFENSE_VERDICT, DEFENSE_SKIP, defenseSkipInfo, siegeVerdictFor, worstTone,
+    DEFENSE_VERDICT, DEFENSE_SKIP, defenseSkipInfo, defenseVerdictFor, remoteResponse, siegeVerdictFor, worstTone,
     powerGateState, powerFleetRows, haulerSummary, powerStockPoint, powerStockSeries,
     campaigns, campaignTrend, campaignVerdict, campaignPhaseInfo, campaignHoldText, campaignSafeModeText, campaignStarve, campaignSpend, campaignNow,
     remoteLedgerRows, remoteLedgerSummary, LEDGER_MATURE_TICKS, powerLedgerRows, depositLedgerRows,
@@ -1657,6 +1657,44 @@ describe("defenseSkipInfo", () => {
     }
     test("an unknown nd code falls back to verdictInfo's unrecognized entry", () => {
         assert.equal(defenseSkipInfo({ nd: "brand-new" }).tone, "na");
+    });
+});
+
+describe("remoteResponse", () => {
+    const entry = (over = {}) => ({ room: "W2N1", home: "W1N1", h: 1, age: 0, ...over });
+    const deployed = [{ home: "W1N1", target: "W2N1", sq: [sq({ n: [0, 0, 1, 0], at: [0, 1, 0], b: 1 })] }];
+    const detail = { rooms: { W1N1: { thr: thr() } } };
+    const cases = [
+        ["undefendable over a leftover deployed squad leads with the verdict",
+            { ...detail, ar: deployed, dv: [{ rm: "W2N1", v: "undefendable", in: 63, uh: ["W1N1"] }] }, entry(),
+            { text: "undefendable · retry in 63 · 1 left from earlier (deployed, boosted) · gave up: W1N1", tone: "critical" }],
+        ["undefendable with no route", { ...detail, dv: [{ rm: "W2N1", v: "undefendable", in: 10 }] }, entry(),
+            { text: "undefendable · retry in 10", tone: "critical" }],
+        ["not_worth shows the economy", { ...detail, dv: [{ rm: "W2N1", v: "not_worth", ec: [12300, 30100] }] }, entry(),
+            { text: "waited out · wait 12.3k vs respond 30.1k", tone: "short" }],
+        ["holding prefixes the route", { ...detail, ar: deployed, dv: [{ rm: "W2N1", v: "holding" }] }, entry(),
+            { text: "holding · deployed · 1 in room · boosted", tone: "short" }],
+        ["covered keeps the plain route", { ...detail, ar: deployed, dv: [{ rm: "W2N1", v: "covered" }] }, entry(),
+            { text: "deployed · 1 in room · boosted", tone: undefined }],
+        ["no verdict falls back to the skip reason", detail, entry({ nd: "non-combat" }),
+            { text: DEFENSE_SKIP["non-combat"].word, tone: "na" }],
+        ["a verdict for another room is ignored", { ...detail, ar: deployed, dv: [{ rm: "W9N9", v: "undefendable" }] }, entry(),
+            { text: "deployed · 1 in room · boosted", tone: undefined }],
+    ];
+    for (const [name, latest, e, expected] of cases) {
+        test(name, () => {
+            const r = remoteResponse(latest, e);
+            assert.deepEqual({ text: r.text, tone: r.tone }, expected);
+        });
+    }
+    test("absence states: none with detail, unknown without, corridor with no home", () => {
+        assert.equal(remoteResponse(detail, entry()).absent, "none");
+        assert.equal(remoteResponse({ rooms: {} }, entry()).absent, "unknown");
+        assert.equal(remoteResponse(detail, entry({ home: undefined })).absent, "corridor");
+    });
+    test("defenseVerdictFor finds the row by room", () => {
+        assert.equal(defenseVerdictFor({ dv: [{ rm: "W2N1", v: "covered" }] }, "W2N1").v, "covered");
+        assert.equal(defenseVerdictFor({}, "W2N1"), null);
     });
 });
 

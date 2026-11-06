@@ -1084,6 +1084,51 @@ export function verdictInfo(table, code) {
 
 export const defenseSkipInfo = entry => (entry.nd === undefined ? null : verdictInfo(DEFENSE_SKIP, entry.nd));
 
+export function defenseVerdictFor(latest, room) {
+    return (latest?.dv ?? []).find(v => v.rm === room) ?? null;
+}
+
+// Army records carry no threat hash, so a route under a losing verdict was raised
+// against an earlier threat — it is reported as a leftover, never as the answer.
+const LOSING_DEFENSE_VERDICTS = new Set(["undefendable", "not_worth"]);
+
+function leftoverRouteText(r) {
+    if (r.alive === 0) return `${r.dead} lost`;
+    return `${r.alive} left from earlier (${[r.phase, ...(r.boosted ? ["boosted"] : [])].join(", ")})`;
+}
+
+// The Response a remote-threat row shows: the `dv` verdict for the current threat
+// first, then the `ar` route, then the `nd` skip reason. `absent` is set (none |
+// unknown | corridor) when there is nothing to show; the caller words it.
+export function remoteResponse(latest, entry) {
+    const v = defenseVerdictFor(latest, entry.room);
+    const verdict = v ? verdictInfo(DEFENSE_VERDICT, v.v) : null;
+    const route = entry.home ? armyRouteFor(latest, entry.home, entry.room) : null;
+    if (v && LOSING_DEFENSE_VERDICTS.has(v.v)) {
+        const parts = [verdict.word];
+        if (v.in != null) parts.push(`retry in ${v.in}`);
+        const econ = economyDetailText(v);
+        if (econ) parts.push(econ);
+        if (route) parts.push(leftoverRouteText(route));
+        if (v.uh?.length) parts.push(`gave up: ${v.uh.join(", ")}`);
+        return { text: parts.join(" · "), tone: verdict.tone, explain: verdict.explain, route };
+    }
+    const holding = v?.v === "holding";
+    if (route) {
+        return {
+            text: holding ? `${verdict.word} · ${routeStatusText(route)}` : routeStatusText(route),
+            tone: route.dead > 0 ? "critical" : holding ? verdict.tone : undefined,
+            explain: verdict?.explain ?? defenseSkipInfo(entry)?.explain ?? null,
+            route,
+        };
+    }
+    if (holding) return { text: verdict.word, tone: verdict.tone, explain: verdict.explain, route: null };
+    const skip = defenseSkipInfo(entry);
+    if (skip) return { text: skip.word, tone: skip.tone, explain: skip.explain, route: null };
+    if (!entry.home) return { absent: "corridor" };
+    return { absent: hasThreatDetail(latest) ? "none" : "unknown" };
+}
+
 // The hold detail `d` means different things per reason: "L3" (a core level)
 // for above-bar, a compound name for boost-missing.
 export function siegeDetailText(v) {
