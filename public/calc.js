@@ -636,9 +636,15 @@ export function hasIncomingNuke(r) {
 //    has combat hostiles in it (generateSpawnManifest suppresses all remote
 //    requirements then, spawnManifest.ts:8-11) — `suppressed` flags this so
 //    the caller can say "absent, not lost" instead of implying attrition.
+// Armed hostiles in the home: generateSpawnManifest (spawnManifest.ts:8-11)
+// suppresses every remote requirement while this holds.
+export function remoteSpawnsSuppressed(thr) {
+    return !!thr && thr.h > 0 && ((thr.melee ?? 0) + (thr.ranged ?? 0)) > 0;
+}
+
 export function defenderSummary(thr, roles) {
     const guards = (roles ?? []).filter(x => x.r === MANIFEST_GUARD_ROLE);
-    const suppressed = !!thr && thr.h > 0 && ((thr.melee ?? 0) + (thr.ranged ?? 0)) > 0;
+    const suppressed = remoteSpawnsSuppressed(thr);
     if (!thr) return { state: "unknown", cur: 0, des: 0, slots: [], guards, suppressed };
 
     const slots = thr.def ?? [];
@@ -1364,10 +1370,25 @@ export function armySummary(latest) {
 // still being measured, not a verdict.
 export const LEDGER_MATURE_TICKS = 10_500;
 
+// Creeps the home's spawn manifest requests for one remote (`roles[].d`, the
+// highest tier per bucket), a rough per-route CPU proxy for the Net /t/c
+// column. Every role counts except army_member (MANIFEST_GUARD_ROLE), the
+// remote guard: it is military, and the divisor is meant to be civil creeps.
+function civilCreepsRequested(latest, home, remote) {
+    const roles = latest.rooms?.[home]?.roles;
+    if (!Array.isArray(roles)) return 0;
+    return roles
+        .filter(x => x?.rm === remote && x.r !== MANIFEST_GUARD_ROLE && Number.isFinite(x.d))
+        .reduce((a, x) => a + x.d, 0);
+}
+
 // `rl` is omitted when empty and dropped by the same degradation step as
 // `rt`/`ar`, so an absent field needs hasThreatDetail to be readable.
 // With `home`, only that colony's routes (the room view), filtered before the
 // sort so a room render doesn't sort the whole empire's ledger.
+// `suppressed`: the home has armed hostiles, so generateSpawnManifest drops
+// every remote requirement and `civil` reads 0 for a reason other than "this
+// remote needs nobody" — the UI must not show that as a plain "—".
 export function remoteLedgerRows(latest, home) {
     if (!latest?.rl) return { rows: [], absent: hasThreatDetail(latest ?? {}) ? "none" : "unknown" };
     const rows = latest.rl
@@ -1377,9 +1398,13 @@ export function remoteLedgerRows(latest, home) {
         .map(r => {
             const inRate = r.w > 0 ? r.in / r.w : 0;
             const outRate = r.w > 0 ? r.out / r.w : 0;
+            const netRate = inRate - outRate;
+            const civil = civilCreepsRequested(latest, r.h, r.rm);
             return {
                 home: r.h, remote: r.rm, in: r.in, out: r.out, w: r.w,
-                inRate, outRate, netRate: inRate - outRate,
+                inRate, outRate, netRate,
+                civil, netPerCreep: civil > 0 ? netRate / civil : null,
+                suppressed: remoteSpawnsSuppressed(latest.rooms?.[r.h]?.thr),
                 mature: r.w >= LEDGER_MATURE_TICKS,
             };
         });

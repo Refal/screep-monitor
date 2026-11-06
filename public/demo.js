@@ -269,6 +269,14 @@ function demoRoles(k) {
         { r: "source_miner", c: 2, d: 2 }, { r: "builder", c: 1, d: 2 },
         { r: "remote_miner", rm: "E16S57", c: 1, d: 2 },
     ];
+    // Civil rows for the demo ledger routes (rl), so Net /t/c has distinct
+    // divisors; E24S48 and E30S38 aren't demo rooms, so their routes read "—".
+    if (k === 0) base.push({ r: "remote_hauler", rm: "E16S57", c: 3, d: 3 }, { r: "reserver", rm: "E16S57", c: 1, d: 1 });
+    if (k === 1) base.push({ r: "remote_miner", rm: "E19S59", c: 1, d: 1 }, { r: "remote_hauler", rm: "E19S59", c: 2, d: 2 });
+    if (k === 2) {
+        base.push({ r: "remote_miner", rm: "E22S41", c: 2, d: 2 }, { r: "remote_hauler", rm: "E22S41", c: 4, d: 5 },
+            { r: "keeper_hunter", rm: "E22S41", c: 1, d: 1 });
+    }
     if (k === 0) {
         return [...base,
             { r: MANIFEST_GUARD_ROLE, rm: "E16S57", c: 1, d: 1 },

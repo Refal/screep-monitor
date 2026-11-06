@@ -1922,6 +1922,50 @@ describe("remote ledger", () => {
         assert.deepEqual(remoteLedgerRows(latest, "W3N1").rows, []);
     });
 
+    test("net per creep divides by the home's requested creeps for that remote, minus army_member", () => {
+        const latest = {
+            rooms: {
+                W1N1: {
+                    thr: { h: 0 },
+                    roles: [
+                        { r: "remote_miner", rm: "W2N1", c: 1, d: 2 },
+                        { r: "remote_hauler", rm: "W2N1", c: 2, d: 3 },
+                        { r: "keeper_hunter", rm: "W2N1", c: 1, d: 1 },
+                        { r: MANIFEST_GUARD_ROLE, rm: "W2N1", c: 1, d: 1 },
+                        { r: "remote_miner", rm: "W3N1", c: 1, d: 1 },
+                        { r: "hauler", c: 3, d: 3 },
+                    ],
+                },
+                W5N1: { roles: [{ r: "remote_miner", rm: "W2N1", c: 1, d: 4 }] },
+            },
+            rl: [row("W1N1", "W2N1", 120000, 60000, 12000)],
+        };
+        const [r] = remoteLedgerRows(latest).rows;
+        assert.equal(r.civil, 6);
+        assert.equal(r.netPerCreep, 5 / 6);
+    });
+
+    test("net per creep is null when nothing is requested or the home has no roles", () => {
+        const latest = {
+            rooms: { W1N1: { thr: { h: 0 }, roles: [{ r: MANIFEST_GUARD_ROLE, rm: "W2N1", c: 1, d: 1 }] } },
+            rl: [row("W1N1", "W2N1", 1, 1, 12000), row("W9N9", "W8N9", 1, 1, 12000)],
+        };
+        const { rows } = remoteLedgerRows(latest);
+        assert.deepEqual(rows.map(r => [r.civil, r.netPerCreep]), [[0, null], [0, null]]);
+    });
+
+    test("routes are flagged suppressed when the home has armed hostiles", () => {
+        const latest = {
+            rooms: {
+                W1N1: { thr: { h: 2, melee: 1 }, roles: [] },
+                W5N1: { thr: { h: 1 }, roles: [] },
+            },
+            rl: [row("W1N1", "W2N1", 1, 1, 12000), row("W5N1", "W6N1", 1, 1, 12000)],
+        };
+        const byHome = Object.fromEntries(remoteLedgerRows(latest).rows.map(r => [r.home, r.suppressed]));
+        assert.deepEqual(byHome, { W1N1: true, W5N1: false });
+    });
+
     test("absent rl reads as none when threat detail survived, unknown when degraded", () => {
         assert.equal(remoteLedgerRows({ rooms: { W1N1: { thr: { h: 0 } } } }).absent, "none");
         assert.equal(remoteLedgerRows({ rooms: { W1N1: {} } }).absent, "unknown");

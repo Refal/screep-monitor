@@ -23,6 +23,20 @@ function economyNetCell(row) {
     return td;
 }
 
+function economyNetPerCreepCell(row) {
+    if (!row.mature) {
+        return naCell("measuring",
+            `only ${fmtInt.format(row.w)} of ${fmtInt.format(LEDGER_MATURE_TICKS)} ticks are covered`);
+    }
+    if (row.netPerCreep == null && row.suppressed) {
+        return naCell("suppressed", "armed hostiles in the home: the bot pauses all remote spawns, so there is no divisor right now");
+    }
+    if (row.netPerCreep == null) return naCell("—","no civil creeps requested for this remote right now");
+    const td = textCell(fmtSignedRate(row.netPerCreep), row.netPerCreep < 0 ? "short" : undefined);
+    td.title = `${fmtSignedRate(row.netRate)} /tick ÷ ${fmtInt.format(row.civil)} requested creep${row.civil === 1 ? "" : "s"}`;
+    return td;
+}
+
 // A per-home ledger total, with the exact figure and its per-tick rate on hover.
 export function ledgerAmountCell(total, rate, unit, w) {
     const td = textCell(compact(total));
@@ -54,6 +68,9 @@ function routeColumns(msPerTick) {
         { key: "net", label: "Net /t",
           hint: "in minus out. “measuring” = the route has not been booked for a full window yet, so a negative number is not a verdict",
           sort: r => (r.mature ? r.netRate : null), cell: economyNetCell },   // "measuring" is no verdict
+        { key: "netPerCreep", label: "Net /t/c",
+          hint: "net per tick divided by the civil creeps this home requests for the remote (every role but army_member): the lowest is the first remote to drop when CPU is short",
+          sort: r => (r.mature && r.netPerCreep != null ? r.netPerCreep : null), cell: economyNetPerCreepCell },
         { key: "window", label: "Window", tier: 3,
           hint: "how much game time the in and out sums cover; a route added recently covers less than the full ring",
           sort: r => r.w, cell: r => ledgerWindowCell(r, msPerTick) },
