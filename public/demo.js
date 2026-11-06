@@ -441,6 +441,7 @@ function demoAr(i, n, f) {
 //   - dv E19S59 holding, only while that raid runs;
 //   - dv E24S44 undefendable with no squad sent — a verdict-only row naming
 //     the home that gave up, with a retry countdown;
+//   - dv E22S43 not_worth with its wait-vs-respond economy;
 //   - sv E22S41 core committed, joined to the offense route above;
 //   - sv E25S48 awaiting deploy (the pre-activation core in demoRt);
 //   - sv E31S38 above the auto-siege limit — the dark L5 stronghold;
@@ -452,6 +453,7 @@ function demoDv(i, n) {
     const raidFrom = Math.floor(n * 0.3), raidTo = Math.floor(n * 0.65);
     if (i >= raidFrom && i < raidTo) rows.push({ rm: "E19S59", v: "holding" });
     rows.push({ rm: "E24S44", v: "undefendable", uh: ["E23S44"], in: 100 - (i % 100) });
+    rows.push({ rm: "E22S43", v: "not_worth", ec: [12300, 30100] });
     return rows;
 }
 

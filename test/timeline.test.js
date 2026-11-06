@@ -14,6 +14,13 @@ const homeRoom = (over = {}) => ({
 const squad = (over = {}) => ({ id: 1, st: "forming", n: [2, 0, 0, 0], at: [0, 0, 0], ...over });
 const doc = (tick, over = {}) => ({ tick, rooms: { [HOME]: homeRoom() }, ...over });
 
+describe("roomFacts defense economy", () => {
+    test("the verdict line carries the wait-vs-respond economy", () => {
+        const facts = roomFacts({ tick: 1, dv: [{ rm: TARGET, v: "not_worth", ec: [12300, 30100] }] }, TARGET);
+        assert.equal(facts.get("defense verdict"), "waited out (wait 12.3k vs respond 30.1k)");
+    });
+});
+
 describe("parseArgs", () => {
     test("defaults ticks and limit, derives start from end", () => {
         assert.deepEqual(parseArgs([TARGET, "--end", "5000"]), { room: TARGET, start: 5000 - DEFAULT_TICKS, end: 5000, limit: DEFAULT_LIMIT });

@@ -1036,9 +1036,10 @@ export function routeOrAbsence(latest, home, target) {
 // that looks threatened — `dv` only covers remotes a home actually plans — so
 // a missing verdict is never read as "one is coming".
 //
-// `dv` row: { rm, v, uh?, in? } — `v` covered | holding | undefendable, `uh`
-// homes that already gave up on the current threat, `in` retry countdown
-// (undefendable only). `sv` row: { h, rm, k, d?, in? } — `k` is the committed
+// `dv` row: { rm, v, uh?, in?, ec? } — `v` covered | holding | undefendable |
+// not_worth, `uh` homes that already gave up on the current threat, `in` retry
+// countdown (undefendable only), `ec` [wait loss, response loss] credits for a
+// priced remote the economy decided (response = shortfall loss). `sv` row: { h, rm, k, d?, in? } — `k` is the committed
 // objective (core | stronghold | cleanup), `covered`, or a hold reason.
 //
 // Tones use the dashboard's status classes: "good" | "short" (warning) |
@@ -1049,7 +1050,16 @@ export const DEFENSE_VERDICT = {
     covered:      { word: "covered", tone: "good", explain: "the fielded fleet already beats the threat" },
     holding:      { word: "holding", tone: "short", explain: "no winning plan, but each squad withstands the threat — the fleet is topped up to hold the line" },
     undefendable: { word: "undefendable", tone: "critical", explain: "no plan wins — the planner retries after a cooldown" },
+    not_worth:    { word: "waited out", tone: "short", explain: "every winning response loses more credits than waiting the threat out (response priced on the shortfall only)" },
 };
+
+const fmtCreditsK = n => `${(n / 1000).toFixed(1)}k`;
+
+// `wait 12.3k vs respond 30.1k` for a `dv` row's `ec`, or null without one.
+export function economyDetailText(v) {
+    if (!Array.isArray(v?.ec)) return null;
+    return `wait ${fmtCreditsK(v.ec[0])} vs respond ${fmtCreditsK(v.ec[1])}`;
+}
 
 // `rt[].nd`: why the defense planner sent nothing for that room's hostiles.
 export const DEFENSE_SKIP = {
@@ -1316,7 +1326,7 @@ export function armyOperations(latest) {
     for (const v of latest?.dv ?? []) {
         const verdict = verdictInfo(DEFENSE_VERDICT, v.v);
         const matched = routes.filter(r => r.kind === "defense" && r.target === v.rm);
-        const base = { target: v.rm, kind: "defense", code: v.v, verdict, detail: null, retryIn: v.in ?? null, gaveUp: v.uh ?? [] };
+        const base = { target: v.rm, kind: "defense", code: v.v, verdict, detail: economyDetailText(v), retryIn: v.in ?? null, gaveUp: v.uh ?? [] };
         if (!matched.length) ops.push({ ...base, home: null, route: null });
         for (const r of matched) { used.add(r); ops.push({ ...base, home: r.home, route: r }); }
     }
@@ -1351,6 +1361,7 @@ export function armySummary(latest) {
     return {
         undefendable: dv.filter(v => v.v === "undefendable").map(v => v.rm),
         holding: dv.filter(v => v.v === "holding").map(v => v.rm),
+        notWorth: dv.filter(v => v.v === "not_worth").map(v => v.rm),
         alive: ops.reduce((a, r) => a + r.alive, 0),
         total: ops.reduce((a, r) => a + r.total - r.dead, 0),
         lost: ops.reduce((a, r) => a + r.dead, 0),

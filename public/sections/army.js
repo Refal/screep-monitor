@@ -78,7 +78,7 @@ const ARMY_COLUMNS = [
       hint: "defense — a squad protecting a room; siege — an attack on an invader core or stronghold; manual — launched by hand",
       sort: op => op.kind, cell: op => textCell(op.kind) },
     { key: "verdict", label: "Verdict",
-      hint: `the planner's latest decision: covered / holding / undefendable for defense, the committed objective or the reason it is holding for a siege. It is the planner's cache, ${SAMPLED_NOTE}`,
+      hint: `the planner's latest decision: covered / holding / undefendable / waited out for defense, the committed objective or the reason it is holding for a siege. It is the planner's cache, ${SAMPLED_NOTE}`,
       // Same urgency the default order uses, so ▲ is "most urgent first".
       sort: operationRank, cell: verdictBadgeCell },
     { key: "squads", label: "Squads",
@@ -102,6 +102,11 @@ export function renderArmyTiles() {
             label: "Holding the line", value: String(s.holding.length),
             delta: s.holding.length ? s.holding.join(" ") : "none",
             tone: s.holding.length ? "short" : undefined,
+        },
+        {
+            label: "Waited out", value: String(s.notWorth.length),
+            delta: s.notWorth.length ? s.notWorth.join(" ") : "none",
+            tone: s.notWorth.length ? "short" : undefined,
         },
         dropped
             ? { label: "Squad members alive", value: "—", delta: "unknown — army detail dropped" }

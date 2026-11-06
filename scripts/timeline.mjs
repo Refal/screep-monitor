@@ -21,7 +21,7 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
     routeSummary, routeStatusText, verdictInfo, siegeDetailText, hasThreatDetail, roomPosture,
-    DEFENSE_VERDICT, DEFENSE_SKIP, SIEGE_VERDICT,
+    DEFENSE_VERDICT, DEFENSE_SKIP, SIEGE_VERDICT, economyDetailText,
 } from "../public/calc.js";
 
 export const DEFAULT_TICKS = 2000;
@@ -79,7 +79,7 @@ export function roomFacts(doc, room) {
     }
     for (const v of doc.dv ?? []) {
         if (v.rm !== room) continue;
-        const extra = [v.uh?.length ? `gave up: ${v.uh.join(",")}` : null, v.in !== undefined ? `retry in ${v.in}` : null].filter(Boolean);
+        const extra = [v.uh?.length ? `gave up: ${v.uh.join(",")}` : null, v.in !== undefined ? `retry in ${v.in}` : null, economyDetailText(v)].filter(Boolean);
         facts.set("defense verdict", `${verdictInfo(DEFENSE_VERDICT, v.v).word}${extra.length ? ` (${extra.join("; ")})` : ""}`);
     }
     for (const v of doc.sv ?? []) {

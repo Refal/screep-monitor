@@ -1719,6 +1719,13 @@ describe("armyOperations", () => {
         assert.equal(by("W9N9"), undefined);
         assert.equal(ops.length, 5);
     });
+    test("not_worth reads as waited out, shows the economy as detail and is counted in the summary", () => {
+        const l = { rooms: {}, ar: [], dv: [{ rm: "W8N1", v: "not_worth", ec: [12300, 30100] }] };
+        assert.deepEqual([verdictInfo(DEFENSE_VERDICT, "not_worth").word, verdictInfo(DEFENSE_VERDICT, "not_worth").tone], ["waited out", "short"]);
+        assert.equal(armyOperations(l)[0].detail, "wait 12.3k vs respond 30.1k");
+        assert.deepEqual(armySummary(l).notWorth, ["W8N1"]);
+        assert.equal(armyOperations({ rooms: {}, ar: [], dv: [{ rm: "W8N1", v: "covered" }] })[0].detail, null);
+    });
     test("a legacy top-level ds no longer yields army rows", () => {
         assert.equal(armyOperations({ rooms: {}, ar: [], ds: [{ rm: "W2N1", r: "stronghold", h: 5 }] }).length, 0);
     });
