@@ -1,7 +1,7 @@
 // Small formatters, tone classes and degraded-data captions shared by several sections.
 import { compact, fmtDuration, observedMsPerTick, roomHistoryUrl } from "../calc.js";
 import { ATTACK_LOG_MAX_ROWS } from "../constants.js";
-import { history, route } from "../state.js";
+import { currentShard, history, route } from "../state.js";
 import { roomLink } from "./links.js";
 
 export const ARMY_DEGRADED_TITLE = "army detail dropped from this snapshot (payload degradation)";
@@ -41,7 +41,7 @@ export function ticksText(ticks) {
 export function episodeTicksCell(ep, linkTitle) {
     const td = document.createElement("td");
     td.append(
-        roomLink({ href: roomHistoryUrl(ep.room, ep.fromTick), text: String(ep.fromTick), title: linkTitle }),
+        roomLink({ href: roomHistoryUrl(currentShard, ep.room, ep.fromTick), text: String(ep.fromTick), title: linkTitle }),
         ` – ${ep.toTick}`,
     );
     return td;

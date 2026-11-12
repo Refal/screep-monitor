@@ -2,9 +2,9 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-    unseenEntries, interpolateTimestamps, assignLodFlags, buildSnapshotDoc, mergeBuckets, bucketSegmentIds, parseSegment,
+    unseenEntries, interpolateTimestamps, assignLodFlags, buildSnapshotDoc, mergeBuckets, bucketSegmentIds, parseSegment, parseShards, runShards,
 } from "../scripts/collect.mjs";
-import { LOD_BUCKET_MS } from "../public/calc.js";
+import { LOD_BUCKET_MS, SHARDS } from "../public/calc.js";
 
 const room = { rcl: { l: 8, p: 1, pt: 2 }, e: 1, ec: 1, se: 1, te: 1, q: 0 };
 const entry = t => ({
@@ -326,5 +326,48 @@ describe("firestore.indexes.json", () => {
                 ]));
             assert.ok(found, `missing composite index for ${flag}`);
         }
+    });
+});
+
+describe("parseShards", () => {
+    for (const [label, env, expected] of [
+        ["no env var defaults to every known shard", {}, SHARDS],
+        ["the list form splits on commas and trims", { SCREEPS_SHARDS: " shard3 , shard2" }, ["shard3", "shard2"]],
+        ["the legacy single-shard var is the fallback", { SCREEPS_SHARD: "shard3" }, ["shard3"]],
+        ["the list form wins over the legacy var", { SCREEPS_SHARDS: "shard2", SCREEPS_SHARD: "shard3" }, ["shard2"]],
+    ]) {
+        test(label, () => assert.deepEqual(parseShards(env), expected));
+    }
+
+    for (const raw of ["", " ", ",,"]) {
+        test(`an empty value ${JSON.stringify(raw)} throws`, () => {
+            assert.throws(() => parseShards({ SCREEPS_SHARDS: raw }), /at least one shard/);
+        });
+    }
+});
+
+describe("runShards", () => {
+    test("every shard is collected in order and a clean run exits 0", async () => {
+        const seen = [];
+        assert.equal(await runShards(["a", "b"], async s => { seen.push(s); }), 0);
+        assert.deepEqual(seen, ["a", "b"]);
+    });
+
+    test("a failing shard still lets the next one run, then exits 1", async () => {
+        const seen = [];
+        const errors = [];
+        const original = console.error;
+        console.error = (...args) => errors.push(args);
+        try {
+            const code = await runShards(["a", "b"], async s => {
+                seen.push(s);
+                if (s === "a") throw new Error("boom");
+            });
+            assert.equal(code, 1);
+        } finally {
+            console.error = original;
+        }
+        assert.deepEqual(seen, ["a", "b"]);
+        assert.equal(errors.length, 1);
     });
 });

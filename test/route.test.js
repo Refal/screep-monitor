@@ -1,20 +1,22 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { parseHash, buildHash, OVERVIEW, ROOM } from "../public/route.js";
-import { RANGES, DEFAULT_RANGE, LOD_BY_RANGE } from "../public/calc.js";
+import { RANGES, DEFAULT_RANGE, LOD_BY_RANGE, SHARDS, DEFAULT_SHARD } from "../public/calc.js";
 
-const OPTS = { ranges: RANGES, defaultRange: DEFAULT_RANGE };
+const OPTS = { ranges: RANGES, defaultRange: DEFAULT_RANGE, shards: SHARDS, defaultShard: DEFAULT_SHARD };
+const NON_DEFAULT_SHARD = SHARDS.find(s => s !== DEFAULT_SHARD);
+const build = state => buildHash(state, DEFAULT_RANGE, DEFAULT_SHARD);
 const withRooms = rooms => ({ ...OPTS, rooms });
 
 describe("parseHash", () => {
     test("an empty or bare hash is the overview at the default range", () => {
         for (const h of ["", "#", "#/", undefined, null]) {
-            assert.deepEqual(parseHash(h, OPTS), { view: OVERVIEW, room: null, range: DEFAULT_RANGE });
+            assert.deepEqual(parseHash(h, OPTS), { view: OVERVIEW, room: null, range: DEFAULT_RANGE, shard: DEFAULT_SHARD });
         }
     });
 
     test("a room path selects the room view", () => {
-        assert.deepEqual(parseHash("#/room/E23S45", OPTS), { view: ROOM, room: "E23S45", range: DEFAULT_RANGE });
+        assert.deepEqual(parseHash("#/room/E23S45", OPTS), { view: ROOM, room: "E23S45", range: DEFAULT_RANGE, shard: DEFAULT_SHARD });
         assert.deepEqual(parseHash("#/room/W1N1", OPTS).room, "W1N1");
     });
 
@@ -37,7 +39,7 @@ describe("parseHash", () => {
 
     test("a room the snapshot doesn't have falls back to the overview", () => {
         const r = parseHash("#/room/E23S45", withRooms(["E11S11"]));
-        assert.deepEqual(r, { view: OVERVIEW, room: null, range: DEFAULT_RANGE });
+        assert.deepEqual(r, { view: OVERVIEW, room: null, range: DEFAULT_RANGE, shard: DEFAULT_SHARD });
     });
 
     test("with no room list yet, a requested room survives", () => {
@@ -64,7 +66,7 @@ describe("parseHash", () => {
         for (const bad of ["%", "%E0%A4", "E23S45%", "%zz"]) {
             assert.deepEqual(
                 parseHash(`#/room/${bad}`, OPTS),
-                { view: OVERVIEW, room: null, range: DEFAULT_RANGE },
+                { view: OVERVIEW, room: null, range: DEFAULT_RANGE, shard: DEFAULT_SHARD },
                 bad);
         }
     });
@@ -78,19 +80,55 @@ describe("parseHash", () => {
     });
 });
 
+describe("shard in the hash", () => {
+    test("shard rides along as a query param", () => {
+        assert.equal(parseHash(`#/?shard=${NON_DEFAULT_SHARD}`, OPTS).shard, NON_DEFAULT_SHARD);
+        assert.equal(parseHash(`#/room/E23S45?range=6&shard=${NON_DEFAULT_SHARD}`, OPTS).shard, NON_DEFAULT_SHARD);
+    });
+
+    test("an unknown shard falls back to the default", () => {
+        // The shard picks a Firestore path, so an unlisted one must not survive.
+        for (const bad of ["shard9", "", "../meta", "SHARD3"]) {
+            assert.equal(parseHash(`#/?shard=${bad}`, OPTS).shard, DEFAULT_SHARD, bad);
+        }
+    });
+
+    test("the default shard is left out of the hash", () => {
+        assert.equal(build({ view: OVERVIEW, range: DEFAULT_RANGE, shard: DEFAULT_SHARD }), "#/");
+        assert.equal(build({ view: ROOM, room: "E23S45", range: 6, shard: DEFAULT_SHARD }), "#/room/E23S45?range=6");
+    });
+
+    test("a non-default shard is written next to the range", () => {
+        assert.equal(build({ view: OVERVIEW, range: DEFAULT_RANGE, shard: NON_DEFAULT_SHARD }), `#/?shard=${NON_DEFAULT_SHARD}`);
+        assert.equal(
+            build({ view: ROOM, room: "E23S45", range: 6, shard: NON_DEFAULT_SHARD }),
+            `#/room/E23S45?range=6&shard=${NON_DEFAULT_SHARD}`);
+    });
+
+    test("an owned-room hash built on a non-default shard keeps the shard", () => {
+        const route = parseHash(`#/?shard=${NON_DEFAULT_SHARD}`, OPTS);
+        const roomHash = build({ view: ROOM, room: "E23S45", range: route.range, shard: route.shard });
+        assert.equal(parseHash(roomHash, OPTS).shard, NON_DEFAULT_SHARD);
+    });
+
+    test("the shard survives a room that gets dropped", () => {
+        assert.equal(parseHash(`#/room/E23S45?shard=${NON_DEFAULT_SHARD}`, withRooms(["E11S11"])).shard, NON_DEFAULT_SHARD);
+    });
+});
+
 describe("buildHash", () => {
     test("the overview is #/", () => {
-        assert.equal(buildHash({ view: OVERVIEW, range: DEFAULT_RANGE }, DEFAULT_RANGE), "#/");
+        assert.equal(build({ view: OVERVIEW, range: DEFAULT_RANGE }), "#/");
     });
 
     test("the default range is left out, any other range included", () => {
-        assert.equal(buildHash({ view: ROOM, room: "E23S45", range: DEFAULT_RANGE }, DEFAULT_RANGE), "#/room/E23S45");
-        assert.equal(buildHash({ view: ROOM, room: "E23S45", range: 168 }, DEFAULT_RANGE), "#/room/E23S45?range=168");
-        assert.equal(buildHash({ view: OVERVIEW, range: 6 }, DEFAULT_RANGE), "#/?range=6");
+        assert.equal(build({ view: ROOM, room: "E23S45", range: DEFAULT_RANGE }), "#/room/E23S45");
+        assert.equal(build({ view: ROOM, room: "E23S45", range: 168 }), "#/room/E23S45?range=168");
+        assert.equal(build({ view: OVERVIEW, range: 6 }), "#/?range=6");
     });
 
     test("a room view with no room degrades to the overview", () => {
-        assert.equal(buildHash({ view: ROOM, room: null, range: DEFAULT_RANGE }, DEFAULT_RANGE), "#/");
+        assert.equal(build({ view: ROOM, room: null, range: DEFAULT_RANGE }), "#/");
     });
 });
 
@@ -99,9 +137,9 @@ describe("round trip", () => {
         const rooms = ["E23S45", "W1N1"];
         for (const view of [OVERVIEW, ROOM]) {
             for (const room of view === ROOM ? rooms : [null]) {
-                for (const range of RANGES) {
-                    const state = { view, room, range };
-                    const back = parseHash(buildHash(state, DEFAULT_RANGE), withRooms(rooms));
+                for (const range of RANGES) for (const shard of SHARDS) {
+                    const state = { view, room, range, shard };
+                    const back = parseHash(build(state), withRooms(rooms));
                     assert.deepEqual(back, state, JSON.stringify(state));
                 }
             }

@@ -1,7 +1,7 @@
 // Deposit harvesting section.
 import { compact, depositLedgerRows, observedMsPerTick, roomUrl } from "../calc.js";
 import { cssVar, fmtInt } from "../dom.js";
-import { history, latest } from "../state.js";
+import { currentShard, history, latest } from "../state.js";
 import { pluralCount } from "../ui/cells-defense.js";
 import { fmtRate, ledgerAmountCell, ledgerWindowCell } from "../ui/cells-economy.js";
 import { chipsCell } from "../ui/cells-labs.js";
@@ -113,7 +113,7 @@ function depositRoomCell(row) {
     const td = document.createElement("td");
     row.ops.forEach((o, i) => {
         if (i) td.append(" · ");
-        td.append(roomLink({ href: roomUrl(o.rm), text: o.rm, title: `${o.t} deposit in highway room ${o.rm} — open it on screeps.com` }));
+        td.append(roomLink({ href: roomUrl(currentShard, o.rm), text: o.rm, title: `${o.t} deposit in highway room ${o.rm} — open it on screeps.com` }));
     });
     return td;
 }

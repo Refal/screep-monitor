@@ -1,6 +1,6 @@
 // Shared mutable dashboard state. Readers import the bindings directly (they are live);
 // writers go through the setters at the bottom.
-import { DEFAULT_RANGE } from "./calc.js";
+import { DEFAULT_RANGE, DEFAULT_SHARD } from "./calc.js";
 import { OVERVIEW } from "./route.js";
 
 export let rangeHours = DEFAULT_RANGE;
@@ -8,7 +8,9 @@ export let rangeHours = DEFAULT_RANGE;
 // The view, mirrored from location.hash. Every control writes the hash and
 // lets onHashChange drive the state, so a bookmark, the Back button and a
 // click all take exactly the same path.
-export let route = { view: OVERVIEW, room: null, range: DEFAULT_RANGE };
+export let route = { view: OVERVIEW, room: null, range: DEFAULT_RANGE, shard: DEFAULT_SHARD };
+
+export let currentShard = DEFAULT_SHARD;
 
 export let selectedRoom = null;
 
@@ -33,3 +35,4 @@ export const setHistoryGaps = value => { historyGaps = value; };
 export const setRoute = value => { route = value; };
 export const setSelectedRoom = value => { selectedRoom = value; };
 export const setRangeHours = value => { rangeHours = value; };
+export const setCurrentShard = value => { currentShard = value; };

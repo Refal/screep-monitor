@@ -10,7 +10,7 @@ import {
     RANGES, DEFAULT_RANGE,
     fmtHits, zoneTarget, zoneLevel, isCriticalZone, storageClassInfo, roomPosture, defenderSummary,
     netTowerDps, sortByPosture, hostileEpisodes, CRITICAL_RAMPART_HITS, MANIFEST_GUARD_ROLE,
-    SHARD, roomUrl, roomHistoryUrl,
+    SHARDS, DEFAULT_SHARD, shardPaths, roomUrl, roomHistoryUrl,
     remoteThreatClass, sortRemoteThreats, hasThreatDetail, remoteEpisodes, remoteDeployPhase,
     empireVerdict, threatItems, clearRooms, watchItems, quietRooms, isOutgunned, hasIncomingNuke, incomingNukes,
     squadSummary, routeSummary, routePhase, routeStatusText, armyRoutes, armyRouteFor, armyRoutesForHome,
@@ -1035,17 +1035,33 @@ describe("remoteEpisodes", () => {
 });
 
 describe("roomUrl / roomHistoryUrl", () => {
-    test("roomUrl links to the room view on the default shard", () => {
-        assert.equal(roomUrl("E23S45"), "https://screeps.com/a/#!/room/shard2/E23S45");
-    });
-    test("roomHistoryUrl links to the history viewer at the given tick", () => {
-        assert.equal(roomHistoryUrl("E23S45", 76746600), "https://screeps.com/a/#!/history/shard2/E23S45?t=76746600");
-    });
+    for (const shard of SHARDS) {
+        test(`roomUrl links to the room view on ${shard}`, () => {
+            assert.equal(roomUrl(shard, "E23S45"), `https://screeps.com/a/#!/room/${shard}/E23S45`);
+        });
+        test(`roomHistoryUrl links to the history viewer on ${shard} at the given tick`, () => {
+            assert.equal(roomHistoryUrl(shard, "E23S45", 76746600), `https://screeps.com/a/#!/history/${shard}/E23S45?t=76746600`);
+        });
+    }
     test("roomHistoryUrl floors a mid-block tick to its 100-tick file boundary", () => {
-        assert.equal(roomHistoryUrl("E23S45", 76746637), "https://screeps.com/a/#!/history/shard2/E23S45?t=76746600");
+        assert.equal(roomHistoryUrl(DEFAULT_SHARD, "E23S45", 76746637), `https://screeps.com/a/#!/history/${DEFAULT_SHARD}/E23S45?t=76746600`);
     });
     test("roomHistoryUrl leaves a tick already on a boundary unchanged", () => {
-        assert.equal(roomHistoryUrl("E23S45", 76746700), "https://screeps.com/a/#!/history/shard2/E23S45?t=76746700");
+        assert.equal(roomHistoryUrl(DEFAULT_SHARD, "E23S45", 76746700), `https://screeps.com/a/#!/history/${DEFAULT_SHARD}/E23S45?t=76746700`);
+    });
+});
+
+describe("shardPaths", () => {
+    for (const shard of SHARDS) {
+        test(`${shard} nests snapshots and latest under shards/${shard}`, () => {
+            assert.deepEqual(shardPaths(shard), {
+                snapshots: `shards/${shard}/snapshots`,
+                latest: `shards/${shard}/meta/latest`,
+            });
+        });
+    }
+    test("the default shard is the first listed shard", () => {
+        assert.equal(DEFAULT_SHARD, SHARDS[0]);
     });
 });
 
@@ -1431,18 +1447,15 @@ describe("quietRooms", () => {
 
 const indexHtml = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 
-describe("header shard label vs SHARD", () => {
-    // index.html hardcodes "shard2" as a no-JS fallback for #shard-label;
-    // app.js overwrites it with SHARD at load. If SHARD ever changes, the
-    // fallback would silently show the wrong shard until JS runs — keep them
-    // in sync mechanically, same reasoning as the range-vs-retention check
-    // below.
-    test("the #shard-label fallback text matches SHARD", () => {
-        // Matched loosely so restyling the header can't break a test that
-        // only cares about the text content.
-        const m = indexHtml.match(/id="shard-label"[^>]*>([^<]*)</);
-        assert.ok(m, "#shard-label span not found in index.html");
-        assert.equal(m[1], SHARD);
+describe("header shard toggle vs SHARDS", () => {
+    // index.html carries static buttons as the no-JS fallback; nav.js only
+    // flips aria-pressed on them, so the list must match SHARDS mechanically.
+    test("the #shard-group buttons are exactly SHARDS, in order", () => {
+        const group = indexHtml.match(/id="shard-group"[^>]*>([\s\S]*?)<\/div>/);
+        assert.ok(group, "#shard-group not found in index.html");
+        const buttons = [...group[1].matchAll(/<button[^>]*data-shard="([^"]+)"[^>]*>([^<]*)</g)];
+        assert.deepEqual(buttons.map(m => m[1]), SHARDS);
+        assert.deepEqual(buttons.map(m => m[2]), SHARDS);
     });
 });
 

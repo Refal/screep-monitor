@@ -8,6 +8,9 @@
  *
  * Usage:
  *   node scripts/timeline.mjs <room> --end <tick> [--start <tick> | --ticks <n>] [--limit <n>]
+ *                             [--shard <name>] [--legacy]
+ *   --shard defaults to shard2; --legacy reads the pre-multi-shard root `snapshots`
+ *   (shard2 history from before the nested layout, until the root sweep drains it).
  *
  * Env:
  *   GOOGLE_APPLICATION_CREDENTIALS — path to a Firebase service-account JSON;
@@ -21,7 +24,7 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
     routeSummary, routeStatusText, verdictInfo, siegeDetailText, hasThreatDetail, roomPosture,
-    DEFENSE_VERDICT, DEFENSE_SKIP, SIEGE_VERDICT, economyDetailText,
+    DEFENSE_VERDICT, DEFENSE_SKIP, SIEGE_VERDICT, economyDetailText, DEFAULT_SHARD, SHARDS, shardPaths,
 } from "../public/calc.js";
 
 export const DEFAULT_TICKS = 2000;
@@ -31,6 +34,8 @@ export const GAP_TICKS = 40;
 
 export function parseArgs(argv) {
     const opts = { ticks: DEFAULT_TICKS, limit: DEFAULT_LIMIT };
+    let shard = DEFAULT_SHARD;
+    let legacy = false;
     const positional = [];
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
@@ -38,6 +43,11 @@ export function parseArgs(argv) {
             const value = Number(argv[++i]);
             if (!Number.isFinite(value)) throw new Error(`${arg} needs a number`);
             opts[arg.slice(2)] = value;
+        } else if (arg === "--shard") {
+            shard = argv[++i];
+            if (!SHARDS.includes(shard)) throw new Error(`--shard must be one of ${SHARDS.join(", ")}, got ${shard}`);
+        } else if (arg === "--legacy") {
+            legacy = true;
         } else if (arg.startsWith("--")) {
             throw new Error(`unknown flag ${arg}`);
         } else {
@@ -45,11 +55,11 @@ export function parseArgs(argv) {
         }
     }
     const room = positional[0];
-    if (!room) throw new Error("usage: timeline.mjs <room> --end <tick> [--start <tick> | --ticks <n>] [--limit <n>]");
+    if (!room) throw new Error("usage: timeline.mjs <room> --end <tick> [--start <tick> | --ticks <n>] [--limit <n>] [--shard <name>] [--legacy]");
     if (opts.end === undefined) throw new Error("--end <tick> is required");
     const start = opts.start ?? opts.end - opts.ticks;
     if (start > opts.end) throw new Error(`--start ${start} is after --end ${opts.end}`);
-    return { room, start, end: opts.end, limit: opts.limit };
+    return { room, start, end: opts.end, limit: opts.limit, shard, legacy };
 }
 
 function routeLine(route) {
@@ -175,20 +185,20 @@ function resolveCredentials() {
     process.env.GOOGLE_APPLICATION_CREDENTIALS = fallback;
 }
 
-async function fetchDocs(start, end, limit) {
+async function fetchDocs(collectionPath, start, end, limit) {
     const { initializeApp, applicationDefault } = await import("firebase-admin/app");
     const { getFirestore } = await import("firebase-admin/firestore");
     initializeApp({ credential: applicationDefault() });
     const db = getFirestore();
-    const snap = await db.collection("snapshots")
+    const snap = await db.collection(collectionPath)
         .where("tick", ">=", start).where("tick", "<=", end).orderBy("tick").limit(limit).get();
     return snap.docs.map(d => d.data());
 }
 
 async function main() {
-    const { room, start, end, limit } = parseArgs(process.argv.slice(2));
+    const { room, start, end, limit, shard, legacy } = parseArgs(process.argv.slice(2));
     resolveCredentials();
-    const docs = await fetchDocs(start, end, limit);
+    const docs = await fetchDocs(legacy ? "snapshots" : shardPaths(shard).snapshots, start, end, limit);
     if (docs.length === limit) console.error(`::warning::hit --limit ${limit}; the window is truncated at tick ${docs[docs.length - 1].tick}`);
     console.log(formatTimeline(buildTimeline(docs, room), docs, room, start, end));
 }

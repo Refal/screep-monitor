@@ -18,6 +18,17 @@ service cloud.firestore {
       allow read: if true;
       allow write: if false;
     }
+    // Multi-shard layout: same rules, one level down. The root rules above
+    // stay until the legacy root collection has drained.
+    match /shards/{shard}/snapshots/{id} {
+      allow get: if false;
+      allow list: if request.query.limit <= 9000;
+      allow write: if false;
+    }
+    match /shards/{shard}/meta/{id} {
+      allow read: if true;
+      allow write: if false;
+    }
     match /{document=**} {
       allow read, write: if false;
     }

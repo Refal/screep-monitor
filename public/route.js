@@ -1,6 +1,6 @@
 // Hash routing for the dashboard. "#/" is the empire overview, "#/room/E23S45"
 // is the per-room view, and the time range rides along as a query param, so a
-// single link carries the whole view: #/room/E23S45?range=168.
+// single link carries the whole view: #/room/E23S45?range=168&shard=shard3.
 //
 // Deliberately its own module rather than part of calc.js: calc.js is game
 // math shared with scripts/collect.mjs and its unit tests, and a URL grammar
@@ -38,7 +38,7 @@ function decodeSegment(raw) {
 // no snapshot has loaded yet. Null means "can't judge": keep the requested
 // room so a cold load of a bookmarked link still lands on it, and let a later
 // parse (once data exists) drop it if it has genuinely gone.
-export function parseHash(hash, { ranges, rooms = null, defaultRange } = {}) {
+export function parseHash(hash, { ranges, rooms = null, defaultRange, shards, defaultShard } = {}) {
     const { path, params } = splitHash(hash);
 
     // A range outside the button set must not survive. LOD_BY_RANGE has no
@@ -47,18 +47,27 @@ export function parseHash(hash, { ranges, rooms = null, defaultRange } = {}) {
     const asked = Number(params.get("range"));
     const range = ranges?.includes(asked) ? asked : defaultRange;
 
+    // Same reasoning as range: the shard picks a Firestore path, so only a
+    // known one may survive.
+    const askedShard = params.get("shard");
+    const shard = shards?.includes(askedShard) ? askedShard : defaultShard;
+
     const m = /^\/room\/([^/?]+)$/.exec(path);
     const room = m ? decodeSegment(m[1]) : null;
-    if (!room || !ROOM_NAME.test(room)) return { view: OVERVIEW, room: null, range };
+    if (!room || !ROOM_NAME.test(room)) return { view: OVERVIEW, room: null, range, shard };
     // A bookmark can outlive a room. Fall back to the overview rather than
     // rendering an empty room view.
-    if (rooms && !rooms.includes(room)) return { view: OVERVIEW, room: null, range };
-    return { view: ROOM, room, range };
+    if (rooms && !rooms.includes(room)) return { view: OVERVIEW, room: null, range, shard };
+    return { view: ROOM, room, range, shard };
 }
 
-// The default range is left out so the common link stays "#/room/E23S45";
-// parseHash fills it back in, so this still round-trips.
-export function buildHash({ view, room, range } = {}, defaultRange) {
+// The default range and shard are left out so the common link stays
+// "#/room/E23S45"; parseHash fills them back in, so this still round-trips.
+export function buildHash({ view, room, range, shard } = {}, defaultRange, defaultShard) {
     const path = view === ROOM && room ? `#/room/${encodeURIComponent(room)}` : "#/";
-    return range != null && range !== defaultRange ? `${path}?range=${range}` : path;
+    const params = new URLSearchParams();
+    if (range != null && range !== defaultRange) params.set("range", String(range));
+    if (shard != null && shard !== defaultShard) params.set("shard", shard);
+    const query = params.toString();
+    return query ? `${path}?${query}` : path;
 }

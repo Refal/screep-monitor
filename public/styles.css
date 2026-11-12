@@ -80,8 +80,8 @@ header h1 { font-size: 20px; margin: 0; }
 header .sub { color: var(--text-muted); font-size: 13px; }
 
 .filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
-.filters .group { display: flex; flex-wrap: wrap; gap: 4px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 3px; }
-.filters button {
+.filters .group, header .group { display: flex; flex-wrap: wrap; gap: 4px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 3px; }
+.filters button, header .group button {
     /* >= 44px so these are hittable with a thumb; four of them plus refresh
        comes to ~220px, which fits a 375px phone. */
     display: inline-flex; align-items: center; justify-content: center;
@@ -89,8 +89,8 @@ header .sub { color: var(--text-muted); font-size: 13px; }
     border: 0; background: transparent; color: var(--text-secondary);
     font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
 }
-@media (hover: hover) { .filters button:hover { background: var(--ghost); } }
-.filters button[aria-pressed="true"] { background: var(--series-1); color: #fff; }
+@media (hover: hover) { .filters button:hover, header .group button:hover { background: var(--ghost); } }
+.filters button[aria-pressed="true"], header .group button[aria-pressed="true"] { background: var(--series-1); color: #fff; }
 .filters select, .section-head select {
     font: inherit; font-size: 13px; color: var(--text-primary);
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px;
@@ -428,7 +428,7 @@ td .muted   { color: var(--text-muted); }
     border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
     font-size: 16px; line-height: 1; width: 44px; height: 44px; border-radius: 8px; cursor: pointer;
 }
-#refresh:focus-visible, .filters button:focus-visible {
+#refresh:focus-visible, .filters button:focus-visible, header .group button:focus-visible {
     outline: 2px solid var(--series-1); outline-offset: 2px;
 }
 #refresh:disabled { opacity: .5; cursor: default; }

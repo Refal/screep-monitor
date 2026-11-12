@@ -26,21 +26,29 @@ export const cmpRoom = (a, b) => roomCollator.compare(a, b);
 export const PARTS_PER_BOOST = 30; // LAB_BOOST_MINERAL
 export const MIN_RAW_STOCK = 100;  // LabManager.MIN_STORAGE_AMOUNT — below this a reagent is unusable
 
-// The shard the collector polls and the only shard this dashboard shows.
-// Single source for the header label, the collector's API URL default and the
-// screeps.com deep links below, so they cannot drift apart.
-export const SHARD = "shard2";
+// Shards the collector polls and the dashboard can switch between. Single
+// source for the header toggle, the collector's API URLs, the Firestore paths
+// and the screeps.com deep links, so they cannot drift apart.
+export const SHARDS = ["shard2", "shard3"];
+export const DEFAULT_SHARD = SHARDS[0];
+
+// Per-shard Firestore layout; the collector, dashboard, freshness check and
+// timeline all resolve their paths here.
+export const shardPaths = shard => ({
+    snapshots: `shards/${shard}/snapshots`,
+    latest: `shards/${shard}/meta/latest`,
+});
 
 // Screeps keeps room history in 100-tick files, and the history viewer's `t`
 // is one of those file ids — an arbitrary tick renders an empty replay, so
 // floor to the block boundary.
 const HISTORY_TICK_BLOCK = 100;
 
-export const roomUrl = room =>
-    `https://screeps.com/a/#!/room/${SHARD}/${room}`;
+export const roomUrl = (shard, room) =>
+    `https://screeps.com/a/#!/room/${shard}/${room}`;
 
-export const roomHistoryUrl = (room, tick) =>
-    `https://screeps.com/a/#!/history/${SHARD}/${room}` +
+export const roomHistoryUrl = (shard, room, tick) =>
+    `https://screeps.com/a/#!/history/${shard}/${room}` +
     `?t=${Math.floor(tick / HISTORY_TICK_BLOCK) * HISTORY_TICK_BLOCK}`;
 
 // LOD tiers: flag name → wall-clock bucket width. The collector stamps the

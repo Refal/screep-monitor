@@ -25,17 +25,22 @@
  * Env:
  *   SCREEPS_TOKEN                  — screeps.com auth token (required)
  *   GOOGLE_APPLICATION_CREDENTIALS — path to a Firebase service-account JSON (required)
- *   SCREEPS_SHARD                  — default shard2
+ *   SCREEPS_SHARDS                 — comma-separated shards polled in sequence, default
+ *                                    shard2,shard3 (SCREEPS_SHARD is read as a fallback)
  *   SCREEPS_SEGMENT                — manifest/head segment, default 90 (history
  *                                    buckets are always SEGMENT+1..SEGMENT+buckets,
  *                                    not separately configured)
  *
- * Firestore layout:
- *   snapshots/<autoId>  { ts, tick, gcl, gpl?, cpu, cr, rooms, bmax?, rt?, ar?, pb?, ph?, pba?, dv?, sv?, pc?, rl?, pwl?, dpl?, dpo?,
+ * Firestore layout (per shard; see shardPaths in public/calc.js):
+ *   shards/<shard>/snapshots/<autoId>  { ts, tick, gcl, gpl?, cpu, cr, rooms, bmax?, rt?, ar?, pb?, ph?, pba?, dv?, sv?, pc?, rl?, pwl?, dpl?, dpo?,
  *                         b5?, b30?, b120? }
- *   meta/latest         same shape, plus `lod` (bucket-tracking state); also
+ *   shards/<shard>/meta/latest         same shape, plus `lod` (bucket-tracking state); also
  *                       used to dedup by tick and to trigger the once-a-day
  *                       retention sweep
+ *
+ * The pre-multi-shard root `snapshots` and `meta/latest` are legacy: they are
+ * swept through the same pruner (and the root meta deleted) on the day rollover
+ * of the default shard's nested latest, until the root collection drains.
  *
  * `ts` for history entries is interpolated, not insertion time: see
  * interpolateTimestamps() for why (otherwise a whole outage's worth of
@@ -53,7 +58,7 @@ import { getFirestore, Timestamp } from "firebase-admin/firestore";
 // used below in assignLodFlags) — an unrelated concept from this file's own
 // "bucket" segments (bucketSegmentIds et al.), which are the bot's fixed
 // tick-window history-ring segments.
-import { LOD_BUCKET_MS, bucketId, RETENTION_DAYS, SHARD as DEFAULT_SHARD } from "../public/calc.js";
+import { LOD_BUCKET_MS, bucketId, RETENTION_DAYS, DEFAULT_SHARD, SHARDS, shardPaths } from "../public/calc.js";
 
 /** Parses SCREEPS_SEGMENT into a segment id, throwing loudly on anything
  * that isn't a non-negative integer — including an empty string, which
@@ -66,7 +71,35 @@ export function parseSegment(raw) {
     return n;
 }
 
-const SHARD = process.env.SCREEPS_SHARD ?? DEFAULT_SHARD;
+/** Parses SCREEPS_SHARDS (or the legacy single-shard SCREEPS_SHARD) into a
+ * shard list, throwing on an empty value so a blank secret cannot silently
+ * turn the collector into a no-op. */
+export function parseShards(env) {
+    const raw = env.SCREEPS_SHARDS ?? env.SCREEPS_SHARD;
+    if (raw === undefined) return [...SHARDS];
+    const shards = raw.split(",").map(s => s.trim()).filter(Boolean);
+    if (shards.length === 0) {
+        throw new Error(`SCREEPS_SHARDS must name at least one shard, got ${JSON.stringify(raw)}`);
+    }
+    return shards;
+}
+
+/** Runs `collect` for every shard in sequence; one shard throwing is logged
+ * and does not skip the rest. Returns the exit code: 1 if any shard failed,
+ * so the workflow's failure counter still sees a partial failure. */
+export async function runShards(shards, collect) {
+    let failed = false;
+    for (const shard of shards) {
+        try {
+            await collect(shard);
+        } catch (err) {
+            failed = true;
+            console.error(`[${shard}] collect failed:`, err);
+        }
+    }
+    return failed ? 1 : 0;
+}
+
 const SEGMENT = parseSegment(process.env.SCREEPS_SEGMENT ?? "90");
 const BUCKET_FETCH_DELAY_MS = 150; // spread sequential bucket fetches instead of bursting the Screeps API
 const MAX_BUCKETS = 9; // segment ids stop at 99, so 91-99 is the most the default SEGMENT=90 can own
@@ -79,10 +112,10 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
  * rather than throwing — callers with different requiredness (the manifest
  * is required, a bucket may legitimately be unwritten) decide what that
  * means. Any API/auth failure still throws. */
-async function fetchSegment(segmentId) {
+async function fetchSegment(shard, segmentId) {
     const token = process.env.SCREEPS_TOKEN;
     if (!token) throw new Error("SCREEPS_TOKEN is not set");
-    const url = `https://screeps.com/api/user/memory-segment?segment=${segmentId}&shard=${SHARD}`;
+    const url = `https://screeps.com/api/user/memory-segment?segment=${segmentId}&shard=${shard}`;
     const res = await fetch(url, { headers: { "X-Token": token } });
     if (!res.ok) throw new Error(`Screeps API ${res.status}: ${await res.text()}`);
     const body = await res.json();
@@ -110,21 +143,21 @@ export function mergeBuckets(head, bucketEntries) {
  * that fails to fetch, or whose JSON doesn't decode to an array, just logs a
  * warning and is skipped. Returns the merged payload plus how many buckets
  * failed, so callers can tell an empty ring apart from a fetch glitch. */
-async function fetchPayload() {
-    const head = await fetchSegment(SEGMENT);
+async function fetchPayload(shard) {
+    const head = await fetchSegment(shard, SEGMENT);
     if (head === undefined) throw new Error(`Segment ${SEGMENT} is empty (bot not publishing yet?)`);
     const bucketEntries = [];
     let failedBuckets = 0;
     for (const [i, segmentId] of bucketSegmentIds(head, SEGMENT).entries()) {
         if (i > 0) await sleep(BUCKET_FETCH_DELAY_MS);
         try {
-            const entries = await fetchSegment(segmentId) ?? [];
+            const entries = await fetchSegment(shard, segmentId) ?? [];
             if (!Array.isArray(entries)) {
                 throw new Error(`expected an array, got ${typeof entries}`);
             }
             bucketEntries.push(entries);
         } catch (err) {
-            console.warn(`::warning::bucket segment ${segmentId} failed, skipping it: ${err.message}`);
+            console.warn(`::warning::[${shard}] bucket segment ${segmentId} failed, skipping it: ${err.message}`);
             failedBuckets++;
         }
     }
@@ -255,12 +288,12 @@ export function buildSnapshotDoc(entry) {
 // Manual sweep on purpose, not a Firestore TTL policy — TTL needs billing and
 // a dedicated expireAt field (see README "Operations" for the full rationale);
 // these deletes fit easily inside the 20k/day free quota.
-async function pruneOldSnapshots(db) {
+async function pruneOldSnapshots(db, collectionPath) {
     const cutoff = Timestamp.fromMillis(Date.now() - RETENTION_DAYS * 864e5);
     let pruned = 0;
     for (let i = 0; i < PRUNE_MAX_BATCHES; i++) {
         // .select() with no fields returns doc names only — we only need refs
-        const old = await db.collection("snapshots").where("ts", "<", cutoff).select().limit(PRUNE_BATCH).get();
+        const old = await db.collection(collectionPath).where("ts", "<", cutoff).select().limit(PRUNE_BATCH).get();
         if (old.empty) break;
         const batch = db.batch();
         old.docs.forEach(doc => batch.delete(doc.ref));
@@ -271,28 +304,30 @@ async function pruneOldSnapshots(db) {
     return pruned;
 }
 
-async function main() {
-    initializeApp({ credential: applicationDefault() });
-    const db = getFirestore();
-    const latestRef = db.doc("meta/latest");
+/** Collects one shard into its nested collection. Returns whether the UTC day
+ * rolled over since the shard's previous stored snapshot (the prune trigger). */
+async function collectShard(db, shard) {
+    const log = msg => console.log(`[${shard}] ${msg}`);
+    const paths = shardPaths(shard);
+    const latestRef = db.doc(paths.latest);
 
     // independent round trips (screeps.com and Firestore) — fetch both at once
-    const [{ payload, failedBuckets }, latestSnap] = await Promise.all([fetchPayload(), latestRef.get()]);
+    const [{ payload, failedBuckets }, latestSnap] = await Promise.all([fetchPayload(shard), latestRef.get()]);
     const latest = latestSnap.data();
     const latestTick = latest?.tick ?? null;
     const latestMs = latest?.ts?.toMillis() ?? null;
 
     const entries = unseenEntries(payload, latestTick);
     if (entries.length === 0) {
-        console.log(`Tick ${payload.t} already stored — bot idle or slow ticks, skipping.`);
-        return;
+        log(`Tick ${payload.t} already stored — bot idle or slow ticks, skipping.`);
+        return false;
     }
 
     const headMs = Date.now();
     const withTs = interpolateTimestamps(entries, { headTick: payload.t, headMs, latestTick, latestMs });
     const { docs, lod } = assignLodFlags(withTs, latest?.lod);
 
-    const snapshots = db.collection("snapshots");
+    const snapshots = db.collection(paths.snapshots);
     const batch = db.batch();
     let newestDoc;
     for (const entry of docs) {
@@ -303,32 +338,60 @@ async function main() {
     await batch.commit();
 
     const ringDepth = payload.h?.length ?? 0;
-    console.log(
+    log(
         `Stored ${docs.length} tick(s) [${docs[0].t}..${docs.at(-1).t}] (${Object.keys(payload.rooms).length} rooms), ring depth ${ringDepth}.`
     );
     // Suppressed before the first successful run (`latest == null`) — there's no
     // baseline yet to call a bucket fetch problem unusual.
     if (latest != null) {
         if (failedBuckets > 0) {
-            console.log(`::warning::segment ${SEGMENT} had ${failedBuckets} bucket fetch failure(s) this poll (ring depth ${ringDepth}) — likely a fetch glitch.`);
+            log(`::warning::segment ${SEGMENT} had ${failedBuckets} bucket fetch failure(s) this poll (ring depth ${ringDepth}) — likely a fetch glitch.`);
         } else if (ringDepth === 0 && (payload.buckets ?? 0) > 0) {
             // The bot always writes the head into its bucket, so a named-but-empty
             // ring (with no fetch failures to blame) means the bot isn't writing it.
-            console.log(`::warning::segment ${SEGMENT} names ${payload.buckets} bucket(s) but none carried history — check the bot's bucket writes.`);
+            log(`::warning::segment ${SEGMENT} names ${payload.buckets} bucket(s) but none carried history — check the bot's bucket writes.`);
         }
     }
 
     // retention sweep on the first run of each UTC day
     const prevDay = latest?.ts?.toDate().toISOString().slice(0, 10);
     const today = new Date().toISOString().slice(0, 10);
-    if (prevDay && prevDay !== today) {
-        const prunedCount = await pruneOldSnapshots(db);
-        if (prunedCount) console.log(`Pruned ${prunedCount} snapshots older than ${RETENTION_DAYS} days.`);
+    if (!prevDay || prevDay === today) return false;
+    const prunedCount = await pruneOldSnapshots(db, paths.snapshots);
+    if (prunedCount) log(`Pruned ${prunedCount} snapshots older than ${RETENTION_DAYS} days.`);
+    return true;
+}
+
+// Drains the pre-multi-shard root layout; remove with the root rules once empty.
+async function sweepLegacy(db) {
+    const prunedCount = await pruneOldSnapshots(db, "snapshots");
+    if (prunedCount) console.log(`[legacy] Pruned ${prunedCount} root snapshots older than ${RETENTION_DAYS} days.`);
+    await db.doc("meta/latest").delete();
+}
+
+async function main() {
+    const shards = parseShards(process.env);
+    initializeApp({ credential: applicationDefault() });
+    const db = getFirestore();
+
+    let rolledOver = false;
+    const exitCode = await runShards(shards, async shard => {
+        const rolled = await collectShard(db, shard);
+        if (shard === DEFAULT_SHARD) rolledOver = rolled;
+    });
+    if (rolledOver) {
+        try {
+            await sweepLegacy(db);
+        } catch (err) {
+            console.error("[legacy] sweep failed:", err);
+            return 1;
+        }
     }
+    return exitCode;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-    main().catch(err => {
+    main().then(code => { process.exitCode = code; }).catch(err => {
         console.error(err);
         process.exit(1);
     });

@@ -51,7 +51,12 @@
 <div class="wrap">
     <header>
         <h1>Screeps Monitor</h1>
-        <span class="sub" id="shard-label">shard2</span>
+        <!-- Static no-JS fallback; one button per SHARDS entry in calc.js (asserted in
+             test/calc.test.js). aria-pressed follows the route in nav.js applyRoute. -->
+        <div class="group" id="shard-group" role="group" aria-label="Shard">
+            <button type="button" data-shard="shard2">shard2</button>
+            <button type="button" data-shard="shard3">shard3</button>
+        </div>
         <span id="status">loading…</span>
     </header>
 

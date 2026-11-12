@@ -9,12 +9,14 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/fireba
 import {
     collection, doc, getDoc, getDocs, getFirestore, limit, orderBy, query, Timestamp, where,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-lite.js";
-import { bucketId, detectGaps, downsample, LOD_BUCKET_MS, LOD_BY_RANGE, RAW_INTERVAL_MS } from "./calc.js";
+import {
+    bucketId, detectGaps, downsample, LOD_BUCKET_MS, LOD_BY_RANGE, RAW_INTERVAL_MS, shardPaths,
+} from "./calc.js";
 import { DEMO, params } from "./config.js";
 import { MAX_HISTORY_DOCS, MAX_POINTS } from "./constants.js";
 import { firebaseConfig } from "./firebase-config.js";
 import {
-    history, historyRaw, rangeHours, setHistory, setHistoryGaps, setHistoryRaw, setLatest,
+    currentShard, history, historyRaw, rangeHours, setHistory, setHistoryGaps, setHistoryRaw, setLatest,
 } from "./state.js";
 
 let db;
@@ -39,7 +41,7 @@ async function demoHistory() {
 
 export async function loadLatest() {
     if (DEMO) { setLatest((await demoHistory()).at(-1)); return; }
-    const snap = await getDoc(doc(db, "meta", "latest"));
+    const snap = await getDoc(doc(db, shardPaths(currentShard).latest));
     if (!snap.exists()) throw new Error("No data yet — has the collector run?");
     setLatest(snap.data());
 }
@@ -53,7 +55,7 @@ const toRows = snap => snap.docs.map(d => { const v = d.data(); return { ...v, d
 // incremental only ever appends rows fetched under the current range's flag.
 function historyQuery(tsClause) {
     const flag = LOD_BY_RANGE[rangeHours];
-    return query(collection(db, "snapshots"), tsClause,
+    return query(collection(db, shardPaths(currentShard).snapshots), tsClause,
         ...(flag ? [where(flag, "==", true)] : []),
         orderBy("ts", "asc"), limit(MAX_HISTORY_DOCS));
 }

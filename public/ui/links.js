@@ -1,7 +1,7 @@
 // Room links and badges.
-import { DEFAULT_RANGE, roomUrl } from "../calc.js";
+import { DEFAULT_RANGE, DEFAULT_SHARD, roomUrl } from "../calc.js";
 import { buildHash, ROOM } from "../route.js";
-import { latest, route } from "../state.js";
+import { currentShard, latest, route } from "../state.js";
 
 // Always a real <a href> rather than a click handler, so middle-click,
 // copy-link and open-in-new-tab all work. External links (screeps.com room
@@ -32,12 +32,12 @@ const isOwnedRoom = room => !!latest?.rooms?.[room];
 export function roomNameLink(room) {
     return isOwnedRoom(room)
         ? roomLink({
-            href: buildHash({ view: ROOM, room, range: route.range }, DEFAULT_RANGE),
+            href: buildHash({ view: ROOM, room, range: route.range, shard: route.shard }, DEFAULT_RANGE, DEFAULT_SHARD),
             text: room,
             external: false,
         })
         : roomLink({
-            href: roomUrl(room),
+            href: roomUrl(currentShard, room),
             text: room,
             title: `${room} is not an owned room — open it on screeps.com`,
         });
@@ -46,7 +46,7 @@ export function roomNameLink(room) {
 // The escape hatch to the game itself, offered explicitly in the room view
 // header rather than by hijacking every room name.
 export function screepsRoomLink(room) {
-    return roomLink({ href: roomUrl(room), text: "↗ Screeps", title: `open ${room} on screeps.com` });
+    return roomLink({ href: roomUrl(currentShard, room), text: "↗ Screeps", title: `open ${room} on screeps.com` });
 }
 
 export function roomLinkCell(room) {

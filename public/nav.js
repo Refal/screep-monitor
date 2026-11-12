@@ -1,5 +1,5 @@
 // Hash-route reading/writing. No rendering imports, so sections can navigate without a cycle.
-import { DEFAULT_RANGE, RANGES } from "./calc.js";
+import { DEFAULT_RANGE, DEFAULT_SHARD, RANGES, SHARDS } from "./calc.js";
 import { $ } from "./dom.js";
 import { buildHash, OVERVIEW, parseHash, ROOM } from "./route.js";
 import { latest, route, setRoute } from "./state.js";
@@ -13,7 +13,10 @@ export function applyRoute() {
     $("view-room").hidden = route.view !== ROOM;
     // Carries the range across, so leaving a room at 7d doesn't silently snap
     // the overview back to DEFAULT_RANGE and refetch.
-    $("back-to-overview").href = buildHash({ view: OVERVIEW, range: route.range }, DEFAULT_RANGE);
+    $("back-to-overview").href = buildHash({ view: OVERVIEW, range: route.range, shard: route.shard }, DEFAULT_RANGE, DEFAULT_SHARD);
+    for (const b of $("shard-group").querySelectorAll("button")) {
+        b.setAttribute("aria-pressed", String(b.dataset.shard === route.shard));
+    }
     for (const b of $("range-group").querySelectorAll("button")) {
         b.setAttribute("aria-pressed", String(Number(b.dataset.range) === route.range));
     }
@@ -28,7 +31,7 @@ export function reconcileRoute() {
     const resolved = readHash();
     if (resolved.view === route.view && resolved.room === route.room) return;
     setRoute(resolved);
-    window.history.replaceState(null, "", buildHash(route, DEFAULT_RANGE));
+    window.history.replaceState(null, "", buildHash(route, DEFAULT_RANGE, DEFAULT_SHARD));
 }
 
 function currentRooms() {
@@ -36,11 +39,13 @@ function currentRooms() {
 }
 
 export function readHash() {
-    return parseHash(location.hash, { ranges: RANGES, rooms: currentRooms(), defaultRange: DEFAULT_RANGE });
+    return parseHash(location.hash, {
+        ranges: RANGES, rooms: currentRooms(), defaultRange: DEFAULT_RANGE, shards: SHARDS, defaultShard: DEFAULT_SHARD,
+    });
 }
 
 export function go(patch) {
-    const next = buildHash({ ...route, ...patch }, DEFAULT_RANGE);
+    const next = buildHash({ ...route, ...patch }, DEFAULT_RANGE, DEFAULT_SHARD);
     if (next === (location.hash || "#/")) return;
     location.hash = next;
 }

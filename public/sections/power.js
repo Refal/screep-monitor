@@ -4,7 +4,7 @@ import {
     powerFleetRows, powerGateState, powerLedgerRows, powerStockPoint, roomUrl,
 } from "../calc.js";
 import { cssVar, fmtInt } from "../dom.js";
-import { history, latest } from "../state.js";
+import { currentShard, history, latest } from "../state.js";
 import { pluralCount } from "../ui/cells-defense.js";
 import { fmtRate, ledgerAmountCell, ledgerWindowCell } from "../ui/cells-economy.js";
 import { chipsCell } from "../ui/cells-labs.js";
@@ -101,7 +101,7 @@ function haulerDetailText(h) {
 // take the screeps.com branch — spelled out here so the title can say why.
 function fleetRoomCell(row) {
     const td = document.createElement("td");
-    td.append(roomLink({ href: roomUrl(row.rm), text: row.rm, title: `${row.rm} is a highway room — open it on screeps.com` }));
+    td.append(roomLink({ href: roomUrl(currentShard, row.rm), text: row.rm, title: `${row.rm} is a highway room — open it on screeps.com` }));
     if (!row.live) {
         const badge = makeBadge(cssVar("--text-muted"), "gone");
         badge.title = row.kind === "haulers"

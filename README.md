@@ -4,7 +4,7 @@ Room-statistics dashboard for the screeps2 bot — fully card-free:
 GitHub Actions (collector, every 5 min) → Firestore (Firebase Spark) → Firebase Hosting (dashboard).
 
 The bot publishes a compact stats JSON to a pool of **RawMemory segments starting at 90** on
-shard2 every 20 ticks (`StatsManager` in the screeps2 repo, ~82s at today's shard speed).
+every shard it runs on (shard2, shard3) every 20 ticks (`StatsManager` in the screeps2 repo, ~82s at today's shard speed).
 Segment 90 carries a manifest plus the newest snapshot; a time-bucketed ring of recent
 snapshots lives in the next `buckets` segments (91-96 by default). Each bucket holds every
 snapshot published during one fixed window of game ticks, the bot appends to the current
@@ -458,11 +458,13 @@ gh workflow run collect                # first manual run
 ## Operations
 
 - Dashboard: `https://<project-id>.web.app` (public read-only; game stats only).
-- Incident timeline: `node scripts/timeline.mjs <room> --end <tick> [--start <tick> | --ticks <n>]`
+- Incident timeline: `node scripts/timeline.mjs <room> --end <tick> [--start <tick> | --ticks <n>] [--shard <name>] [--legacy]`
   prints a change-only timeline of army squads, defense/siege verdicts, spawn queue, role
   deficits and remote threats for one room, read back from `snapshots` by tick range. It is the
   window-narrowing step of the screeps2 `/postmortem` skill. `GAP` rows mark holes wider than two
   publish intervals, `DEGRADED` rows mark snapshots whose roles/thr/rt/ar were dropped to fit.
+  `--shard` defaults to shard2; `--legacy` reads the pre-multi-shard root `snapshots`
+  (shard2 history from before the nested layout) until the root sweep drains it.
   Credentials come from `GOOGLE_APPLICATION_CREDENTIALS`, else `./service-account.json` next to
   this file (never commit it). Reads only, a few hundred documents per run.
 - Retention: the collector deletes snapshots older than 21 days on the first run of each UTC
@@ -475,11 +477,35 @@ gh workflow run collect                # first manual run
   Firestore TTL policy was evaluated and rejected:
   TTL deletes have no free allowance (billing required, so not Spark-compatible), and TTL
   expires on the field's own value, so it would also need a dedicated `expireAt` field.
-- Quotas (Spark free tier): ~1,050 snapshot writes/day + ~288 `meta/latest` updates ≈ 1,340
-  of 20k; dashboard reads are sized to the chart's 500-point render cap — the 24h/7d/21d
+- Multi-shard layout: Firestore holds `shards/<shard>/snapshots` and `shards/<shard>/meta/latest`
+  per shard (`shardPaths` in `public/calc.js`, shared by the collector, dashboard, freshness check
+  and timeline). The collector polls every shard in `SCREEPS_SHARDS` (default `shard2,shard3`;
+  `SCREEPS_SHARD` is the single-shard fallback) in sequence, each with its own dedup/lod/prune
+  state; one shard failing does not skip the other, but the run exits 1 so the workflow's failure
+  counter sees it. The header toggle picks one shard at a time; the shard rides in the hash
+  (`#/?shard=shard3`, default omitted). The old root `snapshots` and `meta/latest` are legacy: the
+  collector sweeps root `snapshots` through the same pruner and deletes root `meta/latest` on each
+  shard2 day rollover, until they drain (~21 days); then remove the sweep, `--legacy` and the root
+  rules. `RAW_INTERVAL_MS` is calibrated to shard2's tick rate.
+- Quotas (Spark free tier), per shard per day: ~1,050 snapshot writes + ~288 `meta/latest` updates
+  ≈ 1,340 of 20k; ~1,050 prune deletes; ~1,400 collector reads. Docs/day follow the shard's tick
+  rate (one publish per 20 ticks), not its room count.
+
+  | Resource | Spark limit | shard2 only | shard2 + shard3 | Transition (first 21 days) |
+  |---|---|---|---|---|
+  | Writes/day | 20,000 | ~1,340 | ~2,700 | same |
+  | Deletes/day | 20,000 | ~1,050 | ~2,100 | ~3,150 (legacy root sweep) |
+  | Reads/day, collector | 50,000 | ~1,400 | ~2,800 | ~3,850 |
+  | Reads/day, dashboard | shared 50k | ~300-1,300 per open tab | unchanged per tab | same |
+  | Storage @21 days | 1 GiB | ~190 MB (worst ~260) | <= ~520 MB | old root drains as nested fills |
+  | Screeps `memory-segment` GET | 360/h per token | 84/h | 168/h | same |
+
+  Dashboard reads are sized to the chart's 500-point render cap: the 24h/7d/21d
   ranges query only `b5`/`b30`/`b120` bucket-leader docs (~288/336/252 per full fetch; 6h
   fetches every doc, ~260), and incremental polls skip the query entirely until the current
-  bucket rolls over (see `LOD_BY_RANGE` in `public/calc.js`).
+  bucket rolls over (see `LOD_BY_RANGE` in `public/calc.js`). The composite indexes are scoped by
+  collection id, so `shards/{shard}/snapshots` reuses them. `npm run live` in screeps2 shares the
+  token's segment quota.
 - Bot side: adjust cadence/segment/ring geometry in `screeps2/src/config/config.stats.ts`
   (`segment`, `historySegmentCount`, `bucketTicks`); check a segment with
   `node scripts/screepsLive.mjs segment <90..99>` in the screeps2 repo. The collector needs no

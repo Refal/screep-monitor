@@ -1,5 +1,5 @@
 // Refresh/poll loop, hash-change handling, control wiring and boot.
-import { RANGES } from "./calc.js";
+import { RANGES, SHARDS } from "./calc.js";
 import { DEMO } from "./config.js";
 import { POLL_MS, STALE_PROBE_MS } from "./constants.js";
 import { initFirestore, loadHistory, loadLatest, resetDemoRows } from "./data.js";
@@ -10,7 +10,8 @@ import { dataAgeMs, renderAll, renderStatus } from "./render.js";
 import { ROOM } from "./route.js";
 import { applySectionDefaults } from "./sections/index.js";
 import {
-    latest, rangeHours, route, selectedRoom, setHistoryRaw, setRangeHours, setRoute, setSelectedRoom,
+    currentShard, latest, route, selectedRoom, setCurrentShard, setHistoryRaw, setLatest,
+    setRangeHours, setRoute, setSelectedRoom,
 } from "./state.js";
 
 let inFlight = false;
@@ -19,19 +20,33 @@ let lastPollAt = 0;
 
 let pollTimer = null;
 
+// Bumped on every range/shard reset so refresh() can tell a fetch started
+// before it — comparing values misses an A→B→A switch inside one fetch.
+let viewGeneration = 0;
+
 function onHashChange() {
     const prev = route;
-    setRoute(readHash());
+    let next = readHash();
+    if (next.shard !== currentShard) {
+        // readHash validates the room against `latest`, which still belongs to
+        // the old shard — clear it so a pasted room link is judged on the new data.
+        setLatest(null);
+        setSelectedRoom(null);
+        next = readHash();
+    }
+    setRoute(next);
     // Eagerly, before any fetch: refresh() is a no-op while a poll is already
     // in flight, and the pressed button and the visible view must still follow
     // the click. renderAll calls applyRoute again; it is idempotent.
     applyRoute();
-    if (route.range !== prev.range) {
+    if (route.range !== prev.range || route.shard !== currentShard) {
         // Same reset the range buttons used to do inline: a new window needs a
         // full fetch at the new LOD, not an append to the old one.
         setRangeHours(route.range);
+        setCurrentShard(route.shard);
         setHistoryRaw([]);
         resetDemoRows();
+        viewGeneration++;
         refresh({ force: true });
         return;
     }
@@ -49,13 +64,14 @@ async function refresh({ force = false } = {}) {
             setStatus(attempt === 0 ? "loading…" : `loading… (retry ${attempt})`);
             try {
                 const prevTick = latest?.tick ?? null;
-                const rangeAtStart = rangeHours;
+                const generationAtStart = viewGeneration;
                 const [, added] = await Promise.all([loadLatest(), loadHistory()]);
-                if (rangeHours !== rangeAtStart) {
-                    // The range changed mid-fetch (onHashChange's own refresh was a
-                    // no-op while this one ran), so what came back is the old window:
-                    // drop it and fetch the new one from scratch.
+                if (viewGeneration !== generationAtStart) {
+                    // The range or shard changed mid-fetch (onHashChange's own refresh
+                    // was a no-op while this one ran), so what came back is the old
+                    // window: drop it and fetch the new one from scratch.
                     setHistoryRaw([]);
+                    setLatest(null);
                     resetDemoRows();
                     force = true;
                     attempt = -1;
@@ -120,6 +136,10 @@ function bindControls() {
         const btn = e.target.closest("button[data-range]");
         if (btn) go({ range: Number(btn.dataset.range) });
     });
+    $("shard-group").addEventListener("click", e => {
+        const btn = e.target.closest("button[data-shard]");
+        if (btn && SHARDS.includes(btn.dataset.shard)) go({ shard: btn.dataset.shard });
+    });
     $("refresh")?.addEventListener("click", () => refresh({ force: true }));
     $("room-select").addEventListener("change", e => go({ view: ROOM, room: e.target.value }));
     window.addEventListener("hashchange", onHashChange);
@@ -147,6 +167,7 @@ export async function boot() {
         $("app").hidden = false;
         setRoute(readHash());        // before the first fetch: rangeHours feeds the query
         setRangeHours(route.range);
+        setCurrentShard(route.shard);
         renderRangeButtons();        // applyRoute sets aria-pressed, so build first
         applyRoute();
         applySectionDefaults();

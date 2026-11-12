@@ -1,5 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { DEFAULT_SHARD, SHARDS } from "../public/calc.js";
 import { parseArgs, roomFacts, buildTimeline, formatTimeline, DEFAULT_TICKS, DEFAULT_LIMIT } from "../scripts/timeline.mjs";
 
 const HOME = "E23S45";
@@ -23,7 +24,20 @@ describe("roomFacts defense economy", () => {
 
 describe("parseArgs", () => {
     test("defaults ticks and limit, derives start from end", () => {
-        assert.deepEqual(parseArgs([TARGET, "--end", "5000"]), { room: TARGET, start: 5000 - DEFAULT_TICKS, end: 5000, limit: DEFAULT_LIMIT });
+        assert.deepEqual(parseArgs([TARGET, "--end", "5000"]), { room: TARGET, start: 5000 - DEFAULT_TICKS, end: 5000, limit: DEFAULT_LIMIT, shard: DEFAULT_SHARD, legacy: false });
+    });
+    for (const shard of SHARDS) {
+        test(`--shard ${shard} is parsed`, () => {
+            assert.equal(parseArgs([TARGET, "--end", "5000", "--shard", shard]).shard, shard);
+        });
+    }
+    test("--legacy is a boolean flag that leaves the shard at its default", () => {
+        const opts = parseArgs([TARGET, "--end", "5000", "--legacy"]);
+        assert.equal(opts.legacy, true);
+        assert.equal(opts.shard, DEFAULT_SHARD);
+    });
+    test("--shard rejects a shard outside SHARDS", () => {
+        assert.throws(() => parseArgs([TARGET, "--end", "5000", "--shard", "shard9"]), /--shard must be one of/);
     });
     test("--start wins over --ticks", () => {
         assert.equal(parseArgs([TARGET, "--end", "5000", "--start", "4900", "--ticks", "10"]).start, 4900);
