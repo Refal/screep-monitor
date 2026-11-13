@@ -1530,12 +1530,11 @@ describe("squadSummary", () => {
             queued: 1, spawning: 1, alive: 2, dead: 3, total: 7,
             atHome: 1, atTarget: 1, inTransit: 0,
             boosted: true, held: true,
-            wave: null, fight: false,
+            wave: null,
         });
     });
-    test("power-bank tags: `pw` is the harvest wave, `pf: 1` the fight squad", () => {
-        assert.deepEqual([squadSummary(sq({ pw: 2 })), squadSummary(sq({ pf: 1 }))].map(s => [s.wave, s.fight]),
-            [[2, false], [null, true]]);
+    test("power-bank tags: `pw` is the harvest wave, absent for any other squad", () => {
+        assert.deepEqual([squadSummary(sq({ pw: 2 })), squadSummary(sq({}))].map(s => s.wave), [2, null]);
     });
     test("boosted/held default to false when the flags are absent", () => {
         const s = squadSummary(sq());
@@ -1796,7 +1795,7 @@ describe("armyOperations", () => {
             ar: [
                 { home: "W1N1", target: "W9N9", sq: [sq({ id: 5 })] },
                 { home: "W1N1", target: "W9N9", kind: "manual", sq: [sq({ id: 6 })] },
-                { home: "W1N1", target: "W9N9", kind: "offense", sq: [sq({ id: 7, pf: 1 })] },
+                { home: "W1N1", target: "W9N9", kind: "offense", sq: [sq({ id: 7, pw: 1 })] },
             ],
         };
         assert.deepEqual(armyOperations(l).map(o => o.kind).sort(), ["defense", "manual"]);
@@ -1851,7 +1850,7 @@ describe("powerGateState", () => {
 describe("powerFleetRows", () => {
     const latest = (over = {}) => ({
         ar: [
-            { home: "W1N1", target: "W5N5", kind: "offense", sq: [sq({ id: 7, pw: 2 }), sq({ id: 8, pf: 1, n: [0, 0, 1, 1] })] },
+            { home: "W1N1", target: "W5N5", kind: "offense", sq: [sq({ id: 7, pw: 2 }), sq({ id: 8, pw: 3, n: [0, 0, 1, 1] })] },
             { home: "W2N2", target: "W6N6", kind: "offense", sq: [sq({ id: 3, pw: 1, at: [2, 0, 0] })] },
             // a siege and a manual squad: no power tags, never fleet rows
             { home: "W1N1", target: "W3N1", kind: "offense", sq: [sq({ id: 1 })] },
@@ -1862,11 +1861,11 @@ describe("powerFleetRows", () => {
     });
     test("each power-tagged squad in ar is its own row, carrying the squad's own stats", () => {
         const rows = powerFleetRows(latest()).filter(r => r.kind === "squad");
-        assert.deepEqual(rows.map(r => [r.rm, r.home, r.id, r.wave, r.fight, r.live]),
-            [["W5N5", "W1N1", 7, 2, false, true], ["W5N5", "W1N1", 8, null, true, true], ["W6N6", "W2N2", 3, 1, false, true]]);
+        assert.deepEqual(rows.map(r => [r.rm, r.home, r.id, r.wave, r.live]),
+            [["W5N5", "W1N1", 7, 2, true], ["W5N5", "W1N1", 8, 3, true], ["W6N6", "W2N2", 3, 1, true]]);
         assert.equal(rows[0].status, "engaged");
         // the squad's OWN counts, not the route's: one harvest route carries
-        // both the wave and its fight squad.
+        // several harvest waves.
         assert.equal(rows[1].squad.dead, 1);
         assert.equal(rows[1].squad.alive, 1);
     });
@@ -1887,7 +1886,7 @@ describe("powerFleetRows", () => {
         const rows = powerFleetRows({
             ar: [
                 { home: "W2N2", target: "W7N7", kind: "offense", sq: [sq({ id: 3, pw: 1 })] },
-                { home: "W1N1", target: "W7N7", kind: "offense", sq: [sq({ id: 5, pw: 1 }), sq({ id: 1, pf: 1 })] },
+                { home: "W1N1", target: "W7N7", kind: "offense", sq: [sq({ id: 5, pw: 1 }), sq({ id: 1, pw: 2 })] },
             ],
             ph: [{ rm: "W7N7", hl: [1, 0, 0], lv: 1 }, { rm: "W4N4", hl: [1, 0, 0] }],
         });

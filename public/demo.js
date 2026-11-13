@@ -404,13 +404,13 @@ function demoAr(i, n, f) {
     }
     routes.push({ home: "E27S41", target: "E28S41", kind: "manual", sq: [{ id: 9, st: "engaged", n: [0, 0, 1, 0], at: [0, 0, 1] }] });
     // Power-harvest armies: kind 'offense' at the bank room, each squad tagged
-    // `pw` (harvest wave) or `pf: 1` (fight squad). The E45N35 route outlives
+    // `pw` (harvest wave). The E45N35 route outlives
     // its bank: from 0.8n demoPh drops that bank's `lv`, so the squad reads
     // "gone" on its walk home, and from 0.9n the route itself is over.
     routes.push({
         home: "E15S57", target: "E15N5", kind: "offense",
         sq: [{ id: 21, st: "engaged", n: [0, 0, 4, 0], at: [0, 4, 0], b: 1, pw: 1 },
-             { id: 22, st: "engaged", n: [0, 0, 2, 0], at: [0, 2, 0], pf: 1 }],
+             { id: 22, st: "engaged", n: [0, 0, 2, 0], at: [0, 2, 0], pw: 2 }],
     });
     // A second home on the same bank — four squads in all.
     routes.push({

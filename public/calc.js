@@ -934,8 +934,8 @@ export function squadSummary(sq) {
         queued, spawning, alive, dead, total: queued + spawning + alive + dead,
         atHome, atTarget, inTransit,
         boosted: sq.b === 1, held: sq.hold === 1,
-        // Power-bank squads only: `pw` the harvest wave, `pf: 1` its fight squad.
-        wave: sq.pw ?? null, fight: sq.pf === 1,
+        // Power-bank harvest squads only: `pw` the harvest wave.
+        wave: sq.pw ?? null,
     };
 }
 
@@ -1343,12 +1343,12 @@ export function campaignTargets(rows, latest) {
 
 // Routes on the power pipeline belong to the Power section; everything else
 // the army does is an "operation". Harvest armies are always kind 'offense',
-// and their squads carry `pw`/`pf`; a defense or manual squad sent to a bank
+// and their squads carry `pw`; a defense or manual squad sent to a bank
 // room is not power. A route whose squads predate the tags stays an operation,
 // so no active army is ever hidden from the army view.
 function isPowerRoute(latest, route) {
     if (route.kind !== "offense") return false;
-    return route.squads.some(q => q.wave != null || q.fight);
+    return route.squads.some(q => q.wave != null);
 }
 
 export const TONE_RANK = { critical: 0, serious: 1, short: 2, na: 3, good: 4 };
@@ -1597,7 +1597,7 @@ export function depositLedgerRows(latest) {
 // snapshots' `pb` is deliberately not read.
 //
 //  - squads ride `ar`: a harvest army is kind 'offense' targeting the bank
-//          room, each squad tagged `pw` (wave) or `pf: 1` (fight). Army
+//          room, each harvest squad tagged `pw` (wave). Army
 //          records outlive the bank's intel, so they stay through the walk home.
 //  - `ph`  every power hauler, grouped by bank room: `hl`, plus `lv: 1` while
 //          the bank's intel record is live. Our own kill deletes that record
@@ -1632,12 +1632,12 @@ export function powerFleetRows(latest) {
     const goneRooms = new Set(ph.filter(h => h.lv !== 1).map(h => h.rm));
     const squads = armyRoutes(latest ?? {})
         .filter(r => r.kind === "offense")
-        .flatMap(r => r.squads.filter(q => q.wave != null || q.fight).map(q => ({
+        .flatMap(r => r.squads.filter(q => q.wave != null).map(q => ({
             kind: "squad", rm: r.target, home: r.home, live: !goneRooms.has(r.target),
-            id: q.id, fight: q.fight, wave: q.wave,
-            // Squad-level, not route-level: one route carries both the harvest
-            // wave and its fight squad, so route phase/status would describe
-            // the pair rather than the row the reader is pointing at.
+            id: q.id, wave: q.wave,
+            // Squad-level, not route-level: one route carries several harvest
+            // waves, so route phase/status would describe the group
+            // rather than the row the reader is pointing at.
             squad: q, status: q.status,
         })));
     const haulers = ph.map(h => ({ kind: "haulers", rm: h.rm, live: h.lv === 1, hl: h.hl }));
