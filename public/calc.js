@@ -1084,6 +1084,7 @@ export const SIEGE_VERDICT = {
     "awaiting-deploy": { word: "awaiting deploy", tone: "na", explain: "holding until the core activates" },
     "above-bar":       { word: "above auto-siege limit", tone: "short", explain: "holding: core level is above the auto-siege limit" },
     "boost-missing":   { word: "boost missing", tone: "serious", explain: "holding: a required boost compound is not in stock" },
+    "sector-hold":     { word: "sector hold", tone: "na", explain: "holding a sector stronghold siege until its timing is safe" },
 };
 
 export function verdictInfo(table, code) {
@@ -1137,12 +1138,20 @@ export function remoteResponse(latest, entry) {
     return { absent: hasThreatDetail(latest) ? "none" : "unknown" };
 }
 
+const SECTOR_HOLD_TEXT = {
+    "no-expiry": "collapse timer unknown",
+    "near-collapse": "about to collapse",
+    "rival-window": "just activated",
+    rival: "rival killers present",
+};
+
 // The hold detail `d` means different things per reason: "L3" (a core level)
 // for above-bar, a compound name for boost-missing.
 export function siegeDetailText(v) {
     if (v.d == null) return null;
     if (v.k === "above-bar") return `core ${v.d}`;
     if (v.k === "boost-missing") return String(v.d);
+    if (v.k === "sector-hold") return SECTOR_HOLD_TEXT[v.d] ?? String(v.d);
     return String(v.d);
 }
 

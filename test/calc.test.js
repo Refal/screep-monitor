@@ -16,7 +16,7 @@ import {
     squadSummary, routeSummary, routePhase, routeStatusText, armyRoutes, armyRouteFor, armyRoutesForHome,
     excludeRoutedGuards, routeOrAbsence,
     armyOperations, armySummary, verdictInfo, siegeDetailText,
-    DEFENSE_VERDICT, DEFENSE_SKIP, defenseSkipInfo, defenseVerdictFor, remoteResponse, siegeVerdictFor, worstTone,
+    DEFENSE_VERDICT, SIEGE_VERDICT, DEFENSE_SKIP, defenseSkipInfo, defenseVerdictFor, remoteResponse, siegeVerdictFor, worstTone,
     powerGateState, powerFleetRows, haulerSummary, powerStockPoint, powerStockSeries,
     campaigns, campaignTrend, campaignVerdict, campaignPhaseInfo, campaignHoldText, campaignSafeModeText, campaignStarve, campaignSpend, campaignNow,
     remoteLedgerRows, remoteLedgerSummary, LEDGER_MATURE_TICKS, powerLedgerRows, depositLedgerRows,
@@ -1735,6 +1735,15 @@ describe("planner verdicts (dv / sv)", () => {
         assert.equal(siegeDetailText({ k: "boost-missing", d: "XUH2O" }), "XUH2O");
         assert.equal(siegeDetailText({ k: "core" }), null);
     });
+    test("sector-hold has a readable label", () => {
+        assert.equal(verdictInfo(SIEGE_VERDICT, "sector-hold").word, "sector hold");
+    });
+    for (const [d, text] of [["no-expiry", "collapse timer unknown"], ["near-collapse", "about to collapse"],
+        ["rival-window", "just activated"], ["rival", "rival killers present"]]) {
+        test(`siegeDetailText reads sector-hold ${d} as words`, () => {
+            assert.equal(siegeDetailText({ k: "sector-hold", d }), text);
+        });
+    }
     test("verdict lookups", () => {
         const latest = { dv: [{ rm: "W2N1", v: "holding" }], sv: [{ h: "W1N1", rm: "W3N1", k: "core" }] };
         assert.equal(siegeVerdictFor(latest, "W1N1", "W3N1").k, "core");
