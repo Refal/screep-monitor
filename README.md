@@ -422,17 +422,47 @@ gh secret set FIREBASE_WEB_CONFIG < web-config.local.json
 rm gh-deploy-key.json   # don't leave the key on disk
 ```
 
-**On the web `apiKey` — it is not, and cannot be, a secret.** It is served to every visitor at
+#### Access control (Google sign-in)
+
+The dashboard is private: `firestore.rules` lets a client list `snapshots` or read `meta` only
+when it is signed in with a Google account whose **Firebase Auth UID is on the allowlist** in
+`isViewer()`. The rules list UIDs rather than emails so that no personal address lands in the
+repo. A UID is an opaque random id and is safe to publish.
+Everyone else, including anyone calling the Firestore REST API directly, gets
+`PERMISSION_DENIED`. The collector and freshness check use the Admin SDK and bypass the rules,
+so they are unaffected. Firebase Auth's Google provider is free on the Spark plan.
+
+One-time setup:
+
+1. Firebase console → **Authentication** (direct link:
+   `https://console.firebase.google.com/project/<project-id>/authentication/providers`;
+   in the sidebar it's under *Security* or *All products*) → **Get started** → **Sign-in
+   method** → enable **Google**, set the support email, and save. Decline any offer to upgrade
+   to Identity Platform; it isn't needed.
+2. Authentication → **Settings → Authorized domains**: confirm `<project-id>.web.app`,
+   `<project-id>.firebaseapp.com` and `localhost` are listed.
+3. Sign in once on the deployed site. You'll get the "no access" message, but the account now
+   exists. Copy its **User UID** from Authentication → **Users**.
+4. Put the UID in `isViewer()` in `firestore.rules` and deploy the rules
+   (`npx firebase-tools deploy --only firestore:rules`, or push and let CI do it).
+
+To add a viewer, have them sign in once, then add their UID from the Users list and redeploy the
+rules. To remove one, delete their UID from the list (and optionally the user in the console). Anyone can complete the
+Google login itself, but an account that isn't on the list sees the "no access" message, and
+none of its reads succeed. Sign-in uses a popup (see `signIn` in `public/data.js`), so the CSP
+in `firebase.json` allows `apis.google.com` scripts, an `<project-id>.firebaseapp.com` frame and
+the Identity Toolkit / Secure Token endpoints.
+
+**On the web `apiKey`: it is not, and cannot be, a secret.** It is served to every visitor at
 `/firebase-config.js` on the deployed site, so hiding it from git buys nothing: whatever is in
-`FIREBASE_WEB_CONFIG` is public the moment it's deployed. It is also not the thing standing
-between the Spark free tier and quota exhaustion — Firestore REST **authorizes by
-`firestore.rules`, not by API key**, and accepts requests with no `key` parameter at all
-(verified: a garbage key, an empty key, and no key all return the same live data as a valid one).
-Restricting the key to HTTP referrers is still worth doing for the other Google APIs the project
-touches (e.g. Identity Toolkit, if Auth is ever added) — but treat it as routing hygiene, not
-access control, and don't expect rotating it to close anything. The actual quota control is the
-`request.query.limit` cap in `firestore.rules` — see `firestore.rules` and the security-audit
-notes for the accepted residual risk on that cap.
+`FIREBASE_WEB_CONFIG` is public the moment it's deployed. It also grants nothing. Firestore REST
+**authorizes by `firestore.rules`, not by API key**, and accepts requests with no `key`
+parameter at all (verified: a garbage key, an empty key, and no key all got the same response
+as a valid one). Access control is the sign-in plus the allowlist above. Restricting the key to
+HTTP referrers (`<project-id>.web.app/*`, `<project-id>.firebaseapp.com/*`,
+`localhost:*`) in the Google Cloud console is still good hygiene, since Auth calls Identity
+Toolkit with it, but don't expect rotating the key to close anything. The
+`request.query.limit` cap in `firestore.rules` still bounds what one viewer's query can cost.
 
 ### 2. Test the collector locally
 
@@ -457,7 +487,7 @@ gh workflow run collect                # first manual run
 
 ## Operations
 
-- Dashboard: `https://<project-id>.web.app` (public read-only; game stats only).
+- Dashboard: `https://<project-id>.web.app` (sign-in required; allowlisted Google accounts only, see "Access control").
 - Incident timeline: `node scripts/timeline.mjs <room> --end <tick> [--start <tick> | --ticks <n>] [--shard <name>] [--legacy]`
   prints a change-only timeline of army squads, defense/siege verdicts, spawn queue, role
   deficits and remote threats for one room, read back from `snapshots` by tick range. It is the

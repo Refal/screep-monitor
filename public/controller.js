@@ -2,7 +2,9 @@
 import { RANGES, SHARDS } from "./calc.js";
 import { DEMO } from "./config.js";
 import { POLL_MS, STALE_PROBE_MS } from "./constants.js";
-import { initFirestore, loadHistory, loadLatest, resetDemoRows } from "./data.js";
+import {
+    initFirestore, loadHistory, loadLatest, logout, resetDemoRows, signIn, waitForUser,
+} from "./data.js";
 import { $, setStatus, sleep } from "./dom.js";
 import { firebaseConfig } from "./firebase-config.js";
 import { applyRoute, go, readHash } from "./nav.js";
@@ -23,6 +25,85 @@ let pollTimer = null;
 // Bumped on every range/shard reset so refresh() can tell a fetch started
 // before it — comparing values misses an A→B→A switch inside one fetch.
 let viewGeneration = 0;
+
+// True while the login screen is up: polling and refreshes stand down, since
+// every read would be denied by firestore.rules until someone signs in.
+let awaitingSignIn = false;
+
+let signedInEmail = null;
+
+function setLoginError(message) {
+    $("login-error").textContent = message;
+    $("login-error").hidden = !message;
+}
+
+function setUser(user) {
+    signedInEmail = user?.email ?? null;
+    $("sign-out").hidden = !user;
+    $("sign-out").title = user ? `Signed in as ${user.email}` : "";
+}
+
+// Shows the login screen and resolves with the user once a Google sign-in
+// succeeds. signIn() runs straight from the click so the browser treats the
+// popup as user-initiated and doesn't block it.
+function promptSignIn(message = "") {
+    setStatus("signed out");
+    $("login").hidden = false;
+    setLoginError(message);
+    return new Promise(resolve => {
+        const btn = $("sign-in");
+        const onClick = async () => {
+            btn.disabled = true;
+            try {
+                const user = await signIn();
+                btn.removeEventListener("click", onClick);
+                $("login").hidden = true;
+                setLoginError("");
+                resolve(user);
+            } catch (err) {
+                // Closing the popup is a choice, not an error worth showing.
+                const quiet = ["auth/popup-closed-by-user", "auth/cancelled-popup-request"];
+                if (!quiet.includes(err?.code)) setLoginError(String(err?.message ?? err));
+            } finally {
+                btn.disabled = false;
+            }
+        };
+        btn.addEventListener("click", onClick);
+    });
+}
+
+// The signed-in account isn't on the firestore.rules allowlist (or its token
+// was revoked): drop it and ask again, then pick up where the dashboard was.
+async function regate() {
+    awaitingSignIn = true;
+    if (pollTimer) clearTimeout(pollTimer);
+    $("app").hidden = true;
+    const who = signedInEmail ?? "This account";
+    let message = `${who} has no access to this dashboard. Sign in with an allowed Google account.`;
+    // A failed sign-out must not strand the page behind a hidden #app: the
+    // login screen still works, since a new popup sign-in replaces the session.
+    try {
+        await logout();
+        setUser(null);
+    } catch (err) {
+        message += ` (Signing out failed: ${err?.message ?? err})`;
+    }
+    setUser(await promptSignIn(message));
+    awaitingSignIn = false;
+    $("app").hidden = false;
+    refresh({ force: true });
+}
+
+// refresh() can't await regate() (it waits on a click), so failures land here
+// rather than as an unhandled rejection: undo the gate and say what happened.
+function startRegate() {
+    regate().catch(err => {
+        awaitingSignIn = false;
+        $("login").hidden = true;
+        $("app").hidden = false;
+        setStatus(`sign-in failed: ${err?.message ?? err}`);
+    });
+}
 
 function onHashChange() {
     const prev = route;
@@ -55,7 +136,7 @@ function onHashChange() {
 }
 
 async function refresh({ force = false } = {}) {
-    if (inFlight) return;
+    if (inFlight || awaitingSignIn) return;
     inFlight = true;
     $("refresh")?.toggleAttribute("disabled", true);
     const retryDelaysMs = [1000, 3000];
@@ -85,6 +166,10 @@ async function refresh({ force = false } = {}) {
                 }
                 return;
             } catch (err) {
+                // Retrying can't fix a rules denial; it needs a different account.
+                // regate() sets awaitingSignIn synchronously, so the finally below
+                // won't schedule a poll behind the login screen.
+                if (err?.code === "permission-denied") { startRegate(); return; }
                 if (attempt >= retryDelaysMs.length) {
                     setStatus(String(err.message ?? err));
                     return;
@@ -95,7 +180,7 @@ async function refresh({ force = false } = {}) {
     } finally {
         inFlight = false;
         $("refresh")?.toggleAttribute("disabled", false);
-        if (!DEMO) scheduleNextPoll();
+        if (!DEMO && !awaitingSignIn) scheduleNextPoll();
     }
 }
 
@@ -141,6 +226,9 @@ function bindControls() {
         if (btn && SHARDS.includes(btn.dataset.shard)) go({ shard: btn.dataset.shard });
     });
     $("refresh")?.addEventListener("click", () => refresh({ force: true }));
+    // Reload rather than tear down in place: it resets every poll, timer and
+    // cached row, and boot() then lands on the login screen.
+    $("sign-out").addEventListener("click", () => logout().then(() => location.reload()));
     $("room-select").addEventListener("change", e => go({ view: ROOM, room: e.target.value }));
     window.addEventListener("hashchange", onHashChange);
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => latest && renderAll());
@@ -163,7 +251,12 @@ export async function boot() {
         $("setup-notice").hidden = false;
         setStatus("not configured");
     } else {
-        if (!DEMO) await initFirestore();
+        if (!DEMO) {
+            await initFirestore();
+            // A persisted session skips the login screen. Whether that account
+            // may actually read is only known from the first fetch (see regate).
+            setUser(await waitForUser() ?? await promptSignIn());
+        }
         $("app").hidden = false;
         setRoute(readHash());        // before the first fetch: rangeHours feeds the query
         setRangeHours(route.range);

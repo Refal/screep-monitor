@@ -9,6 +9,13 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/fireba
 import {
     collection, doc, getDoc, getDocs, getFirestore, limit, orderBy, query, Timestamp, where,
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-lite.js";
+// Auth gates every Firestore read: firestore.rules only lets an allowlisted,
+// verified Google account list snapshots or read meta (the web apiKey is
+// public and authorizes nothing — see README "Access control"). Firestore
+// Lite picks up the signed-in user's ID token from this same app instance.
+import {
+    getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut,
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import {
     bucketId, detectGaps, downsample, LOD_BUCKET_MS, LOD_BY_RANGE, RAW_INTERVAL_MS, shardPaths,
 } from "./calc.js";
@@ -20,6 +27,8 @@ import {
 } from "./state.js";
 
 let db;
+
+let auth;
 
 // demo.js is excluded from deploy (see firebase.json hosting.ignore), so this
 // must stay a dynamic import reached only when ?demo=1 is set — a static one
@@ -134,8 +143,27 @@ export async function initFirestore() {
             isTokenAutoRefreshEnabled: true,
         });
     }
+    auth = getAuth(app);
     db = getFirestore(app);
 }
+
+// Resolves with the persisted user (or null) once Auth has restored its
+// session from IndexedDB — before that, currentUser reads null even for a
+// signed-in visitor.
+export function waitForUser() {
+    return new Promise(resolve => {
+        const stop = onAuthStateChanged(auth, user => { stop(); resolve(user); });
+    });
+}
+
+// Popup, not redirect: redirect sign-in breaks in browsers that partition
+// third-party storage, since authDomain (firebaseapp.com) differs from the
+// site's own web.app origin.
+export async function signIn() {
+    return (await signInWithPopup(auth, new GoogleAuthProvider())).user;
+}
+
+export const logout = () => signOut(auth);
 
 // Drops the memoized demo series (see demoHistory) — a range switch needs a fresh one.
 export function resetDemoRows() { demoRows = null; }

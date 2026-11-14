@@ -432,3 +432,13 @@ td .muted   { color: var(--text-muted); }
     outline: 2px solid var(--series-1); outline-offset: 2px;
 }
 #refresh:disabled { opacity: .5; cursor: default; }
+
+#sign-in, #sign-out {
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-secondary);
+    border-radius: 8px; cursor: pointer; font: inherit;
+}
+#sign-in { min-height: 44px; padding: 0 16px; margin-top: 4px; color: var(--text-primary); }
+#sign-out { margin-left: auto; min-height: 32px; padding: 0 10px; font-size: 12px; }
+#sign-in:disabled { opacity: .5; cursor: default; }
+#sign-in:focus-visible, #sign-out:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+#login-error { color: var(--status-warning); margin-bottom: 0; }

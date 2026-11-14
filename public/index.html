@@ -58,7 +58,18 @@
             <button type="button" data-shard="shard3">shard3</button>
         </div>
         <span id="status">loading…</span>
+        <button id="sign-out" type="button" hidden>Sign out</button>
     </header>
+
+    <!-- Shown by controller.js promptSignIn while nobody (or a non-allowlisted
+         account) is signed in. firestore.rules is what actually keeps the data
+         private; this is only the way in. -->
+    <div id="login" class="notice" hidden>
+        <strong>Sign in to view the dashboard.</strong>
+        <p>Access is limited to approved Google accounts.</p>
+        <button id="sign-in" type="button">Sign in with Google</button>
+        <p id="login-error" role="alert" hidden></p>
+    </div>
 
     <div id="app" hidden>
         <div class="filters">

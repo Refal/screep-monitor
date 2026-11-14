@@ -27,6 +27,7 @@ const ENTRY = "app.js";
 const GSTATIC_NAMES = [
     "initializeApp", "getFirestore", "doc", "getDoc", "collection", "query", "where",
     "orderBy", "limit", "getDocs", "Timestamp", "initializeAppCheck", "ReCaptchaV3Provider",
+    "getAuth", "GoogleAuthProvider", "onAuthStateChanged", "signInWithPopup", "signOut",
 ];
 const stubSource = GSTATIC_NAMES.map(n => `export const ${n} = () => {};`).join("\n");
 const isGstatic = url => url.startsWith("https://www.gstatic.com/");
