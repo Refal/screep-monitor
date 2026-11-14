@@ -439,6 +439,14 @@ td .muted   { color: var(--text-muted); }
 }
 #sign-in { min-height: 44px; padding: 0 16px; margin-top: 4px; color: var(--text-primary); }
 #sign-out { margin-left: auto; min-height: 32px; padding: 0 10px; font-size: 12px; }
+@media (max-width: 600px) {
+    /* The header wraps here and the long status line would leave Sign out
+       stranded on a row of its own; pin it to the title row instead. */
+    header h1 { flex: 1 1 auto; }
+    #sign-out { order: 1; }
+    #shard-group { order: 2; }
+    #status { order: 3; }
+}
 #sign-in:disabled { opacity: .5; cursor: default; }
 #sign-in:focus-visible, #sign-out:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
 #login-error { color: var(--status-warning); margin-bottom: 0; }
