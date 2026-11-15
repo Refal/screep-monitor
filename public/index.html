@@ -42,6 +42,7 @@
 <link rel="modulepreload" href="ui/cells-economy.js">
 <link rel="modulepreload" href="ui/cells-labs.js">
 <link rel="modulepreload" href="ui/cells-nuker.js">
+<link rel="modulepreload" href="ui/cells-ops.js">
 <link rel="modulepreload" href="ui/format.js">
 <link rel="modulepreload" href="ui/links.js">
 <link rel="modulepreload" href="ui/table.js">
@@ -165,7 +166,7 @@
         </details>
 
         <details class="section" data-section="power">
-            <summary>Power harvesting · squads, haulers and ledger</summary>
+            <summary>Power harvesting · squads, haulers and ops</summary>
         <div class="tiles" id="power-tiles"></div>
         <h3 class="sub-head">Squads and haulers out</h3>
         <div class="table-wrap">
@@ -174,9 +175,9 @@
                 <tbody></tbody>
             </table>
         </div>
-        <h3 class="sub-head">Power ledger · per home</h3>
+        <h3 class="sub-head">Power ops</h3>
         <div class="table-wrap">
-            <table id="power-ledger-table">
+            <table id="power-ops-table">
                 <thead></thead>
                 <tbody></tbody>
             </table>
@@ -185,21 +186,21 @@
             <span>a bank room is a highway room — the name links to screeps.com, not to a per-room view</span>
             <span>one row per squad and per bank’s haulers; rows marked “gone” are banks our own kill already removed from intel while the creeps are still loading or on the way home</span>
             <span>live-bank planner state (hits, decay, contest, verdicts) is not published — the bot’s debugPowerBanks() console command shows it</span>
-            <span>the ledger books spend at spawn and at the lab and power on delivery, so a young op shows its cost before its power</span>
+            <span>one row per power-bank op (all waves and haulers of a bank room), newest first; the last 20 finished are kept; start and end link to the bank room's history at that tick; spend is booked at spawn and the lab, power on delivery, so a young op shows its cost before its power</span>
         </div>
         </details>
 
         <details class="section" data-section="deposit">
-            <summary>Deposit harvesting · ledger per home (latest snapshot)</summary>
+            <summary>Deposit ops (latest snapshot)</summary>
         <div class="tiles" id="deposit-tiles"></div>
         <div class="table-wrap">
-            <table id="deposit-ledger-table">
+            <table id="deposit-ops-table">
                 <thead></thead>
                 <tbody></tbody>
             </table>
         </div>
         <div class="viz-legend">
-            <span>the ledger books spend at spawn and deposits on delivery, so a “running” op's energy / unit is front-loaded and falls as hauling goes on; it is final once the op has finished</span>
+            <span>one row per home and deposit room, newest first; the last 20 finished are kept; start and end link to the deposit room's history at that tick; spend is booked at spawn and deposits on delivery, so an active op's yield rises as hauling goes on</span>
             <span>deposit creeps are never boosted, so energy is the only cost</span>
             <span>units are summed across deposit types, so the ratio is energy per unit hauled, not per unit of value</span>
         </div>

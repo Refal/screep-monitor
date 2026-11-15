@@ -2,7 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-    unseenEntries, interpolateTimestamps, assignLodFlags, buildSnapshotDoc, mergeBuckets, bucketSegmentIds, parseSegment, parseShards, runShards,
+    unseenEntries, interpolateTimestamps, assignLodFlags, buildSnapshotDoc, buildLatestDoc, mergeBuckets, bucketSegmentIds, parseSegment, parseShards, runShards,
 } from "../scripts/collect.mjs";
 import { LOD_BUCKET_MS, SHARDS } from "../public/calc.js";
 
@@ -280,20 +280,18 @@ describe("buildSnapshotDoc", () => {
         assert.deepEqual(buildSnapshotDoc({ ...entry(100), tsMs: 0, rl }).rl, rl);
     });
 
-    test("power ledger: pwl omit-on-empty, pass through whole", () => {
-        const bare = buildSnapshotDoc({ ...entry(100), tsMs: 0 });
-        assert.equal("pwl" in bare, false);
-        assert.equal("pwl" in buildSnapshotDoc({ ...entry(100), tsMs: 0, pwl: [] }), false);
-        const pwl = [{ h: "W1N1", p: 4000, e: 52000, c: { XUH2O: 900 }, w: 11200 }];
-        assert.deepEqual(buildSnapshotDoc({ ...entry(100), tsMs: 0, pwl }).pwl, pwl);
+    test("op log: ops never lands on a snapshot doc, only on meta/latest", () => {
+        const ops = [{ k: "power", h: "W1N1", rm: "W5N0", s: 100, e: 900, en: 52000, g: { power: 4000 }, c: { XUH2O: 900 } }];
+        assert.equal("ops" in buildSnapshotDoc({ ...entry(100), tsMs: 0, ops }), false);
+        const newest = buildSnapshotDoc({ ...entry(100), tsMs: 0 });
+        assert.deepEqual(buildLatestDoc(newest, {}, { ops }).ops, ops);
+        assert.deepEqual(buildLatestDoc(newest, {}, { ops: [] }).ops, []);
+        assert.equal("ops" in buildLatestDoc(newest, {}, {}), false);
     });
 
-    test("deposit ledger: dpl omit-on-empty, pass through whole", () => {
-        const bare = buildSnapshotDoc({ ...entry(100), tsMs: 0 });
-        assert.equal("dpl" in bare, false);
-        assert.equal("dpl" in buildSnapshotDoc({ ...entry(100), tsMs: 0, dpl: [] }), false);
-        const dpl = [{ h: "W1N1", e: 18000, d: { silicon: 2400, mist: 300 }, w: 11200 }];
-        assert.deepEqual(buildSnapshotDoc({ ...entry(100), tsMs: 0, dpl }).dpl, dpl);
+    test("op log: the merged head payload keeps ops", () => {
+        const ops = [{ k: "deposit", h: "W1N1", rm: "W0N3", s: 1, en: 2, g: {} }];
+        assert.deepEqual(mergeBuckets({ t: 1, ops }, [[]]).ops, ops);
     });
 
     test("deposit ops: dpo absent stays absent, empty passes through, rows pass through whole", () => {

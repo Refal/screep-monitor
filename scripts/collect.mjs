@@ -4,7 +4,7 @@
  * locally.
  *
  * Payload shape: segment SEGMENT holds a manifest+head snapshot
- * (t, gcl, gpl, cpu, cr, rooms, bmax?, rt?, ar?, pb?, ph?, pba, dv?, sv?, pc?, rl?, pwl?, dpl?, dpo?, buckets), where `buckets`
+ * (t, gcl, gpl, cpu, cr, rooms, bmax?, rt?, ar?, pb?, ph?, pba, dv?, sv?, pc?, rl?, dpo?, buckets), where `buckets`
  * is how many history bucket segments the bot keeps, at
  * SEGMENT+1 .. SEGMENT+buckets. Each bucket is a JSON array of the snapshots
  * published during one fixed window of game ticks (oldest first); the bot
@@ -32,9 +32,9 @@
  *                                    not separately configured)
  *
  * Firestore layout (per shard; see shardPaths in public/calc.js):
- *   shards/<shard>/snapshots/<autoId>  { ts, tick, gcl, gpl?, cpu, cr, rooms, bmax?, rt?, ar?, pb?, ph?, pba?, dv?, sv?, pc?, rl?, pwl?, dpl?, dpo?,
+ *   shards/<shard>/snapshots/<autoId>  { ts, tick, gcl, gpl?, cpu, cr, rooms, bmax?, rt?, ar?, pb?, ph?, pba?, dv?, sv?, pc?, rl?, dpo?,
  *                         b5?, b30?, b120? }
- *   shards/<shard>/meta/latest         same shape, plus `lod` (bucket-tracking state); also
+ *   shards/<shard>/meta/latest         same shape, plus `lod` (bucket-tracking state) and `ops?` (op log); also
  *                       used to dedup by tick and to trigger the once-a-day
  *                       retention sweep
  *
@@ -229,6 +229,12 @@ export function assignLodFlags(entries, prevLod) {
     return { docs, lod };
 }
 
+/** The meta/latest doc: the newest snapshot doc plus `lod` and, when the head carries it, the op log.
+ * `ops` rides the segment-90 head only, so it lands here and never on snapshot docs. */
+export function buildLatestDoc(newestDoc, lod, payload) {
+    return { ...newestDoc, lod, ...(Array.isArray(payload.ops) ? { ops: payload.ops } : {}) };
+}
+
 /** Maps one flagged entry (from assignLodFlags) to the Firestore doc shape. */
 export function buildSnapshotDoc(entry) {
     const doc = {
@@ -273,10 +279,6 @@ export function buildSnapshotDoc(entry) {
         // Remote energy ledger: omit-on-empty like `rt`/`ar`, and it rides the
         // same first degradation step, so absence needs hasThreatDetail to read.
         ...(entry.rl?.length ? { rl: entry.rl } : {}),
-        // Power ledger: per-home rows, same contract and degradation step as `rl`.
-        ...(entry.pwl?.length ? { pwl: entry.pwl } : {}),
-        // Deposit ledger: per-home rows, same contract and degradation step as `pwl`.
-        ...(entry.dpl?.length ? { dpl: entry.dpl } : {}),
         // Open deposit ops: kept even when empty — `[]` is "no op running", while a
         // missing field is a bot that predates `dpo`. Never degraded by the bot.
         ...(Array.isArray(entry.dpo) ? { dpo: entry.dpo } : {}),
@@ -334,7 +336,7 @@ async function collectShard(db, shard) {
         newestDoc = buildSnapshotDoc(entry);
         batch.set(snapshots.doc(), newestDoc);
     }
-    batch.set(latestRef, { ...newestDoc, lod });
+    batch.set(latestRef, buildLatestDoc(newestDoc, lod, payload));
     await batch.commit();
 
     const ringDepth = payload.h?.length ?? 0;

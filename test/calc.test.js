@@ -19,7 +19,7 @@ import {
     DEFENSE_VERDICT, SIEGE_VERDICT, DEFENSE_SKIP, defenseSkipInfo, defenseVerdictFor, remoteResponse, siegeVerdictFor, worstTone,
     powerGateState, powerFleetRows, haulerSummary, powerStockPoint, powerStockSeries,
     campaigns, campaignTrend, campaignVerdict, campaignPhaseInfo, campaignHoldText, campaignSafeModeText, campaignStarve, campaignSpend, campaignNow,
-    remoteLedgerRows, remoteLedgerSummary, LEDGER_MATURE_TICKS, powerLedgerRows, depositLedgerRows,
+    remoteLedgerRows, remoteLedgerSummary, LEDGER_MATURE_TICKS, opRows,
 } from "../public/calc.js";
 import { degradeLatest } from "../public/demo.js";
 
@@ -1845,7 +1845,7 @@ describe("armyOperations", () => {
     });
 });
 
-// --- Power harvesting (ar power squads / ph / pba / pw / pwl) -------------
+// --- Power harvesting (ar power squads / ph / pba / pw) -------------
 
 describe("powerGateState", () => {
     test("separates gate-off from a snapshot that never carried the field", () => {
@@ -2084,140 +2084,60 @@ describe("remote ledger", () => {
     });
 });
 
-describe("depositLedgerRows", () => {
-    const snap = dpl => ({ rooms: { W1N1: { thr: { h: 0 } } }, dpl });
+describe("opRows", () => {
+    const TICK = 5000;
+    const op = (extra = {}) => ({ k: "power", h: "W1N1", rm: "W5N0", s: 1000, en: 40000, g: { power: 2000 }, ...extra });
+    const snap = ops => ({ tick: TICK, ops });
 
-    test("deposits are totalled across types, sorted, and rates divide by the row's window", () => {
-        const [r] = depositLedgerRows(snap([{ h: "W1N1", e: 24000, d: { silicon: 2000, biomass: 1000 }, w: 12000 }])).rows;
-        assert.deepEqual(r.deposits, [["biomass", 1000], ["silicon", 2000]]);
-        assert.equal(r.total, 3000);
-        assert.equal(r.depositRate, 0.25);
-        assert.equal(r.energyRate, 2);
-        assert.equal(r.energyPerUnit, 8);
+    test("a finished op reads its own duration, totals and yield per 1k energy", () => {
+        const [r] = opRows(snap([op({ e: 3000, g: { power: 1500, ZK: 500 } })]), "power");
+        assert.equal(r.status, "finished");
+        assert.equal(r.duration, 2000);
+        assert.equal(r.e, 3000);
+        assert.equal(r.gotTotal, 2000);
+        assert.deepEqual(r.got, [["power", 1500], ["ZK", 500]]);
+        assert.equal(r.yieldPer1k, (2000 / 40000) * 1000);
     });
 
-    test("no `d` yet is an empty list and a null ratio, not Infinity", () => {
-        const [r] = depositLedgerRows(snap([{ h: "W1N1", e: 900, w: 300 }])).rows;
-        assert.deepEqual(r.deposits, []);
-        assert.equal(r.total, 0);
-        assert.equal(r.energyPerUnit, null);
+    test("an open op measures its duration against the latest tick", () => {
+        const [r] = opRows(snap([op()]), "power");
+        assert.equal(r.status, "active");
+        assert.equal(r.e, null);
+        assert.equal(r.duration, TICK - 1000);
     });
 
-    test("the ratio shows from the first delivery, however young the window; w of 0 gives zero rates", () => {
-        const { rows } = depositLedgerRows(snap([
-            { h: "W1N1", e: 900, w: 300 },
-            { h: "W2N1", e: 2000, d: { metal: 10 }, w: 400 },
-            { h: "W3N1", e: 5, d: { mist: 50 }, w: 0 },
-        ]));
-        // rows with a ratio first, most units first; the no-delivery row last
-        assert.deepEqual(rows.map(r => [r.home, r.energyPerUnit]), [["W3N1", 0.1], ["W2N1", 200], ["W1N1", null]]);
-        assert.equal(rows[0].depositRate, 0);
-        assert.equal(rows[0].energyRate, 0);
+    test("no energy booked yields no ratio", () => {
+        assert.equal(opRows(snap([op({ en: 0 })]), "power")[0].yieldPer1k, null);
     });
 
-    test("op status: active when dpo lists the home, finished when not, unknown without dpo", () => {
-        const dpl = [{ h: "W1N1", e: 1, d: { metal: 1 }, w: 1 }, { h: "W2N1", e: 1, d: { metal: 1 }, w: 1 }];
-        const dpo = [{ h: "W1N1", rm: "W0N5", t: "metal", s: 100 }, { h: "W9N9", rm: "W0N9", t: "mist", s: 50 }, { rm: "bad" }];
-        const known = depositLedgerRows({ ...snap(dpl), dpo });
-        assert.deepEqual(known.rows.map(r => [r.home, r.op, r.ops.length]), [["W1N1", "active", 1], ["W2N1", "finished", 0]]);
-        assert.equal(known.ops.length, 2);   // the home with no ledger row yet still counts
-        assert.deepEqual(depositLedgerRows({ ...snap(dpl), dpo: [] }).rows.map(r => r.op), ["finished", "finished"]);
-        const legacy = depositLedgerRows(snap(dpl));
-        assert.deepEqual(legacy.rows.map(r => r.op), ["unknown", "unknown"]);
-        assert.equal(legacy.ops, null);
+    test("kinds are separated, boost compounds sorted, newest start first", () => {
+        const latest = snap([
+            op({ s: 10, rm: "W1N5", c: { XUH2O: 300, XGHO2: 120 } }),
+            op({ s: 30, rm: "W3N5" }),
+            op({ s: 20, rm: "W2N5", k: "deposit", g: { mist: 4 } }),
+        ]);
+        const power = opRows(latest, "power");
+        assert.deepEqual(power.map(r => r.rm), ["W3N5", "W1N5"]);
+        assert.deepEqual(power[1].compounds, [["XGHO2", 120], ["XUH2O", 300]]);
+        assert.deepEqual(opRows(latest, "deposit").map(r => r.rm), ["W2N5"]);
     });
 
-    test("dpo survives a degraded snapshot that dropped dpl", () => {
-        const { rows, absent, ops } = depositLedgerRows({ rooms: { W1N1: {} }, dpo: [{ h: "W1N1", rm: "W0N5", t: "metal", s: 1 }] });
-        assert.deepEqual([rows, absent, ops.length], [[], "unknown", 1]);
+    test("malformed rows are skipped", () => {
+        const rows = opRows(snap([op({ h: 3 }), op({ s: "x" }), op({ en: undefined }), null, op()]), "power");
+        assert.equal(rows.length, 1);
     });
 
-    test("absent dpl reads as none when threat detail survived, unknown when degraded", () => {
-        assert.equal(depositLedgerRows(snap(undefined)).absent, "none");
-        assert.equal(depositLedgerRows({ rooms: { W1N1: {} } }).absent, "unknown");
-        assert.equal(depositLedgerRows(null).absent, "unknown");
-        assert.deepEqual(depositLedgerRows(snap([])), { rows: [], absent: null, ops: null });
+    test("absent, empty or non-array ops read as no rows, never as unknown", () => {
+        for (const latest of [null, {}, { ops: [] }, { ops: "bad" }]) assert.deepEqual(opRows(latest, "power"), []);
     });
 
-    test("malformed rows are dropped and non-numeric deposit units ignored", () => {
-        const { rows } = depositLedgerRows(snap([
-            { e: 1, w: 1 },
-            { h: "W1N1", e: "x", w: 1 },
-            { h: "W2N1", e: 1, d: { silicon: 4, metal: "x" }, w: 1 },
-        ]));
-        assert.deepEqual(rows.map(r => [r.home, r.total]), [["W2N1", 4]]);
+    test("an open op with no current tick has no duration", () => {
+        assert.equal(opRows({ ops: [op()] }, "power")[0].duration, null);
     });
 
-    test("the demo's degraded row drops dpl, so it reads unknown", () => {
-        const rows = [{ rooms: { W1N1: { thr: { h: 0 }, roles: {} } }, dpl: [{ h: "W1N1", e: 1, w: 1 }] }];
-        assert.equal(depositLedgerRows(degradeLatest(rows).at(-1)).absent, "unknown");
-    });
-});
-
-describe("powerLedgerRows", () => {
-    const snap = pwl => ({ rooms: { W1N1: { thr: { h: 0 } } }, pwl });
-
-    test("rates divide by each row's own window, ratio is energy per power", () => {
-        const [r] = powerLedgerRows(snap([{ h: "W1N1", p: 3000, e: 30000, w: 12000 }])).rows;
-        assert.equal(r.powerRate, 0.25);
-        assert.equal(r.energyRate, 2.5);
-        assert.equal(r.energyPerPower, 10);
-        assert.deepEqual(r.compounds, []);
-    });
-
-    test("no power delivered yet is a null ratio, not Infinity", () => {
-        assert.equal(powerLedgerRows(snap([{ h: "W1N1", p: 0, e: 900, w: 300 }])).rows[0].energyPerPower, null);
-    });
-
-    test("no maturity gate: a short window keeps its ratio; ratio rows first; w of 0 gives zero rates", () => {
-        const { rows } = powerLedgerRows(snap([
-            { h: "W1N1", p: 0, e: 900, w: 300 },
-            { h: "W2N1", p: 6600, e: 60200, w: 2000 },
-            { h: "W3N1", p: 5, e: 5, w: 0 },
-        ]));
-        assert.deepEqual(rows.map(r => r.home), ["W2N1", "W3N1", "W1N1"]);
-        assert.equal(rows[0].energyPerPower, 60200 / 6600);
-        assert.equal(rows[1].powerRate, 0);
-    });
-
-    test("op is active while the home has a live squad or a live hauler group on its bank", () => {
-        const pwl = [{ h: "W1N1", p: 1, e: 1, w: 1 }, { h: "W2N1", p: 1, e: 1, w: 1 }, { h: "W3N1", p: 1, e: 1, w: 1 }];
-        const ar = [
-            { home: "W1N1", target: "W5N5", kind: "offense", sq: [sq({ id: 1, pw: 1 })] },
-            { home: "W2N1", target: "W6N6", kind: "offense", sq: [sq({ id: 2, pw: 1 })] },
-        ];
-        const op = latest => Object.fromEntries(powerLedgerRows(latest).rows.map(r => [r.home, r.op]));
-        assert.deepEqual(op({ ...snap(pwl), ar }), { W1N1: "active", W2N1: "active", W3N1: "finished" });
-        // W6N6's bank is gone (ph without lv): squad and haulers no longer live.
-        assert.deepEqual(op({ ...snap(pwl), ar, ph: [{ rm: "W6N6", hl: [1, 0, 0] }] }),
-            { W1N1: "active", W2N1: "finished", W3N1: "finished" });
-        assert.equal(op(snap(pwl)).W1N1, "finished");
-    });
-
-    test("compounds become a list sorted by compound", () => {
-        const [r] = powerLedgerRows(snap([{ h: "W1N1", p: 1, e: 1, w: 1, c: { XUH2O: 300, XGHO2: 120 } }])).rows;
-        assert.deepEqual(r.compounds, [["XGHO2", 120], ["XUH2O", 300]]);
-    });
-
-    test("absent pwl reads as none when threat detail survived, unknown when degraded", () => {
-        assert.equal(powerLedgerRows(snap(undefined)).absent, "none");
-        assert.equal(powerLedgerRows({ rooms: { W1N1: {} } }).absent, "unknown");
-        assert.equal(powerLedgerRows(null).absent, "unknown");
-        assert.deepEqual(powerLedgerRows(snap([])), { rows: [], absent: null });
-    });
-
-    test("malformed rows are dropped instead of throwing", () => {
-        const { rows } = powerLedgerRows(snap([
-            { p: 1, e: 1, w: 1 },
-            { h: "W1N1", p: "x", e: 1, w: 1 },
-            { h: "W2N1", p: 1, e: 1, w: 1 },
-        ]));
-        assert.deepEqual(rows.map(r => r.home), ["W2N1"]);
-    });
-
-    test("the demo's degraded row drops pwl, so it reads unknown", () => {
-        const rows = [{ rooms: { W1N1: { thr: { h: 0 }, roles: {} } }, pwl: [{ h: "W1N1", p: 1, e: 1, w: 1 }] }];
-        assert.equal(powerLedgerRows(degradeLatest(rows).at(-1)).absent, "unknown");
+    test("the demo's degraded row keeps ops (they are never degraded)", () => {
+        const rows = [{ rooms: { W1N1: { thr: { h: 0 }, roles: {} } }, tick: TICK, ops: [op()] }];
+        assert.equal(opRows(degradeLatest(rows).at(-1), "power").length, 1);
     });
 });
 

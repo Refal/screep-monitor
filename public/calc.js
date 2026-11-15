@@ -1508,97 +1508,38 @@ export function remoteLedgerSummary(latest) {
     };
 }
 
-// Power harvesting ledger (`pwl`): per home, power its haulers delivered (`p`)
-// against the energy power ops cost it (`e`: squad and hauler spawn bodies plus
-// lab boost energy) and the boost compounds consumed (`c`), over `w` ticks. The
-// same bucket ring as `rl`, so `w` is per row. `pwl` rides the same
-// degradation step as `rl`, so absence reads the same way.
-//
-// No maturity gate, as with `dpl`: an op is over long before
-// LEDGER_MATURE_TICKS, so the ratio is read from the first delivery. Spend is
-// booked at spawn and at the lab, power on delivery, so while the op runs the
-// figure is front-loaded. The live fleet tells the two apart: a home is
-// "active" while one of its squads is live, or a live hauler group sits in a
-// room one of its squads targets. `ar` and `ph` degrade with `pwl`, so there is
-// no "unknown" reading here.
-export function powerLedgerRows(latest) {
-    if (!latest?.pwl) return { rows: [], absent: hasThreatDetail(latest ?? {}) ? "none" : "unknown" };
-    const fleet = powerFleetRows(latest);
-    const squadRooms = new Map();
-    for (const u of fleet) {
-        if (u.kind !== "squad") continue;
-        if (!squadRooms.has(u.home)) squadRooms.set(u.home, new Set());
-        squadRooms.get(u.home).add(u.rm);
-    }
-    const isActive = home => fleet.some(u => u.live
-        && (u.kind === "squad" ? u.home === home : squadRooms.get(home)?.has(u.rm)));
-    const rows = latest.pwl
-        .filter(r => typeof r?.h === "string"
-            && Number.isFinite(r.p) && Number.isFinite(r.e) && Number.isFinite(r.w))
-        .map(r => ({
-            home: r.h, p: r.p, e: r.e, w: r.w,
-            powerRate: r.w > 0 ? r.p / r.w : 0,
-            energyRate: r.w > 0 ? r.e / r.w : 0,
-            energyPerPower: r.p > 0 ? r.e / r.p : null,
-            compounds: Object.entries(r.c ?? {})
-                .filter(([, units]) => Number.isFinite(units))
-                .sort(([a], [b]) => a.localeCompare(b)),
-            op: isActive(r.h) ? "active" : "finished",
-        }))
-        // Rows with a ratio first, then the homes bringing in the most power.
-        .sort((a, b) => (b.energyPerPower != null) - (a.energyPerPower != null)
-            || b.p - a.p || cmpRoom(a.home, b.home));
-    return { rows, absent: null };
-}
-
-// Deposit harvesting ledger (`dpl`): per home, the energy deposit ops cost it
-// (`e`: harvester and hauler spawn bodies) against the deposit units its
-// haulers handed over at home (`d`, per type, omitted before the first
-// delivery), over `w` ticks. screeps2 docs/stats-history-ring.md ("Deposit
-// harvesting") is the contract. Same bucket ring and degradation step as
-// `pwl`, so absence reads the same way. Deposit creeps are never boosted, so
-// there is no compound column. Units are summed across types for the ratio:
-// energy per unit hauled, not per unit of value.
-//
-// No maturity gate: an op is over long before LEDGER_MATURE_TICKS, so the
-// ratio is read from the first delivery. What tells a running ratio (spend
-// still front-loaded) from a final one is `dpo`, the bot's open ops. It is
-// always published and never degraded, so a home missing from it has
-// finished; `dpo` itself missing is a snapshot from before the bot shipped it.
-export function depositOps(latest) {
-    return Array.isArray(latest?.dpo)
-        ? latest.dpo.filter(o => typeof o?.h === "string" && typeof o.rm === "string")
-        : null;
-}
-
-export function depositLedgerRows(latest) {
-    const ops = depositOps(latest);
-    if (!latest?.dpl) return { rows: [], absent: hasThreatDetail(latest ?? {}) ? "none" : "unknown", ops };
-    const rows = latest.dpl
-        .filter(r => typeof r?.h === "string" && Number.isFinite(r.e) && Number.isFinite(r.w))
-        .map(r => {
-            const deposits = Object.entries(r.d ?? {})
+// Per-operation log (`ops`, screeps2 docs/stats-history-ring.md "Op log"): one
+// row per power-bank or deposit op, newest start first. `e` is absent while the
+// op is open. `ops` is never degraded, so a missing or empty list just means no
+// op has been logged yet. Spend is booked at spawn and at the lab and income on
+// delivery, so an active op's yield is front-loaded and rises as hauling goes on.
+export function opRows(latest, kind) {
+    const ops = Array.isArray(latest?.ops) ? latest.ops : [];
+    return ops
+        .filter(o => o?.k === kind && typeof o.h === "string" && typeof o.rm === "string"
+            && Number.isFinite(o.s) && Number.isFinite(o.en))
+        .map(o => {
+            const got = Object.entries(o.g ?? {})
                 .filter(([, units]) => Number.isFinite(units))
                 .sort(([a], [b]) => a.localeCompare(b));
-            const total = deposits.reduce((sum, [, units]) => sum + units, 0);
-            const homeOps = ops ? ops.filter(o => o.h === r.h) : [];
+            const gotTotal = got.reduce((sum, [, units]) => sum + units, 0);
+            const finished = Number.isFinite(o.e);
             return {
-                home: r.h, e: r.e, w: r.w, deposits, total,
-                depositRate: r.w > 0 ? total / r.w : 0,
-                energyRate: r.w > 0 ? r.e / r.w : 0,
-                energyPerUnit: total > 0 ? r.e / total : null,
-                op: ops == null ? "unknown" : homeOps.length ? "active" : "finished",
-                ops: homeOps,
+                kind, home: o.h, rm: o.rm, s: o.s, e: finished ? o.e : null,
+                en: o.en, gotTotal, got,
+                compounds: Object.entries(o.c ?? {})
+                    .filter(([, units]) => Number.isFinite(units))
+                    .sort(([a], [b]) => a.localeCompare(b)),
+                status: finished ? "finished" : "active",
+                duration: Number.isFinite(finished ? o.e : latest?.tick) ? (finished ? o.e : latest.tick) - o.s : null,
+                yieldPer1k: o.en > 0 ? (gotTotal / o.en) * 1000 : null,
             };
         })
-        // Rows with a ratio first, then the homes bringing in the most deposits.
-        .sort((a, b) => (b.energyPerUnit != null) - (a.energyPerUnit != null)
-            || b.total - a.total || cmpRoom(a.home, b.home));
-    return { rows, absent: null, ops };
+        .sort((a, b) => b.s - a.s || cmpRoom(a.home, b.home) || cmpRoom(a.rm, b.rm));
 }
 
 // ---------------------------------------------------------------------------
-// Power harvesting (ph / pba / pw / pwl + power squads in `ar`).
+// Power harvesting (ph / pba / pw + power squads in `ar`).
 // screeps2/src/manager/StatsManager.ts publishes it; docs/stats-history-ring.md
 // ("Power harvesting") is the field-by-field contract these mirror. Live-bank
 // planner state (hits, decay, contest, verdicts) is NOT published — the bot's
@@ -1619,9 +1560,9 @@ export function depositLedgerRows(latest) {
 //          no degradation step, so its history is complete going forward (the
 //          `gpl` case); the only gap is the ticks before the collector began
 //          persisting it, which cannot be backfilled.
-//  - `pwl` the ledger above.
+//  - `ops` the op log above.
 //
-// `ar`/`ph`/`pwl` ride DEGRADATION_STEPS[0] with roles/thr/rt, so absence is
+// `ar`/`ph` ride DEGRADATION_STEPS[0] with roles/thr/rt, so absence is
 // read through hasThreatDetail exactly as `rt` is.
 
 // Which of the three readings a snapshot's gate carries. Deliberately not a

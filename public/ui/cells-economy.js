@@ -1,5 +1,5 @@
 // Remote-economy columns and formatters shared by the overview section and the room view.
-import { compact, fmtDuration, LEDGER_MATURE_TICKS, observedMsPerTick, remoteLedgerRows } from "../calc.js";
+import { fmtDuration, LEDGER_MATURE_TICKS, observedMsPerTick, remoteLedgerRows } from "../calc.js";
 import { $, fmtInt } from "../dom.js";
 import { history, latest } from "../state.js";
 import { roomLinkCell } from "./links.js";
@@ -34,13 +34,6 @@ function economyNetPerCreepCell(row) {
     if (row.netPerCreep == null) return naCell("—","no civil creeps requested for this remote right now");
     const td = textCell(fmtSignedRate(row.netPerCreep), row.netPerCreep < 0 ? "short" : undefined);
     td.title = `${fmtSignedRate(row.netRate)} /tick ÷ ${fmtInt.format(row.civil)} requested creep${row.civil === 1 ? "" : "s"}`;
-    return td;
-}
-
-// A per-home ledger total, with the exact figure and its per-tick rate on hover.
-export function ledgerAmountCell(total, rate, unit, w) {
-    const td = textCell(compact(total));
-    td.title = `${fmtInt.format(total)} ${unit} over ${fmtInt.format(w)} ticks · ${fmtRate.format(rate)} /tick`;
     return td;
 }
 

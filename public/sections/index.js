@@ -7,9 +7,9 @@ import { renderAttackLog } from "./attacks.js";
 import { renderBoostMatrix, renderLabsTable } from "./boosts.js";
 import { renderCampaignCharts, renderCampaignTable, renderCampaignTiles } from "./campaigns.js";
 import { renderDefenseTable, renderDefenseTiles } from "./defense.js";
-import { renderDepositLedgerTable, renderDepositTiles } from "./deposit.js";
+import { renderDepositOpsTable, renderDepositTiles } from "./deposit.js";
 import { renderEmpireCharts } from "./overview.js";
-import { renderPowerFleetTable, renderPowerLedgerTable, renderPowerTiles } from "./power.js";
+import { renderPowerFleetTable, renderPowerOpsTable, renderPowerTiles } from "./power.js";
 import { renderRemoteEconomyTiles } from "./remote-economy.js";
 import { renderCorridorLog, renderRemoteLog, renderRemoteTable, renderRemoteTiles } from "./remote.js";
 import { renderRoomsTable } from "./rooms.js";
@@ -28,8 +28,8 @@ export const SECTIONS = [
     { id: "defense",    render: () => { renderDefenseTiles(); renderDefenseTable(); } },
     { id: "army",       render: () => { renderArmyTiles(); renderArmyTable(); } },
     { id: "campaigns",  render: () => { renderCampaignTiles(); renderCampaignTable(); renderCampaignCharts(); } },
-    { id: "power",      render: () => { renderPowerTiles(); renderPowerFleetTable(); renderPowerLedgerTable(); } },
-    { id: "deposit",    render: () => { renderDepositTiles(); renderDepositLedgerTable(); } },
+    { id: "power",      render: () => { renderPowerTiles(); renderPowerFleetTable(); renderPowerOpsTable(); } },
+    { id: "deposit",    render: () => { renderDepositTiles(); renderDepositOpsTable(); } },
     { id: "boosts",     render: renderBoostMatrix },
     { id: "labs",       render: renderLabsTable },
     { id: "rooms",      render: renderRoomsTable },

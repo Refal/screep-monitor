@@ -1,16 +1,15 @@
 // Power harvesting section.
 import {
-    compact, hasThreatDetail, haulerSummary, observedMsPerTick,
-    powerFleetRows, powerGateState, powerLedgerRows, powerStockPoint, roomUrl,
+    compact, hasThreatDetail, haulerSummary,
+    opRows, powerFleetRows, powerGateState, powerStockPoint, roomUrl,
 } from "../calc.js";
 import { cssVar, fmtInt } from "../dom.js";
-import { currentShard, history, latest } from "../state.js";
+import { currentShard, latest } from "../state.js";
 import { pluralCount } from "../ui/cells-defense.js";
-import { fmtRate, ledgerAmountCell, ledgerWindowCell } from "../ui/cells-economy.js";
-import { chipsCell } from "../ui/cells-labs.js";
-import { makeBadge, roomLink, roomLinkCell } from "../ui/links.js";
+import { makeBadge, roomLink } from "../ui/links.js";
 import { naCell, renderTable, textCell } from "../ui/table.js";
 import { renderTileRow } from "../ui/tiles.js";
+import { opColumns } from "../ui/cells-ops.js";
 
 // autoHarvest gate and stock tiles, one row per power squad and hauler group
 // out on the map, and the per-home ledger of power in against energy out.
@@ -167,63 +166,12 @@ export function renderPowerFleetTable() {
             : POWER_ABSENCE.unknown);
 }
 
-// Shown from the first delivery. While the op is live the spend is
-// front-loaded (booked at spawn and lab, power on delivery), so the figure only
-// falls from here: "running" says so. Once the fleet is gone it is final.
-function ledgerRatioCell(row) {
-    if (row.energyPerPower == null) {
-        return naCell("no power yet", `${fmtInt.format(row.e)} energy spent and no power delivered home within the window`);
-    }
-    const sums = `${fmtInt.format(row.e)} energy out ÷ ${fmtInt.format(row.p)} power in over ${fmtInt.format(row.w)} ticks`;
-    const td = textCell(fmtRate.format(row.energyPerPower));
-    if (row.op === "active") {
-        const marker = document.createElement("span");
-        marker.className = "muted";
-        marker.textContent = " running";
-        td.append(marker);
-        td.title = `${sums} · op still live: spend is booked at spawn and lab, power on delivery, so this falls as hauling goes on`;
-    } else {
-        td.title = `${sums} · the op has ended, so this is its final figure`;
-    }
-    return td;
-}
+const POWER_OP_COLUMNS = opColumns({
+    inLabel: "Power in", unit: "power", noun: "power", withBoosts: true,
+    none: "no power delivered home yet",
+});
 
-function ledgerBoostsCell(row) {
-    if (!row.compounds.length) return naCell("none", "no boost compound consumed by power ops within the window");
-    const chips = row.compounds.map(([compound, units]) => {
-        const badge = makeBadge(cssVar("--text-muted"), `${compound} ${compact(units)}`);
-        badge.title = `${fmtInt.format(units)} ${compound} consumed boosting power-op creeps`;
-        return badge;
-    });
-    // The badges already print compound and amount, so no card-mode text copy.
-    return chipsCell(chips);
-}
-
-function ledgerColumns(msPerTick) {
-    return [
-        { key: "home", label: "Home", primary: true, sort: r => r.home, cell: r => roomLinkCell(r.home) },
-        { key: "power", label: "Power in",
-          hint: "power the home's power haulers handed over at home",
-          sort: r => r.p, cell: r => ledgerAmountCell(r.p, r.powerRate, "power", r.w) },
-        { key: "energy", label: "Energy out",
-          hint: "energy spent on power ops: spawn cost of power-bank squads and haulers, plus lab boost energy",
-          sort: r => r.e, cell: r => ledgerAmountCell(r.e, r.energyRate, "energy", r.w) },
-        { key: "ratio", label: "Energy / power",
-          hint: "energy out per unit of power in. “running” = the op's squads or haulers are still out; spend is booked at spawn, power on delivery, so the figure falls until it ends",
-          sort: r => r.energyPerPower, cell: ledgerRatioCell },
-        { key: "boosts", label: "Boosts",
-          hint: "boost compound units consumed by power-op creeps within the window",
-          cell: ledgerBoostsCell },
-        { key: "window", label: "Window", tier: 3,
-          hint: "how much game time the sums cover; a home booked recently covers less than the full ring",
-          sort: r => r.w, cell: r => ledgerWindowCell(r, msPerTick) },
-    ];
-}
-
-export function renderPowerLedgerTable() {
-    const { rows, absent } = powerLedgerRows(latest);
-    const empty = absent === "unknown"
-        ? { text: "unknown", why: "power ledger dropped from this snapshot (payload degradation)" }
-        : { text: "no power op booked yet", why: "no power squad or hauler has spawned and no power has been delivered within the ledger window" };
-    renderTable("power-ledger-table", ledgerColumns(observedMsPerTick(history)), rows, empty);
+export function renderPowerOpsTable() {
+    renderTable("power-ops-table", POWER_OP_COLUMNS, opRows(latest, "power"),
+        { text: "no power op logged yet", why: "no power squad or hauler has spawned since the bot began logging ops" });
 }

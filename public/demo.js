@@ -541,39 +541,23 @@ function demoPh(i, n) {
     return rows;
 }
 
-// Power ledger (pwl), one row per branch the table distinguishes: E15S57 a
-// home with boosts whose E15N5 squads are still live ("running"), E27S41 a
-// loot-only home (no `c`) whose E45N35 route ends at 0.9n (final figure), and
-// E18S59 young — spend booked, no power delivered yet ("no power yet").
-function demoPwl(i, f) {
-    const swing = 12000 - (i * 97) % 1500;
-    const rows = [
-        { h: "E15S57", p: Math.round(swing * 0.9), e: Math.round(swing * 11.5), c: { XUH2O: 1200, XGHO2: 600, XLHO2: 900 }, w: swing },
-        { h: "E27S41", p: Math.round(swing * 0.4), e: Math.round(swing * 2.1), w: swing },
+// Op log (ops), one row per branch the tables distinguish: power E15S57 -> E15N5
+// boosted and still open, E27S41 -> E45N35 finished loot-only (no `c`), E18S59 ->
+// E20N10 open with spend booked and nothing delivered (no yield); deposit
+// E21S41 -> E20S40 open hauling two types, E23S44 -> E22S43 finished,
+// E21S49 -> E20S50 open with nothing delivered. Never degraded, like `dpo`.
+function demoOps(tick) {
+    return [
+        { k: "power", h: "E27S41", rm: "E45N35", s: tick - 9000, e: tick - 6200, en: 7400, g: { power: 3100 } },
+        { k: "deposit", h: "E23S44", rm: "E22S43", s: tick - 7000, e: tick - 3100, en: 9100, g: { biomass: 2600 } },
+        { k: "power", h: "E15S57", rm: "E15N5", s: tick - 3400, en: 41000, g: { power: 5200 }, c: { XUH2O: 1200, XGHO2: 600, XLHO2: 900 } },
+        { k: "deposit", h: "E21S41", rm: "E20S40", s: tick - 2400, en: 10400, g: { silicon: 1800, mist: 450 } },
+        { k: "deposit", h: "E21S49", rm: "E20S50", s: tick - 600, en: 3200, g: {} },
+        { k: "power", h: "E18S59", rm: "E20N10", s: tick - 500, en: 6100, g: {}, c: { XUH2O: 300 } },
     ];
-    const w = Math.min(4000, Math.max(300, Math.round(f * 4000)));
-    rows.push({ h: "E18S59", p: 0, e: Math.round(w * 6), c: { XUH2O: 300 }, w });
-    return rows;
 }
 
-// Deposit ledger (dpl), one row per branch the table distinguishes: E21S41 a
-// home hauling two types, E23S44 a single-type home, and E21S49 young —
-// harvester and hauler spend booked, nothing delivered yet, so no `d` at all
-// ("none yet" / "no deposits yet").
-function demoDpl(i, f) {
-    const swing = 12000 - (i * 89) % 1500;
-    const rows = [
-        { h: "E21S41", e: Math.round(swing * 3.2), d: { silicon: Math.round(swing * 0.6), mist: Math.round(swing * 0.15) }, w: swing },
-        { h: "E23S44", e: Math.round(swing * 1.8), d: { biomass: Math.round(swing * 0.35) }, w: swing },
-    ];
-    const w = Math.min(3000, Math.max(300, Math.round(f * 3000)));
-    rows.push({ h: "E21S49", e: Math.round(w * 2.5), w });
-    return rows;
-}
-
-// Open deposit ops (dpo): E21S41 still running (its ratio reads "running"),
-// E23S44 absent so its op reads finished, E21S49 running with nothing
-// delivered yet. Always published and never degraded, like `pba`.
+// Open deposit ops (dpo): E21S41 and E21S49 running. Always published and never degraded, like `pba`.
 function demoDpo(tick) {
     return [
         { h: "E21S41", rm: "E20S40", t: "silicon", s: tick - 2400 },
@@ -605,11 +589,9 @@ export function degradeLatest(rows) {
     delete last.rt;
     delete last.ar;
     delete last.rl;
-    // ph/pwl/dpl ride the same degradation step; `pba` does NOT and must survive,
+    // ph rides the same degradation step; `pba` does NOT and must survive,
     // or the section reads "gate off"/"nothing out" instead of "degraded away".
     delete last.ph;
-    delete last.pwl;
-    delete last.dpl;
     return [...rows.slice(0, -1), last];
 }
 
@@ -706,8 +688,6 @@ export function synthDemo(rangeHours, maxPoints) {
         // present and no room holds power: a genuine empire-wide zero.
         const prePower = i < Math.floor(n * 0.25);
         const ph = degraded || prePower ? null : demoPh(i, n);
-        const pwl = degraded || prePower ? null : demoPwl(i, f);
-        const dpl = degraded || prePower ? null : demoDpl(i, f);
         rows.push({
             ts: { toDate: () => date }, date, tick: 76680000 + i * 120,
             // mild oscillation on top of the upward trend so the GCL/tick chart
@@ -725,8 +705,6 @@ export function synthDemo(rangeHours, maxPoints) {
             ...(ar ? { ar } : {}),
             ...(rl ? { rl } : {}),
             ...(ph?.length ? { ph } : {}),
-            ...(pwl?.length ? { pwl } : {}),
-            ...(dpl?.length ? { dpl } : {}),
             dv: demoDv(i, n),
             sv: demoSv(i, n),
             pc: demoPc(i, n),
@@ -735,7 +713,7 @@ export function synthDemo(rangeHours, maxPoints) {
             // is absent only in the pre-power stretch, where the bot had no
             // such field at all.
             ...(prePower ? {} : { pba: 1 }),
-            ...(prePower ? {} : { dpo: demoDpo(76680000 + i * 120) }),
+            ...(prePower ? {} : { dpo: demoDpo(76680000 + i * 120), ops: demoOps(76680000 + i * 120) }),
             bmax: {
                 UH: 3000, UH2O: 1000, XUH2O: 500,
                 KO: 3000, KHO2: 1000,
