@@ -6,7 +6,7 @@ import {
 import { cssVar, fmtInt } from "../dom.js";
 import { currentShard, latest } from "../state.js";
 import { pluralCount } from "../ui/cells-defense.js";
-import { makeBadge, roomLink } from "../ui/links.js";
+import { makeBadge, roomLink, roomLinkCell } from "../ui/links.js";
 import { naCell, renderTable, textCell } from "../ui/table.js";
 import { renderTileRow } from "../ui/tiles.js";
 import { opColumns } from "../ui/cells-ops.js";
@@ -140,7 +140,7 @@ const POWER_FLEET_COLUMNS = [
     { key: "home", label: "Home",
       hint: "the home room that fielded the squad; hauler counts are published per bank, not per home",
       sort: r => (r.kind === "squad" ? r.home : null),
-      cell: r => r.kind === "squad" ? textCell(r.home) : naCell("per bank", "hauler counts are published per bank, not per home") },
+      cell: r => r.kind === "squad" ? roomLinkCell(r.home) : naCell("per bank", "hauler counts are published per bank, not per home") },
     { key: "unit", label: "Unit",
       hint: "w<n> is a harvest wave, fight is its fight squad; haulers are every power hauler assigned to that bank",
       cell: fleetUnitCell },
