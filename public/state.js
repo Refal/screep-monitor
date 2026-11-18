@@ -22,6 +22,10 @@ export let historyRaw = [];     // every fetched row for the current range, un-d
 
 export let historyGaps = [];    // detectGaps(history, ...) — collection outages within `history`
 
+// historyRaw of every shard|range viewed this page session, so returning to one
+// fetches only the rows written since instead of the whole window again.
+const historyCache = new Map();
+
 export const charts = {};
 
 // ES imports are read-only for the importer, so a module that needs to change
@@ -36,3 +40,6 @@ export const setRoute = value => { route = value; };
 export const setSelectedRoom = value => { selectedRoom = value; };
 export const setRangeHours = value => { rangeHours = value; };
 export const setCurrentShard = value => { currentShard = value; };
+export const historyKey = (shard, range) => `${shard}|${range}`;
+export const stashHistory = (key, rows) => { if (rows.length > 0) historyCache.set(key, rows); };
+export const cachedHistory = key => historyCache.get(key) ?? [];

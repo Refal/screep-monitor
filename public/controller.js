@@ -12,8 +12,8 @@ import { dataAgeMs, renderAll, renderStatus } from "./render.js";
 import { ROOM } from "./route.js";
 import { applySectionDefaults } from "./sections/index.js";
 import {
-    currentShard, latest, route, selectedRoom, setCurrentShard, setHistoryRaw, setLatest,
-    setRangeHours, setRoute, setSelectedRoom,
+    cachedHistory, currentShard, historyKey, historyRaw, latest, rangeHours, route, selectedRoom,
+    setCurrentShard, setHistoryRaw, setLatest, setRangeHours, setRoute, setSelectedRoom, stashHistory,
 } from "./state.js";
 
 let inFlight = false;
@@ -121,11 +121,12 @@ function onHashChange() {
     // the click. renderAll calls applyRoute again; it is idempotent.
     applyRoute();
     if (route.range !== prev.range || route.shard !== currentShard) {
-        // Same reset the range buttons used to do inline: a new window needs a
-        // full fetch at the new LOD, not an append to the old one.
+        // A new window must not append to the old one's rows: park them under the
+        // old key and restore the new key's own rows ([] means a full fetch).
+        stashHistory(historyKey(currentShard, rangeHours), historyRaw);
         setRangeHours(route.range);
         setCurrentShard(route.shard);
-        setHistoryRaw([]);
+        setHistoryRaw(cachedHistory(historyKey(route.shard, route.range)));
         resetDemoRows();
         viewGeneration++;
         refresh({ force: true });
@@ -140,18 +141,20 @@ async function refresh({ force = false } = {}) {
     inFlight = true;
     $("refresh")?.toggleAttribute("disabled", true);
     const retryDelaysMs = [1000, 3000];
+    // Captured once, not per attempt: a switch during a failed attempt's retry sleep
+    // must still force a render, since a cache hit can leave added at 0.
+    let generationAtStart = viewGeneration;
     try {
         for (let attempt = 0; ; attempt++) {
             setStatus(attempt === 0 ? "loading…" : `loading… (retry ${attempt})`);
             try {
                 const prevTick = latest?.tick ?? null;
-                const generationAtStart = viewGeneration;
                 const [, added] = await Promise.all([loadLatest(), loadHistory()]);
                 if (viewGeneration !== generationAtStart) {
+                    generationAtStart = viewGeneration;
                     // The range or shard changed mid-fetch (onHashChange's own refresh
                     // was a no-op while this one ran), so what came back is the old
-                    // window: drop it and fetch the new one from scratch.
-                    setHistoryRaw([]);
+                    // window. loadHistory already refused to commit it; drop latest and refetch.
                     setLatest(null);
                     resetDemoRows();
                     force = true;

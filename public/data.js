@@ -23,7 +23,7 @@ import { DEMO, params } from "./config.js";
 import { MAX_HISTORY_DOCS, MAX_POINTS } from "./constants.js";
 import { firebaseConfig } from "./firebase-config.js";
 import {
-    currentShard, history, historyRaw, rangeHours, setHistory, setHistoryGaps, setHistoryRaw, setLatest,
+    currentShard, history, historyKey, historyRaw, rangeHours, setHistory, setHistoryGaps, setHistoryRaw, setLatest,
 } from "./state.js";
 
 let db;
@@ -60,7 +60,7 @@ const toRows = snap => snap.docs.map(d => { const v = d.data(); return { ...v, d
 // Builds the snapshots query for the current range: the caller's ts predicate
 // plus the range's LOD flag (if any). Both history loaders go through here so
 // a full fetch and a later incremental fetch can never disagree about
-// resolution — a range switch clears historyRaw first (see bindControls), so
+// resolution — each shard|range keeps its own cached rows (see historyCache), so
 // incremental only ever appends rows fetched under the current range's flag.
 function historyQuery(tsClause) {
     const flag = LOD_BY_RANGE[rangeHours];
@@ -69,19 +69,20 @@ function historyQuery(tsClause) {
         orderBy("ts", "asc"), limit(MAX_HISTORY_DOCS));
 }
 
-// Fetches the full `rangeHours` window into historyRaw. Used on first load,
-// on a range switch, and as the fallback when an incremental fetch fails.
-// Returns the row count, for loadHistory's render gate.
+const windowCutoffMs = () => Date.now() - rangeHours * 3600e3;
+
+// Fetches the full `rangeHours` window. Used on first load, when no held row is
+// still inside the window, and as the fallback when an incremental fetch fails.
 async function loadHistoryFull() {
-    const cutoff = Timestamp.fromMillis(Date.now() - rangeHours * 3600e3);
-    setHistoryRaw(toRows(await getDocs(historyQuery(where("ts", ">=", cutoff)))));
-    return historyRaw.length;
+    const cutoff = Timestamp.fromMillis(windowCutoffMs());
+    const rows = toRows(await getDocs(historyQuery(where("ts", ">=", cutoff))));
+    return { rows, added: rows.length };
 }
 
-// Fetches only snapshots newer than the last row already held, appends them,
-// and drops rows that have aged out of the current window. Keeps a poll's
-// read cost near-constant (1-2 docs) instead of rescanning the whole range.
-async function loadHistoryIncremental() {
+// Fetches only snapshots newer than the last held row, appends them, and drops
+// rows that have aged out of the current window. Keeps a poll's read cost
+// near-constant (1-2 docs) instead of rescanning the whole range.
+async function loadHistoryIncremental(held) {
     // On a flagged range, each bucket holds exactly one flagged doc (the
     // collector's lod cursor persists across runs) and the collector never
     // stamps ts beyond its own now — so while we're still inside the same
@@ -90,13 +91,12 @@ async function loadHistoryIncremental() {
     // Clock skew at a bucket edge costs at most one extra poll of latency.
     const widthMs = LOD_BUCKET_MS[LOD_BY_RANGE[rangeHours]];
     if (widthMs && bucketId(Date.now(), widthMs)
-            === bucketId(historyRaw.at(-1).date.getTime(), widthMs)) {
-        return 0;
+            === bucketId(held.at(-1).date.getTime(), widthMs)) {
+        return { rows: held, added: 0 };
     }
-    const rows = toRows(await getDocs(historyQuery(where("ts", ">", historyRaw.at(-1).ts))));
-    const cutoff = Date.now() - rangeHours * 3600e3;
-    setHistoryRaw([...historyRaw, ...rows].filter(r => r.date.getTime() >= cutoff));
-    return rows.length;
+    const fresh = toRows(await getDocs(historyQuery(where("ts", ">", held.at(-1).ts))));
+    const cutoff = windowCutoffMs();
+    return { rows: [...held, ...fresh].filter(r => r.date.getTime() >= cutoff), added: fresh.length };
 }
 
 // The normal spacing between stored rows for the current range — the active
@@ -109,18 +109,25 @@ function expectedIntervalMs() {
     return flag ? LOD_BUCKET_MS[flag] : RAW_INTERVAL_MS;
 }
 
-// Returns the number of new rows fetched (used by the render gate). Range
-// switches reset historyRaw to [] (see bindControls), so an empty historyRaw
-// doubles as "need a full fetch" without a separate range-tracking flag.
+// Returns the number of new rows fetched (used by the render gate). Held rows are
+// trimmed to the window first: the incremental query has no lower bound, so a cache
+// entry from days ago would otherwise read every doc since, up to the limit.
 export async function loadHistory() {
     if (DEMO) {
         setHistory(await demoHistory());
         setHistoryGaps(detectGaps(history, expectedIntervalMs()));
         return history.length;
     }
-    const added = historyRaw.length > 0
-        ? await loadHistoryIncremental().catch(loadHistoryFull)
+    const key = historyKey(currentShard, rangeHours);
+    const cutoff = windowCutoffMs();
+    const held = historyRaw.filter(r => r.date.getTime() >= cutoff);
+    const { rows, added } = held.length > 0
+        ? await loadHistoryIncremental(held).catch(loadHistoryFull)
         : await loadHistoryFull();
+    // The view switched mid-fetch: these rows belong to the old shard|range, and
+    // committing them would cache them under the new key. refresh() refetches.
+    if (historyKey(currentShard, rangeHours) !== key) return 0;
+    setHistoryRaw(rows);
     setHistory(downsample(historyRaw, MAX_POINTS));
     setHistoryGaps(detectGaps(history, expectedIntervalMs()));
     return added;
