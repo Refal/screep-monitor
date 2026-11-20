@@ -179,7 +179,11 @@ export function renderEmpireCharts() {
     const cpuAvg = average(cpuSeries);
     const cpuDatasets = [lineDataset("CPU used", cpuSeries, "--series-1")];
     if (cpuAvg != null) cpuDatasets.push(avgLineDataset(`avg ${compact(cpuAvg)}`, cpuAvg));
-    renderLine("cpu", "c-cpu", cpuDatasets, { yMax: latest.cpu.l });
+    const cpuLimit = lineDataset(`limit ${latest.cpu.l}`, history.map(r => r.cpu.l), "--series-3");
+    Object.assign(cpuLimit, { borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 0, tension: 0 });
+    cpuDatasets.push(cpuLimit);
+    // No yMax: cpu.l is the refill rate, not a ceiling — a tick may burst to Game.cpu.tickLimit (500).
+    renderLine("cpu", "c-cpu", cpuDatasets);
     renderLine("bucket", "c-bucket",
         [lineDataset("Bucket", history.map(r => r.cpu.b), "--series-1")],
         { yMax: 10000 });
