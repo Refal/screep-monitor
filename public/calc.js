@@ -1532,6 +1532,7 @@ export function opRows(latest, kind) {
                     .sort(([a], [b]) => a.localeCompare(b)),
                 status: finished ? "finished" : "active",
                 duration: Number.isFinite(finished ? o.e : latest?.tick) ? (finished ? o.e : latest.tick) - o.s : null,
+                agoTicks: finished && Number.isFinite(latest?.tick) ? latest.tick - o.e : null,
                 yieldPer1k: o.en > 0 ? (gotTotal / o.en) * 1000 : null,
             };
         })

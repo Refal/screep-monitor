@@ -1,7 +1,7 @@
 // Cells shared by the power-bank and deposit op tables (calc.js `opRows`).
 import { compact, fmtDuration, observedMsPerTick, roomHistoryUrl } from "../calc.js";
 import { cssVar, fmtInt } from "../dom.js";
-import { currentShard, history } from "../state.js";
+import { currentShard, history, latest } from "../state.js";
 import { fmtRate } from "./cells-economy.js";
 import { chipsCell } from "./cells-labs.js";
 import { makeBadge, roomLink, roomLinkCell, roomNameLink } from "./links.js";
@@ -26,6 +26,24 @@ function durationCell(row) {
     const badge = makeBadge(cssVar(row.status === "active" ? "--status-good" : "--text-muted"), row.status);
     badge.title = `${fmtInt.format(row.duration)} ticks · ${row.status === "active" ? "the op is still open" : "the op has ended"}`;
     td.append(badge);
+    return td;
+}
+
+// Snapshot age plus the op's ticks before the snapshot: the same sum remoteWhenCell (sections/remote.js) uses.
+function endedAgoCell(row) {
+    if (row.e == null) return naCell("running", "the op is still open");
+    if (row.agoTicks == null) return naCell("—", "no snapshot tick to measure against");
+    const ticks = `${fmtInt.format(row.agoTicks)} ticks before the latest snapshot`;
+    const msPerTick = observedMsPerTick(history);
+    const td = document.createElement("td");
+    if (msPerTick == null) {
+        td.textContent = `${fmtInt.format(row.agoTicks)} ticks ago`;
+        td.title = `${ticks} · no tick rate in range to convert it`;
+        return td;
+    }
+    const ms = Date.now() - latest.ts.toDate().getTime() + row.agoTicks * msPerTick;
+    td.textContent = ms < 60000 ? "just now" : `${fmtDuration(ms)} ago`;
+    td.title = ticks;
     return td;
 }
 
@@ -73,6 +91,9 @@ export function opColumns({ inLabel, unit, noun, none, withBoosts }) {
         { key: "end", label: "End",
           hint: "tick the op closed (no creep left and no plan record); links to the target room's history at that tick",
           sort: r => r.e, cell: r => (r.e == null ? naCell("—", "the op is still open") : tickLinkCell(r, r.e, "end")) },
+        { key: "ended", label: "Ended",
+          hint: "how long ago the op closed: snapshot age plus its ticks before the snapshot, at the observed s/tick",
+          sort: r => r.e, cell: endedAgoCell },
         { key: "duration", label: "Duration",
           hint: "start to end, or to the latest snapshot while the op is open",
           sort: r => r.duration, cell: durationCell },

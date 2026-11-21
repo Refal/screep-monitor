@@ -2097,13 +2097,19 @@ describe("opRows", () => {
         assert.equal(r.gotTotal, 2000);
         assert.deepEqual(r.got, [["power", 1500], ["ZK", 500]]);
         assert.equal(r.yieldPer1k, (2000 / 40000) * 1000);
+        assert.equal(r.agoTicks, TICK - 3000);
     });
 
-    test("an open op measures its duration against the latest tick", () => {
+    test("an open op measures its duration against the latest tick and has no ago", () => {
         const [r] = opRows(snap([op()]), "power");
         assert.equal(r.status, "active");
         assert.equal(r.e, null);
         assert.equal(r.duration, TICK - 1000);
+        assert.equal(r.agoTicks, null);
+    });
+
+    test("a finished op in a snapshot without a tick has no ago", () => {
+        assert.equal(opRows({ ops: [op({ e: 3000 })] }, "power")[0].agoTicks, null);
     });
 
     test("no energy booked yields no ratio", () => {
